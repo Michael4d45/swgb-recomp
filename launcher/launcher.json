@@ -1,0 +1,17 @@
+{
+  "title": "Star Wars: Galactic Battlegrounds",
+  "repo": "sp00nznet/swgb-recomp",
+  "accent": "#c8a040",
+  "note": {
+    "windows": "The build takes 30 minutes or more and about 8 GB. Python and the Visual Studio Build Tools are installed if they are missing. It reaches the main menu and a random-map skirmish."
+  },
+  "game": {
+    "name": "Star Wars: Galactic Battlegrounds (US, installed Game folder)",
+    "files": ["Battlegrounds.exe|battlegrounds.exe"]
+  },
+  "sources": [{ "repo": "sp00nznet/pcrecomp", "ref": "pcrecomp-ingame", "dir": "pcrecomp" }],
+  "setup": {
+    "windows": ["cmd", "/c", "Setup.cmd", "-Yes", "-GameDir", "{game}"]
+  },
+  "play": "Galactic Battlegrounds.*"
+}
