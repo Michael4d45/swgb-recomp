@@ -2,7 +2,7 @@
 
 What `run_lift.py` and the host do beyond the stock pcrecomp pipeline, and
 why. Everything here was found on this title; the general parts went into
-pcrecomp (branch `pcrecomp-msvceh`), the title-specific parts stay here.
+pcrecomp, the title-specific parts stay here.
 
 ## The code is in two sections
 

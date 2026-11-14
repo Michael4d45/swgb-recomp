@@ -8,7 +8,6 @@
 - Child windows (the game's text fields are real Win32 edit controls) do not
   appear in softdd's frames; draw them into the picture.
 - The mouse cursor (the game draws its own from `mcursors`) in recordings.
-- **pcrecomp-ingame into pcrecomp main**, then Setup and the launcher on `main`.
 - netlab QA on a test VM (it reports SKIP without game data).
 
 ## Later

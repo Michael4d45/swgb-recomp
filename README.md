@@ -7,7 +7,7 @@ Windows. No emulator: the game's own code, recompiled, with a software
 DirectDraw so the desktop's display mode never changes.
 
 Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain, on
-its **`pcrecomp-ingame`** branch (not merged into `main` yet), and following
+its `main` branch, and following
 its house style: layout, command line, conformance harness, headless mode.
 
 ![The main menu, drawn by the recompiled game](docs/screenshots/main-menu.png)
@@ -31,7 +31,7 @@ The CD check passes with disc 2 in the drive or your disc 2 image mounted.
 4. Play with **`Galactic Battlegrounds`** in that folder.
 
 The script checks for Python 3.10+, `capstone`, the pcrecomp toolkit (cloned
-beside this folder on its `pcrecomp-ingame` branch if it is missing) and
+beside this folder if it is missing) and
 Visual Studio 2022's C++ tools, and asks before installing any of them. It
 asks where the installed `Game` folder, disc 2 (a drive, `.iso` or `.cue`) and `BGUpdate1_1.exe` are (it
 looks first; `-GameDir`, `-PlayDisc`, `-PatchExe` and `-Yes` skip the

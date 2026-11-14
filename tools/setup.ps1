@@ -110,11 +110,11 @@ if (-not (Test-Path (Join-Path $Toolkit 'tools\lift\lift32.py'))) {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Fail "Git did not install. Install Git for Windows yourself." }
   }
   if (-not (Ask "  Download it now (git, about 20 MB)?")) { Fail "pcrecomp is required at $Toolkit." }
-  Run "Cloning pcrecomp" @('git', 'clone', '--depth', '1', '--branch', 'pcrecomp-ingame', 'https://github.com/sp00nznet/pcrecomp', $Toolkit)
+  Run "Cloning pcrecomp" @('git', 'clone', '--depth', '1', 'https://github.com/sp00nznet/pcrecomp', $Toolkit)
 }
 # What this game needs from the toolkit, each by a line it adds: MSVC
 # exception frames, the extent walk's seeds (run_lift.py uses both) and the
-# headless desktop, all on branch pcrecomp-ingame until it merges.
+# headless desktop, all in pcrecomp main.
 $need = @(
   @('MSVC exception frames (eh32.frame)', 'tools\lift\eh32.py', 'def frame('),
   @('the extent walk with seeds (generate.py)', 'tools\lift\generate.py', 'seeds=()'),
@@ -132,7 +132,7 @@ if ($missing -and (Test-Path $head) -and (Get-Content $head) -eq 'ref: refs/head
   }
 }
 if ($missing) {
-  Fail "your pcrecomp at $Toolkit is missing $($missing -join ', '). Check out its pcrecomp-ingame branch (git -C `"$Toolkit`" fetch origin pcrecomp-ingame, then checkout), or point PCRECOMP at such a checkout."
+  Fail "your pcrecomp at $Toolkit is missing $($missing -join ', '). Update it to main, or point PCRECOMP at such a checkout."
 }
 Say "  pcrecomp: $Toolkit"
 

@@ -5,6 +5,8 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+- Builds against pcrecomp main; the `pcrecomp-ingame` branch is merged.
+
 ### Changed
 - Brought in line with the other recomps: the README in their order (Getting
   Started, Status, Screenshots, Documentation, Contributors, License), the

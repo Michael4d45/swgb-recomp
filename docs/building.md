@@ -1,12 +1,10 @@
 # Building and the command line
 
 `Setup.cmd` (`tools/setup.ps1`) runs exactly the steps below, skipping the ones
-already done, and logs everything to `setup.log`. It clones pcrecomp on the
-**`pcrecomp-ingame`** branch if it is not beside this folder; that branch
+already done, and logs everything to `setup.log`. It clones pcrecomp main if it is not beside this folder; main
 carries the toolkit work this game needs (MSVC `__try/__except`,
 frame-pointer-omitted C++ frames, throws from a statically linked CRT,
-`VirtualQuery` on lifted images, the headless desktop) and is not merged into
-`main` yet.
+`VirtualQuery` on lifted images, the headless desktop).
 
 Linux and macOS: not yet. The host runs the lifted game inside a 32-bit
 Windows process against the real Windows DLLs (pcrecomp `native32`), and the
@@ -22,7 +20,7 @@ with C++" (CMake and Ninja come with it); ffmpeg on `PATH` for `--record`.
 
 1. Fetch the toolkit beside this folder:
    ```
-   git clone -b pcrecomp-ingame https://github.com/sp00nznet/pcrecomp ..\pcrecomp
+   git clone https://github.com/sp00nznet/pcrecomp ..\pcrecomp
    ```
 2. Copy the installed `Game` folder to `game\` (it has `Battlegrounds.exe`
    and `Data\GENIE.DAT`). To play, put disc 2 in the drive or mount its image

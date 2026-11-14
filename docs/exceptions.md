@@ -2,7 +2,7 @@
 
 Galactic Battlegrounds is MSVC6 C++ with the CRT linked in, and has three
 kinds of exception frame. What each needs from a static lift, and where
-pcrecomp (branch `pcrecomp-msvceh`) does it:
+pcrecomp does it:
 
 | Frame | In this game | What runs it |
 |---|---|---|
