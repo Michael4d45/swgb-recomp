@@ -503,9 +503,26 @@ static HRESULT WINAPI s_GetColorKey(IDirectDrawSurface* This, DWORD f, LPDDCOLOR
     k->dwColorSpaceHighValue = SELF->ck_hi;
     return DD_OK;
 }
+/* GDI matches a text or brush colour against the DIB section's own colour
+ * table, which surf_new filled from whatever palette existed then (usually
+ * none yet: a grey ramp). Real DirectDraw's surface DC follows the palette in
+ * use, so load the current one before GDI draws: the surface's own palette,
+ * else the primary's. Without this, white text lands on a grey-ramp index
+ * that the game's palette colours dark. */
+static void sync_dib_palette(Surf* s) {
+    if (s->bpp != 8) return;
+    PALETTEENTRY* e = s->pal ? ((Pal*)s->pal)->e : screen_palette();
+    if (!e) return;
+    RGBQUAD q[256];
+    for (int i = 0; i < 256; i++) {
+        q[i].rgbRed = e[i].peRed; q[i].rgbGreen = e[i].peGreen; q[i].rgbBlue = e[i].peBlue; q[i].rgbReserved = 0;
+    }
+    SetDIBColorTable(s->hdc, 0, 256, q);
+}
 static HRESULT WINAPI s_GetDC(IDirectDrawSurface* This, HDC* out) {
     if (!SELF->hdc) SELF->hdc = CreateCompatibleDC(NULL);
     SelectObject(SELF->hdc, SELF->hbm);
+    sync_dib_palette(SELF);
     *out = SELF->hdc;
     return DD_OK;
 }
