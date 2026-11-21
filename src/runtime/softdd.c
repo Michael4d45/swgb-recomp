@@ -265,6 +265,13 @@ static int has_children(void) {
  * strokes (ClearType on a 32-bit bitmap thins them). */
 static void draw_child(HWND c, const RECT* r, HDC dc) {
     if (!GetPropA(c, "softdd.rgn")) {   /* never on screen itself (see above) */
+        /* EDIT is a CS_PARENTDC class: its DC gets the parent's clipping and
+         * ignores the window region, so each keystroke still painted the
+         * field, unscaled, straight onto the window (a ghost box for one
+         * frame). Without the style the empty region holds. The class is
+         * the process's own copy: only the game's controls are affected. */
+        DWORD st = (DWORD)GetClassLongPtrA(c, GCL_STYLE);
+        if (st & CS_PARENTDC) SetClassLongPtrA(c, GCL_STYLE, st & ~CS_PARENTDC);
         SetWindowRgn(c, CreateRectRgn(0, 0, 0, 0), FALSE);
         SetPropA(c, "softdd.rgn", (HANDLE)1);
     }

@@ -215,10 +215,51 @@ static void to_game(POINT* p) {
     p->y = p->y * d->h / rc.bottom;
 }
 
+/* Text fields are real EDIT children that softdd draws into the frame and
+ * that never take part in hit-testing themselves (an empty window region),
+ * so a click on one reaches the game window. Under real DirectDraw the click
+ * went to the control: send it there, as a click (down and up together: the
+ * edit would capture the mouse and read the scaled window's coordinates for
+ * a drag). x, y are game pixels. */
+static int click_child(UINT m, WPARAM w, int x, int y) {
+    POINT p = { x, y };
+    for (HWND c = GetWindow(g_game_wnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+        RECT r;
+        if (!IsWindowVisible(c) || !IsWindowEnabled(c)) continue;
+        GetWindowRect(c, &r);
+        MapWindowPoints(NULL, g_game_wnd, (POINT*)&r, 2);
+        if (!PtInRect(&r, p)) continue;
+        POINT q = p;
+        MapWindowPoints(g_game_wnd, c, &q, 1);   /* game pixels -> the control's client */
+        SetFocus(c);
+        SendMessageA(c, m, w, MAKELPARAM(q.x, q.y));
+        SendMessageA(c, WM_LBUTTONUP, 0, MAKELPARAM(q.x, q.y));
+        if (GetCapture() == c) ReleaseCapture();
+        return 1;
+    }
+    return 0;
+}
+
+/* The window is never told it lost activation (the game would pause), so the
+ * default WM_ACTIVATE puts the focus on the window itself: a field that had
+ * it stops taking keys. Keep it across a trip to another window. */
+static HWND g_focus_child;
+
 static LRESULT CALLBACK host_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_ACTIVATEAPP: case WM_NCACTIVATE: w = TRUE; break;
-    case WM_ACTIVATE: w = MAKEWPARAM(WA_ACTIVE, HIWORD(w)); break;
+    case WM_ACTIVATE: {
+        HWND f = GetFocus();
+        int active = LOWORD(w) != WA_INACTIVE;
+        if (!active && f && IsChild(h, f)) g_focus_child = f;
+        LRESULT r = CallWindowProcA(g_game_proc, h, m, MAKEWPARAM(WA_ACTIVE, HIWORD(w)), l);
+        if (active && g_focus_child) {
+            if (IsWindow(g_focus_child) && IsChild(h, g_focus_child) && IsWindowVisible(g_focus_child))
+                SetFocus(g_focus_child);
+            g_focus_child = NULL;
+        }
+        return r;
+    }
     case WM_KILLFOCUS: return 0;
     case WM_WINDOWPOSCHANGING: case WM_WINDOWPOSCHANGED: case WM_GETMINMAXINFO:
     case WM_NCCALCSIZE: case WM_STYLECHANGED: case WM_STYLECHANGING: case WM_SIZE:
@@ -226,10 +267,11 @@ static LRESULT CALLBACK host_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_ERASEBKGND: return 1;
     case WM_TIMER: if (w == SOFTDD_TIMER) { softdd_tick(); return 0; } break;
     }
-    if (m >= WM_MOUSEFIRST && m <= WM_MOUSELAST && m != WM_MOUSEWHEEL && !g_scripted) {
+    if (m >= WM_MOUSEFIRST && m <= WM_MOUSELAST && m != WM_MOUSEWHEEL) {
         POINT p = { GET_X_LPARAM(l), GET_Y_LPARAM(l) };
-        to_game(&p);
+        if (!g_scripted) to_game(&p);
         l = MAKELPARAM(p.x, p.y);
+        if ((m == WM_LBUTTONDOWN || m == WM_LBUTTONDBLCLK) && click_child(m, w, p.x, p.y)) return 0;
     }
     return CallWindowProcA(g_game_proc, h, m, w, l);
 }
@@ -305,8 +347,7 @@ static const struct { const char* n; int vk; } g_keynames[] = {
 
 static int key_by_name(const char* n) {
     for (int i = 0; i < (int)(sizeof g_keynames / sizeof g_keynames[0]); i++)
-        if (!_stricmp(n, g_keynames[i].n)) return g_keynames[i].vk;
-    if (n[0] && !n[1] && isalnum((unsigned char)n[0])) return toupper((unsigned char)n[0]);
+        if (!_stricmp(n, g_keynames[i].n)) return g_keynames[i].vk;    if (n[0] && !n[1] && isalnum((unsigned char)n[0])) return toupper((unsigned char)n[0]);
     return 0;
 }
 
