@@ -224,6 +224,7 @@ static LRESULT CALLBACK host_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_NCCALCSIZE: case WM_STYLECHANGED: case WM_STYLECHANGING: case WM_SIZE:
         return DefWindowProcA(h, m, w, l);
     case WM_ERASEBKGND: return 1;
+    case WM_TIMER: if (w == SOFTDD_TIMER) { softdd_tick(); return 0; } break;
     }
     if (m >= WM_MOUSEFIRST && m <= WM_MOUSELAST && m != WM_MOUSEWHEEL && !g_scripted) {
         POINT p = { GET_X_LPARAM(l), GET_Y_LPARAM(l) };
@@ -251,6 +252,7 @@ static void shim_CreateWindowExA(void) {
         g_game_proc = (WNDPROC)SetWindowLongPtrA(h, GWLP_WNDPROC, (LONG_PTR)host_wndproc);
         g_game_wnd = h;
         PostMessageA(h, WM_ACTIVATEAPP, TRUE, 0);
+        SetTimer(h, SOFTDD_TIMER, 100, NULL);   /* text fields: softdd_tick */
     }
     SetLastError(err);
     g_eax = (uint32_t)(uintptr_t)h;
@@ -376,8 +378,9 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
                 if (w && GetGUIThreadInfo(GetWindowThreadProcessId(w, NULL), &gi) && gi.hwndFocus) w = gi.hwndFocus;
             }
             g_vk_until[st->vk & 0xFF] = GetTickCount() + 150;
+            /* WM_KEYDOWN only: the game's loop calls TranslateMessage, which
+             * makes the WM_CHAR (posting one too typed every letter twice). */
             if (w) PostMessageA(w, WM_KEYDOWN, st->vk, 1 | (sc << 16));
-            if (w && st->vk >= '0' && st->vk <= 'Z') PostMessageA(w, WM_CHAR, tolower(st->vk), 1 | (sc << 16));
             Sleep(150);
             if (w) PostMessageA(w, WM_KEYUP, st->vk, 1 | (sc << 16) | 0xC0000000u);
             printf("[keys] %.1fs key %02X\n", st->at / 1000.0, st->vk);

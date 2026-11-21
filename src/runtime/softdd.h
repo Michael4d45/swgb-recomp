@@ -18,6 +18,11 @@ long softdd_create(void** out);
 /* --shot: write the next presented frame to path (.bmp). */
 void softdd_shot(const char* path);
 
+/* The game window's timer: re-present while a text field (a child window) is
+ * up, so typing and the caret show between the game's own frames. */
+void softdd_tick(void);
+#define SOFTDD_TIMER 0x5D01
+
 /* Close the recording, so the mp4 is complete. */
 void softdd_finish(void);
 

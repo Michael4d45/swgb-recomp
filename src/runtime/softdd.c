@@ -231,7 +231,115 @@ static void write_shot(Surf* s) {
     fprintf(stderr, "[shot] frame %ld %dx%dx%d -> %s\n", softdd_frames, s->w, s->h, s->bpp, g_shot_path);
 }
 
+/* ---- the game's child windows ------------------------------------------------
+ * Text fields (the player name, chat, file names) are real EDIT controls,
+ * children of the game window. Under real DirectDraw, Windows paints them on
+ * top of the fullscreen surface. Here nothing reaches the screen but what
+ * present() draws, so each present composes the visible children into a copy
+ * of the frame, at their positions in game pixels, with the caret. The real
+ * controls keep the focus and the keys, but get an empty window region so
+ * that they never paint over the (scaled) window themselves. */
+static Surf     g_comp;              /* the composed frame: a view, never handed out */
+static HBITMAP  g_comp_hbm;
+static HDC      g_comp_dc;
+static DWORD    g_last_present;
+
+static int child_shown(HWND c, RECT* r) {
+    if (!IsWindowVisible(c)) return 0;
+    GetWindowRect(c, r);
+    MapWindowPoints(NULL, g_dd->hwnd, (POINT*)r, 2);
+    return r->right > r->left + 2 && r->bottom > r->top + 2;
+}
+
+static int has_children(void) {
+    RECT r;
+    if (!g_dd || !g_dd->hwnd) return 0;
+    for (HWND c = GetWindow(g_dd->hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
+        if (child_shown(c, &r)) return 1;
+    return 0;
+}
+
+/* One child, printed straight into the composed frame at its place. Into the
+ * frame itself, not a 32-bit bitmap: on an 8-bit DIB GDI cannot smooth text,
+ * just as on the real 8-bit screen, so the game's bold Arial keeps its solid
+ * strokes (ClearType on a 32-bit bitmap thins them). */
+static void draw_child(HWND c, const RECT* r, HDC dc) {
+    if (!GetPropA(c, "softdd.rgn")) {   /* never on screen itself (see above) */
+        SetWindowRgn(c, CreateRectRgn(0, 0, 0, 0), FALSE);
+        SetPropA(c, "softdd.rgn", (HANDLE)1);
+    }
+    int saved = SaveDC(dc);
+    HRGN clip = CreateRectRgnIndirect(r);
+    SelectClipRgn(dc, clip);
+    DeleteObject(clip);
+    SetViewportOrgEx(dc, r->left, r->top, NULL);
+    SetTextColor(dc, RGB(255, 255, 255));
+    SendMessageA(c, WM_PRINT, (WPARAM)dc, PRF_NONCLIENT | PRF_CLIENT | PRF_ERASEBKGND | PRF_CHILDREN);
+    COLORREF ink = GetTextColor(dc);   /* what WM_CTLCOLOREDIT chose for the text */
+    RestoreDC(dc, saved);
+    /* The caret is the system's, never part of WM_PRINT: draw it, blinking,
+     * in the text's colour, as tall as the control's font. */
+    UINT blink = GetCaretBlinkTime();
+    POINT cp;
+    if (GetFocus() != c || !GetCaretPos(&cp)) return;
+    if (blink && blink != INFINITE && (GetTickCount() / blink) % 2) return;
+    TEXTMETRICA tm = { 0 };
+    HFONT f = (HFONT)SendMessageA(c, WM_GETFONT, 0, 0);
+    HGDIOBJ of = SelectObject(dc, f ? (HGDIOBJ)f : GetStockObject(SYSTEM_FONT));
+    GetTextMetricsA(dc, &tm);
+    SelectObject(dc, of);
+    ClientToScreen(c, &cp);
+    ScreenToClient(g_dd->hwnd, &cp);   /* the game window's client: game pixels */
+    RECT k = { cp.x, cp.y, cp.x + 1, cp.y + (tm.tmHeight ? tm.tmHeight : r->bottom - r->top - 4) };
+    IntersectRect(&k, &k, r);
+    HBRUSH b = CreateSolidBrush(ink);
+    FillRect(dc, &k, b);
+    DeleteObject(b);
+}
+
+/* s, or a copy of it with the visible child windows drawn in. */
+static Surf* compose(Surf* s) {
+    if ((s->bpp != 8 && s->bpp != 16) || !has_children()) return s;
+    if (!g_comp_hbm || g_comp.w != s->w || g_comp.h != s->h || g_comp.bpp != s->bpp) {
+        if (g_comp_hbm) DeleteObject(g_comp_hbm);
+        g_comp = *s;
+        g_comp_hbm = CreateDIBSection(NULL, bmi_of(s), DIB_RGB_COLORS, (void**)&g_comp.bits, NULL, 0);
+        if (!g_comp_hbm) return s;
+        if (!g_comp_dc) g_comp_dc = CreateCompatibleDC(NULL);
+        SelectObject(g_comp_dc, g_comp_hbm);
+    }
+    g_comp.pal = s->pal;
+    memcpy(g_comp.bits, s->bits, (size_t)s->pitch * s->h);
+    if (s->bpp == 8) {   /* GDI matches colours against the palette in use */
+        PALETTEENTRY* e = screen_palette();
+        RGBQUAD q[256];
+        for (int i = 0; e && i < 256; i++)
+            q[i].rgbRed = e[i].peRed, q[i].rgbGreen = e[i].peGreen, q[i].rgbBlue = e[i].peBlue, q[i].rgbReserved = 0;
+        if (e) SetDIBColorTable(g_comp_dc, 0, 256, q);
+    }
+    /* Bottom of the z-order first, so the topmost child ends up on top. */
+    HWND last = GetWindow(g_dd->hwnd, GW_CHILD);
+    if (last) last = GetWindow(last, GW_HWNDLAST);
+    for (HWND c = last; c; c = GetWindow(c, GW_HWNDPREV)) {
+        RECT r;
+        if (child_shown(c, &r)) draw_child(c, &r, g_comp_dc);
+    }
+    GdiFlush();
+    return &g_comp;
+}
+
+static void present(Surf* s);
+
+/* From the game window's timer: while a text field is up, show typing and
+ * the caret even when the game itself draws nothing new. */
+void softdd_tick(void) {
+    if (!g_dd || !g_dd->primary || GetTickCount() - g_last_present < 90 || !has_children()) return;
+    present(g_dd->primary);
+}
+
 static void present(Surf* s) {
+    g_last_present = GetTickCount();
+    s = compose(s);
     LONG n = InterlockedIncrement(&softdd_frames);
     if (n == 1 || n == 10 || n == 100 || n % 1000 == 0)
         fprintf(stderr, "[softdd] frame %ld presented\n", n);
