@@ -126,7 +126,7 @@ if (Get-Process swgbrecomp -ErrorAction SilentlyContinue | Where-Object { $_.Pat
 $orig = New-Object W+POINT; [void][W]::GetCursorPos([ref]$orig)
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $proc = Start-Process -PassThru -FilePath $Exe -RedirectStandardOutput $log -RedirectStandardError "$log.err" `
-    -ArgumentList @('--run', '--multi', '--exe', "`"$Lift`"", '--game', "`"$Game`"", '--present-log')
+    -ArgumentList @('--run', '--multi', '--exe', "`"$Lift`"", '--game', "`"$Game`"", '--present-log', '--fps', 'off')   # presents above the refresh: the pacing case
 
 function Log-Text { (Get-Content $log -Raw -ErrorAction SilentlyContinue) + (Get-Content "$log.err" -Raw -ErrorAction SilentlyContinue) }
 function Sleep-Until([double] $seconds) { $d = $seconds - $sw.Elapsed.TotalSeconds; if ($d -gt 0) { Start-Sleep -Milliseconds ([int]($d * 1000)) } }

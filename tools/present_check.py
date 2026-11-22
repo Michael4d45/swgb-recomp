@@ -227,7 +227,8 @@ def main():
             s.at(t, f"size:{w}:{h}"); t += 1.2
         t = s.battery(t + 0.3, "resized several times")
         s.at(t, "alt+enter"); t = s.battery(t + 1.5, "Alt+Enter fullscreen", overshoot=True)
-        text = run(a, "A", s, ["--refresh", str(PACE_HZ)], results)
+        # --fps off: the game's own rate, so presents exceed the refresh (the default caps them at it)
+        text = run(a, "A", s, ["--refresh", str(PACE_HZ), "--fps", "off"], results)
         judge_edges(results, "A", text, s)
         # the cursor coming back
         cur = re.findall(r"\[cursor\] re-entry: the game's cursor (\w+), after WM_SETCURSOR (\w+) \(the arrow is (\w+)\): (\w+)", text)

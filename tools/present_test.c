@@ -1,5 +1,5 @@
 /* The presenter's layout and mouse mapping, checked without the game:
- *   cl /nologo tools\present_test.c src\runtime\present.c /Isrc\runtime user32.lib gdi32.lib
+ *   cl /nologo tools\present_test.c src\runtime\present.c src\runtime\scaler.c src\runtime\present_d3d.c /Isrc\runtime user32.lib gdi32.lib d3d11.lib dxgi.lib dxguid.lib
  *   present_test.exe        (exit 0 and "OK" when every check holds)
  * A window of each shape is made (never shown) and, for every filter, a
  * client pixel is mapped to a game pixel through the same rectangle the

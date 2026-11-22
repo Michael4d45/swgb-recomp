@@ -31,12 +31,21 @@
 #include <string.h>
 
 #include "present.h"
+#include "scaler.h"
+#include "present_d3d.h"
 
 int present_filter = PRES_SHARP;
 int present_fullscreen_start;
 int present_refresh;
 int present_log;
 int present_noclip;
+
+int present_headless_paint(void) {
+    static int v = -1;
+    char b[8];
+    if (v < 0) v = GetEnvironmentVariableA("SWGB_PAINT_HEADLESS", b, sizeof b) > 0;
+    return v;
+}
 
 static const char* const k_names[PRES_MODES] = { "sharp", "smooth", "nearest", "integer" };
 
@@ -106,95 +115,10 @@ void present_to_client(HWND wnd, int gw, int gh, POINT* p) {
 
 /* ------------------------------------------------------------- scaling */
 
-static uint32_t* g_src;   static size_t g_src_n;     /* the frame as 0x00RRGGBB */
-static uint32_t* g_img;   static size_t g_img_n;     /* the scaled picture */
-
-static uint32_t* grow(uint32_t** p, size_t* cap, size_t n) {
-    if (*cap < n) { free(*p); *p = (uint32_t*)malloc(n * 4); *cap = *p ? n : 0; }
-    return *p;
-}
-
-static int to32(const uint8_t* bits, int w, int h, int pitch, int bpp, const PALETTEENTRY* pal) {
-    if (bpp != 8 && bpp != 16 && bpp != 32) return 0;
-    uint32_t* d = grow(&g_src, &g_src_n, (size_t)w * h);
-    if (!d) return 0;
-    uint32_t lut[256];
-    if (bpp == 8)
-        for (int i = 0; i < 256; i++)
-            lut[i] = pal ? ((uint32_t)pal[i].peRed << 16) | ((uint32_t)pal[i].peGreen << 8) | pal[i].peBlue
-                         : (uint32_t)i * 0x010101u;
-    for (int y = 0; y < h; y++) {
-        const uint8_t* s = bits + (size_t)y * pitch;
-        uint32_t* o = d + (size_t)y * w;
-        if (bpp == 8) for (int x = 0; x < w; x++) o[x] = lut[s[x]];
-        else if (bpp == 32) memcpy(o, s, (size_t)w * 4);
-        else for (int x = 0; x < w; x++) {
-            uint32_t v = ((const uint16_t*)s)[x], r = v >> 11, g = (v >> 5) & 63, b = v & 31;
-            o[x] = ((r << 3 | r >> 2) << 16) | ((g << 2 | g >> 4) << 8) | (b << 3 | b >> 2);
-        }
-    }
-    return 1;
-}
-
-/* One axis of the scaler: for each destination pixel, the two source pixels
- * and the weight (0..256) of the second. */
-typedef struct { int n; int* i0; int* i1; int* w; int cap; } axis_t;
-
-static void axis_build(axis_t* a, int dn, int sn, int mode) {
-    if (a->cap < dn) {
-        free(a->i0); free(a->i1); free(a->w);
-        a->i0 = (int*)malloc(dn * sizeof(int)); a->i1 = (int*)malloc(dn * sizeof(int)); a->w = (int*)malloc(dn * sizeof(int));
-        a->cap = dn;
-    }
-    a->n = dn;
-    float sharp = (float)dn / sn;   /* texel edges stay one destination pixel wide */
-    for (int d = 0; d < dn; d++) {
-        if (mode == PRES_NEAREST || mode == PRES_INTEGER) {
-            int s = (int)(((int64_t)(2 * d + 1) * sn) / (2 * (int64_t)dn));
-            a->i0[d] = a->i1[d] = s < sn - 1 ? s : sn - 1;
-            a->w[d] = 0;
-            continue;
-        }
-        float sx = ((float)d + 0.5f) * sn / dn - 0.5f;
-        int x0 = (int)floorf(sx);
-        float fr = sx - (float)x0;
-        if (x0 < 0) { x0 = 0; fr = 0; }
-        int x1 = x0 + 1;
-        if (x1 >= sn) { x0 = x1 = sn - 1; fr = 0; }
-        if (mode == PRES_SHARP && sharp > 1.0f) {
-            fr = (fr - 0.5f) * sharp + 0.5f;
-            fr = fr < 0 ? 0 : fr > 1 ? 1 : fr;
-        }
-        a->i0[d] = x0; a->i1[d] = x1; a->w[d] = (int)(fr * 256.0f + 0.5f);
-    }
-}
-
-static inline uint32_t lerp(uint32_t a, uint32_t b, uint32_t w) {   /* w 0..256 */
-    uint32_t rb = (((a & 0xFF00FFu) * (256 - w) + (b & 0xFF00FFu) * w) >> 8) & 0xFF00FFu;
-    uint32_t g = (((a & 0x00FF00u) * (256 - w) + (b & 0x00FF00u) * w) >> 8) & 0x00FF00u;
-    return rb | g;
-}
-
-/* g_src (sw x sh) -> g_img (dw x dh) */
-static void scale(int sw, int sh, int dw, int dh, int mode) {
-    static axis_t ax, ay;
-    if (!grow(&g_img, &g_img_n, (size_t)dw * dh)) return;
-    axis_build(&ax, dw, sw, mode);
-    axis_build(&ay, dh, sh, mode);
-    for (int y = 0; y < dh; y++) {
-        const uint32_t* r0 = g_src + (size_t)ay.i0[y] * sw;
-        const uint32_t* r1 = g_src + (size_t)ay.i1[y] * sw;
-        uint32_t wy = (uint32_t)ay.w[y];
-        uint32_t* o = g_img + (size_t)y * dw;
-        for (int x = 0; x < dw; x++) {
-            int x0 = ax.i0[x], x1 = ax.i1[x];
-            uint32_t wx = (uint32_t)ax.w[x];
-            uint32_t top = wx ? lerp(r0[x0], r0[x1], wx) : r0[x0];
-            if (!wy) { o[x] = top; continue; }
-            o[x] = lerp(top, wx ? lerp(r1[x0], r1[x1], wx) : r1[x0], wy);
-        }
-    }
-}
+/* scaler.c: the frame -> the picture, only the rows that changed. One state
+ * for the window and one for wshot (a shot must not use up the window's
+ * "changed"). */
+static scaler_t g_sc_win, g_sc_shot;
 
 static BITMAPINFO* bmi32(int w, int h) {
     static BITMAPINFO b;
@@ -211,6 +135,8 @@ static BITMAPINFO* bmi32(int w, int h) {
 
 static RECT g_bars_client, g_bars_rect;   /* the layout the bars were last drawn for */
 static int  g_bars_dirty = 1;
+static int  g_full = 1;          /* draw the whole picture next time (resized, a new mode...) */
+static DWORD g_full_at;          /* and once a second anyway, in case the window lost it */
 
 static void paint_bars(HDC dc, const RECT* client, const RECT* pic) {
     if (!g_bars_dirty && !memcmp(&g_bars_client, client, sizeof *client) && !memcmp(&g_bars_rect, pic, sizeof *pic)) return;
@@ -228,21 +154,40 @@ static void paint_bars(HDC dc, const RECT* client, const RECT* pic) {
     g_bars_dirty = 0;
 }
 
+/* Only what changed since the last frame is drawn: the window keeps the rest
+ * (DWM keeps every window's picture; a resize or a new mode draws it all). */
 void present_paint(HWND wnd, const uint8_t* bits, int w, int h, int pitch, int bpp, const PALETTEENTRY* pal) {
     RECT rc, r;
+    int y0, y1;
     if (!wnd || !GetClientRect(wnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
-    if (!to32(bits, w, h, pitch, bpp, pal)) return;
     present_layout(present_filter, rc.right, rc.bottom, w, h, &r);
     int dw = r.right - r.left, dh = r.bottom - r.top;
+    int gdi = present_filter == PRES_NEAREST || present_filter == PRES_INTEGER;   /* GDI scales these: cheap at any size */
+    int bars = g_bars_dirty || memcmp(&g_bars_client, &rc, sizeof rc) || memcmp(&g_bars_rect, &r, sizeof r);
+    int full = g_full || bars || GetTickCount() - g_full_at >= 1000;
+    if (present_d3d_ready(wnd)) {   /* present_d3d.c: the GPU scales; only changed rows are uploaded */
+        if (!scaler_run(&g_sc_win, bits, w, h, pitch, bpp, pal, w, h, present_filter, full, &y0, &y1)) return;
+        if (y0 >= y1 && !bars && !full) return;   /* the same picture */
+        if (present_d3d_draw(wnd, scaler_picture(&g_sc_win), w, h, y0, y1, rc.right, rc.bottom, &r, present_filter, full)) {
+            if (full) { g_full = 0; g_full_at = GetTickCount(); }
+            g_bars_client = rc; g_bars_rect = r; g_bars_dirty = 0;
+            return;
+        }
+        g_full = g_bars_dirty = full = bars = 1;   /* GDI from here: all of it */
+    }
+    if (!scaler_run(&g_sc_win, bits, w, h, pitch, bpp, pal, gdi ? w : dw, gdi ? h : dh, present_filter, full, &y0, &y1))
+        return;
+    if (full) { g_full = 0; g_full_at = GetTickCount(); }
+    if (y0 >= y1 && !bars) return;   /* the same picture */
     HDC dc = GetDC(wnd);
     paint_bars(dc, &rc, &r);
-    if (present_filter == PRES_NEAREST || present_filter == PRES_INTEGER) {
-        SetStretchBltMode(dc, COLORONCOLOR);   /* GDI scales these: cheap at any size */
-        StretchDIBits(dc, r.left, r.top, dw, dh, 0, 0, w, h, g_src, bmi32(w, h), DIB_RGB_COLORS, SRCCOPY);
-    } else {
-        scale(w, h, dw, dh, present_filter);
-        SetDIBitsToDevice(dc, r.left, r.top, dw, dh, 0, 0, 0, dh, g_img, bmi32(dw, dh), DIB_RGB_COLORS);
-    }
+    const uint32_t* pic = scaler_picture(&g_sc_win);
+    if (y0 < y1 && gdi) {
+        SetStretchBltMode(dc, COLORONCOLOR);
+        StretchDIBits(dc, r.left, r.top, dw, dh, 0, 0, w, h, pic, bmi32(w, h), DIB_RGB_COLORS, SRCCOPY);
+    } else if (y0 < y1)
+        SetDIBitsToDevice(dc, r.left, r.top + y0, dw, y1 - y0, 0, 0, 0, y1 - y0, pic + (size_t)y0 * dw,
+                          bmi32(dw, y1 - y0), DIB_RGB_COLORS);
     ReleaseDC(wnd, dc);
 }
 
@@ -260,10 +205,13 @@ int present_wshot_pending(void) { return g_wshot_due != 0; }
 void present_wshot_write(HWND wnd, const uint8_t* bits, int w, int h, int pitch, int bpp, const PALETTEENTRY* pal) {
     RECT rc, r;
     InterlockedExchange(&g_wshot_due, 0);
-    if (!wnd || !GetClientRect(wnd, &rc) || rc.right <= 0 || rc.bottom <= 0 || !to32(bits, w, h, pitch, bpp, pal)) return;
+    int y0, y1;
+    if (!wnd || !GetClientRect(wnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
     present_layout(present_filter, rc.right, rc.bottom, w, h, &r);
     int dw = r.right - r.left, dh = r.bottom - r.top, cw = rc.right, ch = rc.bottom;
-    scale(w, h, dw, dh, present_filter);   /* the same scaler for every filter: the shot is what the code computes */
+    /* the same scaler for every filter: the shot is what the code computes */
+    if (!scaler_run(&g_sc_shot, bits, w, h, pitch, bpp, pal, dw, dh, present_filter, 1, &y0, &y1)) return;
+    const uint32_t* g_img = scaler_picture(&g_sc_shot);
     uint32_t* win = (uint32_t*)calloc((size_t)cw * ch, 4);
     FILE* f = fopen(g_wshot_path, "wb");
     if (!win || !f) { free(win); if (f) fclose(f); return; }
@@ -416,11 +364,17 @@ static void learn_hz(HWND wnd) {
     g_interval_us = 1000000 / hz;
     if (hz != shown_hz) fprintf(stderr, "[present] pacing to %d Hz\n", hz);
     shown_hz = hz;
-    g_hz_known = 1;
+    g_hz_known = GetTickCount() | 1;
+}
+
+/* The refresh shown frames are paced to: framerate.c's default frame rate. */
+double present_refresh_hz(void) {
+    if (!g_hz_known) return monitor_hz(NULL);
+    return 1e6 / (double)g_interval_us;
 }
 
 int present_due(HWND wnd) {
-    if (!g_hz_known) learn_hz(wnd);
+    if (!g_hz_known || GetTickCount() - (DWORD)g_hz_known > 2000) learn_hz(wnd);   /* moved to another monitor */
     return now_us() >= g_next_us - g_interval_us / 8;   /* a little early is fine: jitter must not skip a refresh */
 }
 
@@ -451,8 +405,18 @@ void present_disarm(HWND wnd) {
 static int g_damaged;   /* the window itself changed (not just a frame held back) */
 int  present_damaged(void) { int d = g_damaged; g_damaged = 0; return d; }
 
+/* WM_PAINT: the game draws its frames through its own WM_PAINT (UpdateWindow,
+ * hundreds a second in game), so a paint message is not damage: DWM keeps
+ * the window's picture. It only asks that the current frame be shown again
+ * (the 100 ms timer does it if the game draws nothing new). */
+void present_repaint(HWND wnd) {
+    (void)wnd;
+    g_dirty = 1;
+}
+
 void present_invalidate(HWND wnd) {
     g_damaged = 1;
+    g_full = 1;
     g_bars_dirty = 1;
     g_hz_known = 0;   /* a new monitor, maybe */
     present_disarm(wnd);

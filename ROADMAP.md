@@ -232,6 +232,32 @@ what needs research or a new subsystem.
 - **Risk:** medium: each miss is cheap to fix once seen, but only play
   finds them.
 
+### 8. Performance
+- **Done (2026-11-22, headless, [docs/performance.md](docs/performance.md)):**
+  a sampling profiler (`--profile FILE`, `tools/profile_report.py`: self and
+  inclusive time by lifted function, host function, module and Windows
+  call). The menus wait for input instead of spinning (97% of a core to
+  10%); the frame rate defaults to the display's refresh (`--fps off`: the
+  game's own); indirect calls are cached (`resolve.c`: the dispatch binary
+  search was 13-31% of the game thread); the presenter draws only the rows
+  that changed, with a separable, bit-exact scaler (`scaler.c`); a WM_PAINT
+  no longer re-arms the pacing timer and re-reads the refresh every frame.
+  Skirmish at 800x600: 97% of a core to 18%; at 2560x1440 fullscreen
+  (`play.ps1`'s case): 98% for 111 frames shown a second to 38% for 180.
+- **Tried:** `/O2` on the hottest generated files (`GEN_HOT_FILES`, now the
+  four hot files by default): as fast to compile as `/O1`, a few percent at
+  2560x1440, nothing at 800x600 (pcrecomp's flag helpers, not inlined at
+  `/O1`). `__forceinline` on the helpers made `/O1` 7x slower to compile:
+  not kept.
+- **Real screen (2026-11-22, with the user's go-ahead):**
+  `present_check_real.ps1` 38/38; 2560x1440 fullscreen in game: 95% of a core
+  for 128 frames shown a second before, 45% for 180 after.
+- **GPU presenter:** `--present d3d11` (`present_d3d.c`), opt-in: real-screen
+  check 38/38 and text fields fine, but the same CPU as change-only GDI here.
+- **Left:** `/O2` for the whole lift (one full build to time it); callbacks
+  into the window procedure without an exception each (pcrecomp).
+- **Risk:** low.
+
 ## Later
 - DirectPlay multiplayer over LAN.
 

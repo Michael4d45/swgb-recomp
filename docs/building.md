@@ -64,8 +64,10 @@ build\swgbrecomp.exe --run --headless --record out.mp4        no window, record 
 build\swgbrecomp.exe --run --headless --shot 20 menu.bmp      save the frame after 20 s
 build\swgbrecomp.exe --run --keys "10:move:330:240,11:click:330:240"   scripted mouse and keys
 build\swgbrecomp.exe --run --headless --watchdog 60 --files   stop after 60 s, log every file opened
-build\swgbrecomp.exe --run --fps 60                           60 frames a second in game
+build\swgbrecomp.exe --run --fps 60                           60 frames a second in game (default: the refresh)
+build\swgbrecomp.exe --run --fps off                          the game's own rate: ~900 a second, a whole core
 build\swgbrecomp.exe --run --headless --fps-log               frames, game clock, steps a second
+build\swgbrecomp.exe --run --headless --profile p.txt         where the game thread's time goes (performance.md)
 build\swgbrecomp.exe --run --films "<Steam>\Game"            films the game cannot find, from there
 build\swgbrecomp.exe --run --fullscreen --filter integer      borderless fullscreen, whole-number scaling
 py -3 tools\conformance.py                                    the milestones, PASS/FAIL
@@ -84,6 +86,7 @@ rectangle (a click in a bar lands on the nearest edge of the picture).
 | `--fullscreen` | `Alt+Enter` toggles | A borderless window the size of the monitor the window is on. The desktop's display mode is never changed, so Alt+Tab and other monitors behave as for any window. |
 | `--scale N` | | The window starts at N times the game's mode (default: 85% of the screen height). Resize it freely after that. |
 | `--refresh HZ` | | Pace frames to HZ instead of the monitor's refresh rate. |
+| `--present gdi\|d3d11` | | How the picture reaches the window: GDI (default) or a Direct3D 11 flip-model swap chain that scales on the GPU (falls back to GDI if it cannot start); [performance.md](performance.md). |
 | `--present-log` | | Once a second on stderr: presents, frames shown, the refresh rate and filter, and how many frames the timer showed (held back, window damage, a text field up). |
 
 The game presents far more often than a display refreshes (every
@@ -129,7 +132,8 @@ from a file, a step to a line.
 `--exe` point at other folders; `--films DIR` is where the films are when
 neither the game folder's `avi\` nor disc 2 has them ([movies.md](movies.md)).
 `NATIVE32_TRACE_EH=1` logs every guest exception and where it lands.
-`--fps N` and `--fps-log` are in [framerate.md](framerate.md).
+`--fps N` and `--fps-log` are in [framerate.md](framerate.md); `--profile` and
+what costs what in [performance.md](performance.md).
 
 ### Any resolution: `--res`
 

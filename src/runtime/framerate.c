@@ -41,11 +41,13 @@
 #include "softdd.h"
 #include "softdd_int.h"
 #include "framerate.h"
+#include "present.h"
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
 
 static int    g_log;             /* --fps-log */
-static double g_fps;             /* --fps N, 0: the game's own rate */
+static double g_fps;             /* --fps N; 0: the display's refresh (present.c) */
+static int    g_pace = 1;        /* --fps off: 0, the game's own rate and its spin */
 
 /* ---- the engine's state, read from guest memory ----------------------------- */
 #define GAME          0x006A0FD4u   /* the game object */
@@ -206,13 +208,18 @@ WRAP_SET(v3)
 /* Frames that differ from the one before: what the player can see change. */
 static volatile LONG g_changed;
 static void on_present(const uint8_t* bits, int w, int h, int pitch, long frame) {
-    static uint64_t last;
-    uint64_t x = 1469598103934665603ull;
-    const uint32_t* p = (const uint32_t*)bits;
+    /* against a copy of the last one: a 64-bit hash of every word cost more than
+     * the game's own frame at 2560x1440, and --fps-log is for measuring */
+    static uint8_t* last;
+    static size_t cap, size;
+    size_t n = (size_t)h * pitch;
     (void)w; (void)frame;
-    for (size_t i = 0, n = (size_t)h * pitch / 4; i < n; i++) x = (x ^ p[i]) * 1099511628211ull;
-    if (x != last) InterlockedIncrement(&g_changed);
-    last = x;
+    if (n != size || !last || memcmp(bits, last, n)) {
+        if (cap < n) { free(last); last = (uint8_t*)malloc(n); cap = last ? n : 0; }
+        if (last) memcpy(last, bits, n);
+        size = last ? n : 0;
+        InterlockedIncrement(&g_changed);
+    }
 }
 
 void framerate_on_ddraw(void* dd) {
@@ -265,7 +272,9 @@ static void wait_ms(DWORD ms) {
 /* Called when the game's PeekMessage found nothing, so its idle is next. */
 static void pace(void) {
     uint32_t sc = game_screen();
-    double period = 1000.0 / g_fps;
+    double fps = g_fps > 0 ? g_fps : present_refresh_hz();   /* the default: no frame is drawn that is never shown */
+    if (!(g_fps > 0)) fps = fps < 30 ? 30 : fps > 1000 ? 1000 : fps;
+    double period = 1000.0 / fps;
     DWORD now = timeGetTime();
     if (!sc) { g_seen = 0; wait_ms(1); return; }   /* menus: draw on change only; just yield */
     uint32_t last = MEM32(sc + SCREEN_LAST);
@@ -296,7 +305,7 @@ void framerate_PeekMessageA(void) {
     g_esp = esp;
     if (!r) {
         if (g_log) watch_world();
-        if (g_fps > 0) pace();
+        if (g_pace) pace();
     }
     SetLastError(err);
     g_eax = r;
@@ -375,8 +384,9 @@ static DWORD WINAPI log_thread(LPVOID unused) {
 int framerate_arg(int argc, char** argv, int i) {
     if (!strcmp(argv[i], "--fps-log")) { g_log = 1; return 1; }
     if (!strcmp(argv[i], "--fps") && i + 1 < argc) {
+        if (!_stricmp(argv[i + 1], "off")) { g_pace = 0; g_fps = 0; return 2; }
         g_fps = atof(argv[i + 1]);
-        if (g_fps < 1 || g_fps > 1000) { fprintf(stderr, "--fps: 1 to 1000\n"); exit(1); }
+        if (g_fps < 1 || g_fps > 1000) { fprintf(stderr, "--fps: 1 to 1000, or off\n"); exit(1); }
         return 2;
     }
     return 0;
@@ -384,9 +394,10 @@ int framerate_arg(int argc, char** argv, int i) {
 
 void framerate_start(void) {
     InitializeCriticalSection(&g_cs);
-    if (g_fps > 0) {
+    if (g_pace) {
         timeBeginPeriod(1);   /* waits to the millisecond */
-        printf("  frame rate: %.0f a second in game (--fps)\n", g_fps);
+        if (g_fps > 0) printf("  frame rate: %.0f a second in game (--fps)\n", g_fps);
+        else printf("  frame rate: the display's refresh in game (--fps N to choose, --fps off for the game's own)\n");
     }
     if (g_log) {
         stack_init();
