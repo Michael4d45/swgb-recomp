@@ -47,10 +47,20 @@ MODULES = [
 # jumped to 0x00646465, not a function entry).
 RUN_SEEDS = [
     0x00427090,
-    # A vtable entry (0x0066100C) the catalog folded into sub_0056480C: called
-    # from 0x00406E20 a minute or two into the menus, an unresolved ICALL and a
-    # null read in sub_005C45C0.
+    # Entries named only by a pointer in data or an immediate in code, that the
+    # catalog lost (tools/code_ptr_seeds.py classifies every such pointer;
+    # docs/lifting.md, "Pointers the catalog dropped"). Vtable slots:
+    # 0x0066100C, folded into sub_0056480C, a false body decoded from
+    # sub_005641F0's switch tables: called from 0x00406E20 a minute or two into
+    # a skirmish, an unresolved ICALL and a null read in sub_005C45C0.
     0x005648A0,
+    0x005C6D90,     # 0x00664550, behind sub_005C63B0's switch table (false sub_005C6D61, sub_005C6D6F)
+    0x004C39B0,     # 0x00659C18 and 0x006649C4: `int3; mov al, 1; ret 4`
+    # zlib's default zalloc/zfree and friends, stored into a z_stream by code
+    # the catalog does not reach (0x00623A84..0x006248A4: mov [ebx+18h], imm).
+    0x00625E80, 0x00625E90, 0x00625EA0, 0x00625EC0, 0x00625EE0, 0x00625EF0, 0x00625F00,
+    0x00626060, 0x00626070, 0x00626080, 0x006260B0, 0x006260D0, 0x006260F0, 0x00626110,
+    0x00626130, 0x00626140,
     0x00646465,
     0x0064EE80,
     0x0064EEA0,
@@ -237,6 +247,12 @@ def lift_module(path, catalog, args, out, extra_roots):
         if fr and fr[0]:
             frames[a] = fr
     resume = set().union(*(r for r, _ in frames.values())) if frames else set()
+    # A seed that is a handler's continuation would run as a call and "return"
+    # into _except_handler3: code_ptr_seeds.py files those as `seh`, never seeds.
+    bad = resume & set(RUN_SEEDS)
+    if bad:
+        sys.exit('seeds that are exception-handler continuations: %s'
+                 % ', '.join('0x%08X' % a for a in sorted(bad)))
     dropped = resume & set(byaddr)
     for a in dropped:
         del byaddr[a]
