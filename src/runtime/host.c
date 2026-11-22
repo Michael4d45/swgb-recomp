@@ -865,7 +865,7 @@ recomp_func_t recomp_lookup_manual(uint32_t va) {
 void recomp_not_lifted(uint32_t va) {
     fprintf(stderr, "\n[not-lifted] sub_%08X  (called from 0x%08X)\n", va, g_cur_func);
     recomp_dump_trace("not-lifted");
-    native32_dump_icalls(8);
+    coverage_dump_icalls(8);
     fflush(stderr);
     TerminateProcess(GetCurrentProcess(), 2);
 }
@@ -899,7 +899,7 @@ static LONG CALLBACK crash(EXCEPTION_POINTERS* ep) {
     crash_emit("  eax=%08X ecx=%08X edx=%08X ebx=%08X esp=%08X ebp=%08X esi=%08X edi=%08X\n",
                g_eax, g_ecx, g_edx, g_ebx, g_esp, g_ebp, g_esi, g_edi);
     crash_emit("last indirect calls (newest first):\n");
-    for (int i = 1; i <= 12 && i <= (int)g_icall_trace_idx; i++) {
+    for (uint32_t i = 1; i <= 12 && i <= g_icall_trace_idx; i++) {   /* not (int): 2^31 calls is ~10 minutes */
         uint32_t k = (g_icall_trace_idx - i) & (ICALL_TRACE_SIZE - 1);
         const char* nm = native32_name(g_icall_trace[k]);
         crash_emit("  0x%08X  from 0x%08X  %s\n", g_icall_trace[k], g_icall_from[k], nm ? nm : "");
@@ -917,7 +917,7 @@ static DWORD WINAPI watchdog(LPVOID unused) {
     Sleep(g_watchdog_s * 1000);
     fprintf(stderr, "\n[watchdog] %lu s: in sub_%08X, last native call %s, %u indirect calls, %ld frames\n",
             g_watchdog_s, g_cur_func, g_cur_import, g_icall_count, softdd_frames);
-    native32_dump_icalls(8);
+    coverage_dump_icalls(8);
     recomp_trace_flush();
     softdd_finish();
     fflush(stdout);

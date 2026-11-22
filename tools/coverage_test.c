@@ -1,7 +1,8 @@
 /* src/runtime/coverage.c without the game: an unresolved indirect call stops
  * the run with exit code 5 and says what to seed; SWGB_ICALL_CONTINUE=1
  * reports each address once and carries on; an exception handler's
- * continuation (the hook coverage.c chains to) is still handed to it.
+ * continuation (the hook coverage.c chains to) is still handed to it; the
+ * indirect-call ring still prints after 2^31 calls.
  *
  *   cl /nologo /DRECOMP_FLAT_MEMORY /DRECOMP_LOCAL_REGS tools\coverage_test.c src\runtime\coverage.c
  *      /Isrc\runtime /I%PCRECOMP%\runtime\native32 /I%PCRECOMP%\runtime\recomp32
@@ -24,7 +25,8 @@ const uint32_t recomp_dispatch_count = 3;
 
 /* What coverage.c uses from native32, the tracer and softdd. */
 int native32_in_guest(uint32_t va) { return va >= 0x00400000u && va < 0x007AF000u; }
-void native32_dump_icalls(int n) { fprintf(stderr, "last indirect calls (newest first): %d\n", n); }
+const char* native32_name(uint32_t va) { return va == 0x77E4DAA0u ? "KERNEL32.dll!HeapAlloc" : NULL; }
+uint32_t g_icall_trace[ICALL_TRACE_SIZE], g_icall_from[ICALL_TRACE_SIZE], g_icall_trace_idx;
 void recomp_dump_trace(const char* why) { (void)why; }
 void recomp_trace_flush(void) {}
 void softdd_finish(void) {}
@@ -43,6 +45,9 @@ int main(int argc, char** argv) {
         coverage_init();
         g_cur_func = 0x00406E20u;
         g_esp = 0;
+        /* A long game: past 2^31 indirect calls, where an (int) comparison printed none. */
+        g_icall_trace_idx = 0x90000001u;
+        g_icall_trace[0] = 0x77E4DAA0u, g_icall_from[0] = 0x0062EFC3u;
         int r = recomp_eh_jump_hook((uint32_t)strtoul(argv[1], NULL, 0));
         fprintf(stderr, "returned %d\n", r);
         return 0;
@@ -62,6 +67,7 @@ int main(int argc, char** argv) {
             CHECK(strstr(out, "nearest below: sub_0056480C (+0x94)") != NULL);
             CHECK(strstr(out, "seeds_from_logs.py") != NULL);
             CHECK(strstr(out, "returned") == NULL);
+            CHECK(strstr(out, "0x77E4DAA0  from 0x0062EFC3  KERNEL32.dll!HeapAlloc") != NULL);
         } else {
             CHECK(rc == 0);
             CHECK(strstr(out, "carrying on") != NULL);

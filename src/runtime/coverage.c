@@ -45,6 +45,15 @@ static uint32_t lifted_below(uint32_t va) {
     return lo ? recomp_dispatch_table[lo - 1].address : 0;
 }
 
+void coverage_dump_icalls(int n) {
+    fprintf(stderr, "last indirect calls (newest first):\n");
+    for (uint32_t i = 1; i <= (uint32_t)n && i <= g_icall_trace_idx && i <= ICALL_TRACE_SIZE; i++) {
+        uint32_t k = (g_icall_trace_idx - i) & (ICALL_TRACE_SIZE - 1);
+        const char* nm = native32_name(g_icall_trace[k]);
+        fprintf(stderr, "  0x%08X  from 0x%08X  %s\n", g_icall_trace[k], g_icall_from[k], nm ? nm : "");
+    }
+}
+
 static int coverage_miss(uint32_t va) {
     static volatile LONG once;
     static uint32_t seen[64];
@@ -59,7 +68,7 @@ static int coverage_miss(uint32_t va) {
         if (k < 64) seen[k] = va;
         fprintf(stderr, "[coverage] unresolved indirect call to 0x%08X from sub_%08X: carrying on "
                         "(SWGB_ICALL_CONTINUE): what follows is not trustworthy\n", va, g_cur_func);
-        native32_dump_icalls(8);
+        coverage_dump_icalls(8);
         return 0;       /* the macro prints its "ICALL: unresolved VA" line, eax = 0 */
     }
 
@@ -88,7 +97,7 @@ static int coverage_miss(uint32_t va) {
     if (g_esp >= 0x10000u && !IsBadReadPtr((void*)(uintptr_t)g_esp, 16))
         fprintf(stderr, "  stack: %08X %08X %08X %08X\n",
                 MEM32(g_esp), MEM32(g_esp + 4), MEM32(g_esp + 8), MEM32(g_esp + 12));
-    native32_dump_icalls(16);
+    coverage_dump_icalls(16);
     recomp_dump_trace("unresolved indirect call");
     fprintf(stderr, "stopped at the miss (exit code 5) rather than run on with eax = 0 into an unrelated fault;\n"
                     "SWGB_ICALL_CONTINUE=1 carries on instead\n");
