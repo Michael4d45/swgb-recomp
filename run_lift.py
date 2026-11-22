@@ -47,6 +47,10 @@ MODULES = [
 # jumped to 0x00646465, not a function entry).
 RUN_SEEDS = [
     0x00427090,
+    # A vtable entry (0x0066100C) the catalog folded into sub_0056480C: called
+    # from 0x00406E20 a minute or two into the menus, an unresolved ICALL and a
+    # null read in sub_005C45C0.
+    0x005648A0,
     0x00646465,
     0x0064EE80,
     0x0064EEA0,
