@@ -145,19 +145,10 @@ then build with `PCRECOMP=~/star/pcrecomp-linux`. Where they go (fork,
 pull request upstream) is your call.
 
 1. **Reach the main menu headless** (step 5's loop) — done.
-2. **Text in 8-bit surfaces** (pcrecomp) — done on `swgb-linux-palette`
-   (`4d69543`): `sf_GetDC` passes the live DD palette; `pack()` nearest-
-   matches through it (softdd's `sync_dib_palette`).
-3. **Text fields** (pcrecomp, then here):
-   - `user32.c` `edit_proc` (about line 932): `WM_PAINT` and `WM_PRINT`
-     draw the text, the selection and the caret into the DC, in the
-     colours the parent picks on `WM_CTLCOLOREDIT`.
-   - Add a host-side way to walk a window's children.
-   - Then a new `src/linux/fields.c`: set `hle_dd_frame_hook` to return a
-     copy of the primary with each visible child printed in. Port
-     `compose` and `draw_child` from `softdd.c`.
-   - Test with Single Player, New Player, and typing a name with `--keys`
-     (`docs/testing.md`).
+2. **Text in 8-bit surfaces** (pcrecomp) — done on `swgb-linux-palette`.
+3. **Text fields** — done: EDIT `WM_PRINT` paint in pcrecomp;
+   `src/linux/fields.c` composes them into the primary. New Player name
+   shows with `--keys` (`docs/testing.md`).
 4. **Window behaviour:** check whether the game pauses when the SDL window
    loses focus. On Windows, `host.c`'s `host_wndproc` forces the window
    active. If it pauses, filter `WM_ACTIVATEAPP` there.

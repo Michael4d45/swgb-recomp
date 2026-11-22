@@ -44,8 +44,8 @@ already has what Track 2 is adding to softdd: sharp, smooth, CRT, nearest
 and integer scaling, letterboxing, F11 fullscreen and mouse mapping. Making
 softdd portable would mean writing a GDI for it, which win32hle already is.
 
-What softdd does that win32hle's DirectDraw does not do yet is listed under
-the gaps below: the text fields (palette-true 8-bit menu text is done).
+softdd's palette-true 8-bit text and EDIT compose are done on this track;
+remaining gaps are below.
 `--shot` and `--record` are the native host's own (`main.c`, through
 `hle_dd_frame`), as in Red Alert 2's.
 
@@ -121,26 +121,14 @@ now, and its `--keys` parser is a second copy of `keyscript.c`'s grammar.
 Once those tracks have merged, `host.c` should parse with `keyscript.c`
 instead. That is a deletion with no change in behaviour.
 
-### 2. Text fields (EDIT controls)
+### 2. Text fields (EDIT controls) — done
 
-The brief said win32hle has no EDIT control. It has one now: `user32.c`'s
-`edit_proc` keeps the text, the selection, the focus, `EM_*` and `EN_*`. But
-its `WM_PAINT` draws nothing. On Windows, softdd composes each visible child
-into a copy of the frame with `WM_PRINT` and draws the caret
-(`softdd.c`, `compose`). The native equivalent:
-
-- **pcrecomp (`user32.c`):** the EDIT draws itself into a DC on `WM_PAINT`
-  and `WM_PRINT`: its font (`WM_SETFONT`), the colours its parent chooses
-  on `WM_CTLCOLOREDIT` (the game's procedure, guest code), the selection,
-  and the caret, blinking at `GetCaretBlinkTime`. Plus a host-side way to
-  walk a window's children (`hle_window_child`/`hle_window_next`, or
-  `GetWindow` exposed).
-- **here (`src/linux/fields.c`, new):** `hle_dd_frame_hook` returns a copy
-  of the primary with each visible child printed into it at its place. This
-  is `compose` from softdd, against `hle_gdi_surface_dc`.
-
-Effort: 2 to 3 days. The pcrecomp half is useful to any game with text
-fields over DirectDraw.
+The brief said win32hle has no EDIT control. It has one: `user32.c`'s
+`edit_proc` keeps the text, the selection, the focus, `EM_*` and `EN_*`,
+and paints on `WM_PAINT` / `WM_PRINT` (font, `WM_CTLCOLOREDIT` colours,
+selection, blinking caret). `src/linux/fields.c` sets `hle_dd_frame_hook`
+to softdd's `compose`: a copy of the primary with each visible EDIT
+`WM_PRINT`ed in. New Player shows the typed name.
 
 ### 3. Text in 8-bit surfaces — done
 
@@ -294,7 +282,7 @@ The command line is the Windows host's: `--headless`, `--record`,
   (`--shot`) with white GDI menu labels (gap 3, pcrecomp
   `swgb-linux-palette`).
 
-Not done: text fields, a played skirmish, music, movies, macOS.
+Not done: a played skirmish, music, movies, macOS.
 
 ## Effort
 

@@ -469,6 +469,7 @@ int main(int argc, char** argv) {
      * is not visible yet, so show the Win32/SDL cursor the guest SetCursor'd
      * (or the system arrow) for playtesting. */
     hle_screen_cursor_hook = swgb_show_host_cursor;
+    swgb_fields_init();                                   /* EDIT fields into the primary (New Player, …) */
     if (hle_screen_open("Star Wars Galactic Battlegrounds", fullscreen, headless) != 0) return 1;
     hle_on_exit = on_exit_close;
     if (g_record) spawn(record_thread);

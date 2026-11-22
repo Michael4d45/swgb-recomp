@@ -8,6 +8,9 @@ extern int  swgb_test_run;    /* --headless, --keys or --watchdog: boxes answer 
 /* shims.c: the game's own answers, registered ahead of win32hle's. */
 void swgb_register_shims(void);
 
+/* fields.c: compose EDIT controls into the primary (softdd's compose). */
+void swgb_fields_init(void);
+
 /* main.c: a file open the game made (--files, --keys on:NAME). */
 void swgb_file_seen(const char* name, int ok);
 
