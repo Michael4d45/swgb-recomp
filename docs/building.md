@@ -16,7 +16,8 @@ Prerequisites: Windows 10 or 11; Python 3.10+ (`py -3 --version` should say
 `Python 3.1x`; if `python` opens the Microsoft Store, that is the Store alias:
 use `py -3` or turn the alias off in Settings); `py -3 -m pip install
 capstone`; Visual Studio 2022 or its Build Tools with "Desktop development
-with C++" (CMake and Ninja come with it); ffmpeg on `PATH` for `--record`.
+with C++" (CMake and Ninja come with it); ffmpeg on `PATH` for `--record`
+and the films ([movies.md](movies.md)).
 
 1. Fetch the toolkit beside this folder:
    ```
@@ -63,12 +64,14 @@ build\swgbrecomp.exe --run --headless --record out.mp4        no window, record 
 build\swgbrecomp.exe --run --headless --shot 20 menu.bmp      save the frame after 20 s
 build\swgbrecomp.exe --run --keys "10:move:330:240,11:click:330:240"   scripted mouse and keys
 build\swgbrecomp.exe --run --headless --watchdog 60 --files   stop after 60 s, log every file opened
+build\swgbrecomp.exe --run --films "<Steam>\Game"            films the game cannot find, from there
 py -3 tools\conformance.py                                    the milestones, PASS/FAIL
 ```
 
 `--args "..."` passes switches to the game itself; `--game`, `--cd` and
-`--exe` point at other folders. `NATIVE32_TRACE_EH=1` logs every guest
-exception and where it lands.
+`--exe` point at other folders; `--films DIR` is where the films are when
+neither the game folder's `avi\` nor disc 2 has them ([movies.md](movies.md)).
+`NATIVE32_TRACE_EH=1` logs every guest exception and where it lands.
 
 ## Build options
 

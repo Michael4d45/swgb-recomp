@@ -80,18 +80,24 @@ what needs research or a new subsystem.
   nothing to interpolate.
 
 ### 6. Cutscenes
-- **Known:** the game plays its films through `MCIWndCreateA` (MSVFW32).
-  The AVIs are Indeo 5 (`IV50`), which Windows 10 and 11 no longer ship
-  a decoder for, and an MCIWnd is a child window, which only reaches the
-  picture through softdd's composition. The Steam install has only Clone
-  Campaigns' `xintro.avi` and `xlogo1.avi`; the base game's campaign films
-  are on disc 2 (`Game\Avi`), which Steam does not have.
-- **Work:** shim the MCIWnd calls the game makes; decode the video and
-  audio with FFmpeg's libraries (Indeo 5 is supported) into softdd frames
-  and DirectSound; skip on Esc or a click; the same path headless and in
-  `--record`. Test with the Clone Campaigns intro, then disc 2's films.
-- **Risk:** medium. A new subsystem, and base-game films need disc 2 to
-  test.
+- **Done (branch `track/cutscenes`):** the films play, headless and in
+  `--record` too ([docs/movies.md](docs/movies.md)). `ICInfo` says yes to
+  Indeo 5 when ffmpeg is on `PATH`; `MCIWndCreateA` makes the host's own
+  child window (`src/runtime/movie.c`), which answers the MCIWnd messages
+  the game sends (`GETPALETTE`, `PLAY`, `GETMODE`, `STOP`, `PAUSE`,
+  `RESUME`, `WM_CLOSE`). Two child `ffmpeg` processes decode the video
+  (raw frames on a pipe) and the sound (PCM to `waveOut`, whose position is
+  the clock); softdd's `compose()` prints the window into its frames (16-bit,
+  or dithered into the film palette with the game's `8BITVIDEO`). The
+  game's own skipping works (a click; Enter, Space, Esc). A missing or
+  broken film is skipped, as before. `--films DIR` finds films elsewhere.
+  Tested with the Saga's Clone Campaigns `xlogo1.avi` and `xintro.avi` in
+  place of the base game's `logo1` and `intro`: every frame shown, the
+  intro's last frame 20 ms after its time over 70.7 s.
+- **Left:** disc 2's own films (`logo1`, `intro`, and the campaigns'
+  `INTRO` and `celebration`): untested without the disc, though the path and
+  format are the same. `--record` has no sound.
+- **Risk:** low now.
 
 ### 7. Linux and macOS
 - **Known:** pcrecomp's `win32hle` implements Win32 on libc, POSIX and
