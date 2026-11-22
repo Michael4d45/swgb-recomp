@@ -17,7 +17,10 @@ is the steps.
   - Headless `--shot` reaches the main menu with GDI labels (needs
     pcrecomp `swgb-linux-palette` or newer: 8bpp TextOut + surface
     palette). DirectPlay Create + VERSION 4.06.03.0516 required or boot
-    MessageBox-exits. Host shows the SDL cursor for playtesting.
+    MessageBox-exits. Cursor follows ShowCursor: host SDL pointer on the
+    menu (Genie does not blit mcursor there), hidden when the game hides it.
+    Absolute mouse while the pointer is shown so menu clicks hit; no-VSync
+    present for selection-drag lag.
   - `tools/linux_menu_shots.sh` captures boot + Single Player hover PNGs.
   - `src/linux/eh.c` supplies `recomp_eh_push`/`pop` (win32hle has no
     guest EH yet).

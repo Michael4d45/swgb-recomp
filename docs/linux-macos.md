@@ -49,7 +49,15 @@ remaining gaps are below.
 `--shot` and `--record` are the native host's own (`main.c`, through
 `hle_dd_frame`), as in Red Alert 2's.
 
-### The lifted C under gcc
+### The lifted C under clang (preferred) or gcc
+
+`./build-linux.sh` picks **clang** when `CC` is unset. clang's `musttail`
+makes `RECOMP_ITAIL` a real `jmp`; gcc's fallback `(fn)(); return` is a
+call, so THIS_COD's blitter jump tables grow the C stack and SIGSEGV a few
+frames into Standard Game (~23k frames). gcc 15+ has `musttail` too but
+rejects it in any function that contains `setjmp` (`RECOMP_EH_FRAME`), so
+it cannot host those ITAILs. Use `CC=gcc` only for bring-up that stays on
+the main menu.
 
 Checked 2026-11-21 against the shared lift (`A:\Games\star\swgb-recomp\src\recomp\gen`,
 54 files, 238 MB of C), with Ubuntu 24.04's gcc 13 in WSL:
@@ -62,8 +70,8 @@ Checked 2026-11-21 against the shared lift (`A:\Games\star\swgb-recomp\src\recom
 - `-O1 -c` of `recomp_0000.c` (2.9 MB): 11 s. If time scales with size, the
   whole lift is about 15 minutes on one core and 2 to 3 minutes on eight.
   MSVC takes more than 30 minutes.
-- `-m32` (flat) is untested: the machine has no multilib. Red Alert 2 and
-  Tiberian Sun build their lifts both ways from the same generator.
+- `-m32` (flat) runs with clang or gcc-multilib. Red Alert 2 and Tiberian Sun
+  build their lifts both ways from the same generator.
 - `src/linux/*.c`, `keyscript.c` and `inflate.c` against `win32hle.h`:
   clean under `-Wall -Wextra`.
 

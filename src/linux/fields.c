@@ -16,10 +16,6 @@
 #define GW_HWNDNEXT 2u
 #define GW_HWNDPREV 3u
 #define GW_CHILD    5u
-#define WM_PRINT    0x0317u
-#define PRF_CLIENT  0x04u
-#define PRF_ERASEBKGND 0x08u
-
 static uint8_t *g_comp;
 static size_t   g_comp_n;
 static int      g_cw, g_ch, g_cpitch, g_cbpp;
@@ -96,7 +92,9 @@ static const uint8_t *compose(surf_t *s) {
         if (b > s->h) b = s->h;
         hle_gdi_viewport(hdc, l, t);
         hle_gdi_clip(hdc, 1, l, t, r, b);
-        hle_send(c, WM_PRINT, hdc, PRF_CLIENT | PRF_ERASEBKGND);
+        /* Bypass the guest EDIT subclass: it SelectObject's the WM_PRINT DC
+         * and clears px before CallWindowProc reaches win32hle's paint. */
+        hle_paint_edit(c, hdc);
         hle_gdi_clip(hdc, 0, 0, 0, 0, 0);
         hle_gdi_viewport(hdc, 0, 0);
     }
