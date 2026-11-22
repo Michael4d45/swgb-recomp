@@ -2,7 +2,7 @@
  * profile: where the game thread's time goes, by sampling (--profile FILE).
  *
  * A thread of its own wakes about every millisecond (a high-resolution
- * waitable timer), suspends the game thread, reads its EIP and ESP
+ * waitable timer, at a random point of each interval), suspends the game thread, reads its EIP and ESP
  * (GetThreadContext), copies the top of its host stack, and lets it go. The
  * lifted code is ordinary C on the host stack, one C function per guest
  * function, so the stack holds the chain of lifted callers: values that point
@@ -149,8 +149,7 @@ static DWORD WINAPI sampler(LPVOID unused) {
     HANDLE tm = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!tm) tm = CreateWaitableTimerW(NULL, FALSE, NULL);
     LARGE_INTEGER due;
-    due.QuadPart = -(10000000LL / g_hz);
-    SetWaitableTimer(tm, &due, 1000 / g_hz ? 1000 / g_hz : 1, NULL, NULL, FALSE);
+    uint32_t rng = GetTickCount() | 1;
     LARGE_INTEGER qf, t0, t, last_t;
     QueryPerformanceFrequency(&qf);
     QueryPerformanceCounter(&t0);
@@ -161,6 +160,12 @@ static DWORD WINAPI sampler(LPVOID unused) {
     int in_window = 0;
     DWORD next_write = GetTickCount() + 10000;
     while (!g_done) {
+        /* one shot at a random point of each interval (0.5 to 1.5 of it): a
+         * steady 1 ms beat samples a thread that paces itself to the same
+         * clock interrupt always at the same moment, just before it wakes */
+        rng = rng * 1103515245u + 12345u;
+        due.QuadPart = -(int64_t)(10000000LL / g_hz * (512 + (rng >> 22)) / 1024);
+        SetWaitableTimer(tm, &due, 0, NULL, NULL, FALSE);
         if (WaitForSingleObject(tm, 50) != WAIT_OBJECT_0) continue;
         QueryPerformanceCounter(&t);
         double at = (double)(t.QuadPart - t0.QuadPart) / qf.QuadPart;
