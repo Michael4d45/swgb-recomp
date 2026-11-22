@@ -88,6 +88,14 @@ TOP_ICONS = [(190, 441), (212, 441), (233, 441), (254, 441)]
 GAME_MENU = {'save': (408, 218), 'options': (408, 317), 'about': (408, 350), 'cancel': (408, 390)}
 OPTIONS_FAST, OPTIONS_OK = (135, 248), (305, 455)     # the game menu's Options: Speed
 SAVE_OK = (178, 568)                 # the Save Game screen; the name field has the focus
+SP_SAVED = (603, 286)                # Single Player: Saved Game
+SAVED_ROW0, SAVED_STEP, SAVED_OK = 121, 21, (178, 568)   # its list (alphabetical) and OK
+TEAM_X, TEAM_ME_Y = 472, 94          # the setup screen's Team buttons: each click is the next team
+SCORE_TABS = [(130, 562), (238, 562), (346, 562), (454, 562), (562, 562), (672, 562)]
+SCORE_MENU = (710, 514)              # the score screen: Main Menu (Scenario Menu in a campaign)
+# OOM-9's missions on its campaign screen, in order (each appears when the one before is won).
+OOM9_MISSIONS = [(150, 140), (372, 140), (135, 265), (368, 265)]
+WIN_CHEAT = 'skywalker'              # typed in the chat: instant victory
 COMMAND_CENTER = (400, 170)         # where the view starts: the command center
 MONKEY_KEYS = list('abcdefghijklmnopqrstuvwxyz0123456789') + \
     ['esc', 'enter', 'space', 'tab', 'up', 'down', 'left', 'right', 'home', 'end', 'bksp'] + \
@@ -175,6 +183,46 @@ def save_game(s, t, name):
         s.at(t + 5 + 0.3 * k, ch)
     s.click(t + 6 + 0.3 * len(name), SAVE_OK)
     return t + 20
+
+
+def chat(s, t, words):
+    """Enter, the words, Enter: the chat line, where the cheats go too."""
+    s.at(t, 'enter')
+    for k, ch in enumerate(words):
+        s.at(t + 1 + 0.3 * k, 'space' if ch == ' ' else ch)
+    s.at(t + 2 + 0.3 * len(words), 'enter')
+    return t + 3 + 0.3 * len(words)
+
+
+def setup_fixed(s, t, others, size, diff, teams=None):
+    """Standard Game with a fixed setup. teams: team clicks per row, me first (0 = no team)."""
+    s.click(t, MAIN_SINGLE)
+    s.click(t + 15, SP_STANDARD)
+    t += 33
+    t = pick(DD_OTHERS, others - 1, s, t)
+    t = pick(DD_SIZE, size, s, t)
+    t = pick(DD_DIFFICULTY, diff, s, t)
+    for row, n in enumerate(teams or []):
+        y = TEAM_ME_Y if row == 0 else CIV_ROW0 + CIV_ROW_STEP * (row - 1)
+        for k in range(n):
+            s.click(t, (TEAM_X, y))
+            t += 1.2
+    s.click(t + 1, SETUP_START)
+    return t + 1, {'others': others, 'size': SIZES[size], 'difficulty': DIFFICULTIES[diff], 'teams': teams}
+
+
+def score_tour(s, t, out, tag):
+    """Each tab of the score screen, a shot of the first and the last."""
+    s.at(t, 'shot=%s' % os.path.join(out, 'score_%s.bmp' % tag))
+    for k, xy in enumerate(SCORE_TABS[1:] + SCORE_TABS[:1]):
+        s.click(t + 2 + 2 * k, xy)
+    s.at(t + 2 + 2 * len(SCORE_TABS), 'shot=%s' % os.path.join(out, 'score_%s_tabs.bmp' % tag))
+    return t + 4 + 2 * len(SCORE_TABS)
+
+
+def shots(s, t0, t1, out, every=300):
+    for ts in range(int(t0) + 30, int(t1), every):
+        s.at(ts, 'shot=%s' % os.path.join(out, 'shot_%04d.bmp' % ts))
 
 
 def habits(s, rnd, t0, t1, shots, out):
@@ -275,17 +323,24 @@ def analyse(log, keys_text):
             by5[int(t // 300) * 5] = by5.get(int(t // 300) * 5, 0) + 1
         fh = {'functions': len(first), 'new_per_5_minutes': {'%d-%d' % (k, k + 5): v for k, v in sorted(by5.items())},
               'timeline': [['%.1f' % t, va] for t, va in first]}
+    # How games ended: the music the game opens (--files) for a victory or a defeat.
+    endings, now = [], 0.0
+    for l in lines:
+        if l.startswith('[keys] '):
+            mm = re.match(r'\[keys\] ([0-9.]+)s', l)
+            now = float(mm.group(1)) if mm else now
+        elif l.startswith('[host] open') and re.search(r'stream\\(won\d|lost)\.mp3 -> ok', l, re.I):
+            kind = 'defeat' if 'lost' in l.lower() else 'victory'
+            if not endings or endings[-1][1] != kind or now - endings[-1][0] > 30:
+                endings.append((now, kind))
     return {'events': events, 'watchdog': bool(m), 'last_key': last_key,
+            'endings': [['%.0f' % t, k] for t, k in endings],
             'modes': ['%sx%s' % mm for mm in modes], 'frames': int(frames[-1]) if frames else None,
             'firsthit': fh}
 
 
-def run_one(args, i, mode, rnd_seed, out_root, game):
-    rnd = random.Random(rnd_seed)
-    name = '%02d-%s-%d' % (i, mode, rnd_seed)
-    out = os.path.join(out_root, name)
-    os.makedirs(out, exist_ok=True)
-    s = Script()
+def plan_play(s, rnd, out, args, mode, rnd_seed):
+    """skirmish, monkey, campaign: a setup, then the idle habits or the monkey. Returns (end, what)."""
     if mode == 'campaign':
         t, what = setup_campaign(s, rnd, 20)
         start = t + 100                  # the briefing (~35 s), then the mission loads
@@ -321,13 +376,136 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
             habits(s, rnd, t, end - 5, None, out)
         for ts in range(int(start) + 30, int(end), 300):
             s.at(ts, 'shot=%s' % os.path.join(out, 'shot_%04d.bmp' % ts))
+    return end, what
+
+
+def plan_defeat(s, rnd, out, args, game, seed):
+    """Alone against two Hardest computers on one team, a Tiny map, and no defence: the
+    computers win. The run goes on for --minutes; the log says when (lost.mp3)."""
+    t, what = setup_fixed(s, 20, others=2, size=0, diff=4, teams=[0, 1, 1])
+    start = t + 80
+    s.at(start, 'shot=%s' % os.path.join(out, 'shot_start.bmp'))
+    t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
+    end = start + args.minutes * 60
+    shots(s, start, end, out, 120)
+    return end, dict(what, goal='defeat')
+
+
+def plan_allied(s, rnd, out, args, game, seed):
+    """Me and two Hardest computers (team 1) against one (team 2), a Medium map: the allies
+    win the game for an idle player, a victory with nothing typed (won1/won2.mp3)."""
+    t, what = setup_fixed(s, 20, others=3, size=2, diff=4, teams=[1, 1, 1, 2])
+    start = t + 80
+    s.at(start, 'shot=%s' % os.path.join(out, 'shot_start.bmp'))
+    t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
+    end = start + args.minutes * 60
+    habits(s, rnd, t, end - 5, None, out)
+    shots(s, start, end, out, 120)
+    return end, dict(what, goal='allied victory')
+
+
+def plan_victory(s, rnd, out, args, game, seed):
+    """A varied skirmish played for --minutes with a save at 40%, then won (the cheat), the
+    score screen's tabs, Main Menu, and the save loaded from Single Player -> Saved Game
+    and played for --after minutes."""
+    t, what = setup_skirmish(s, rnd, 20)
+    start = t + 80
+    s.at(start, 'shot=%s' % os.path.join(out, 'shot_start.bmp'))
+    t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
+    won = start + args.minutes * 60
+    name = 'soak%d' % seed
+    save_at = start + (won - start) * 0.4
+    habits(s, rnd, t, save_at - 3, None, out)
+    save_game(s, save_at, name)
+    habits(s, rnd, save_at + 22, won - 5, None, out)
+    shots(s, start, won, out)
+    t = chat(s, won, WIN_CHEAT)
+    t = score_tour(s, t + 25, out, 'victory')
+    s.click(t, SCORE_MENU)
+    # The saved games, as the list shows them: alphabetical.
+    saved = os.path.join(game, 'SaveGame')
+    names = sorted({f[:-4].lower() for f in os.listdir(saved) if f.lower().endswith('.gax')} | {name})
+    row = names.index(name)
+    s.click(t + 10, MAIN_SINGLE)
+    s.click(t + 25, SP_SAVED)
+    s.click(t + 35, (300, SAVED_ROW0 + SAVED_STEP * row))
+    s.at(t + 37, 'shot=%s' % os.path.join(out, 'shot_saved_list.bmp'))
+    s.click(t + 38, SAVED_OK)
+    loaded = t + 110
+    s.at(loaded, 'shot=%s' % os.path.join(out, 'shot_loaded.bmp'))
+    end = loaded + args.after * 60
+    habits(s, rnd, loaded + 2, end - 5, None, out)
+    shots(s, loaded, end, out)
+    return end, dict(what, goal='victory, then load', save=name, save_row=row, speed=args.speed)
+
+
+def plan_chain(s, rnd, out, args, game, seed):
+    """OOM-9's missions --first..--last in a row: each played with the monkey for --minutes,
+    won (the cheat), its score screen, Scenario Menu, then the next. A mission appears once
+    the one before it is won, in this game folder's player profile."""
+    s.click(20, MAIN_SINGLE)
+    s.click(35, SP_CAMPAIGNS)
+    s.click(50, CAMPAIGNS['OOM-9'])
+    t = 60
+    done = []
+    for m in range(args.first, args.last + 1):
+        s.click(t, OOM9_MISSIONS[m - 1])
+        if m == 1:
+            s.click(t + 6, CAMPAIGN_OK)          # the difficulty, the first time only
+        start = t + 100                          # the briefing, then the mission
+        for k in range(4):
+            s.at(start - 30 + 10 * k, 'esc')     # its Objectives
+        s.at(start, 'shot=%s' % os.path.join(out, 'shot_m%d_start.bmp' % m))
+        t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
+        won = start + args.minutes * 60
+        monkey(s, rnd, t, won - 5, out)
+        t = chat(s, won, WIN_CHEAT)
+        t = score_tour(s, t + 30, out, 'm%d' % m)
+        s.click(t, SCORE_MENU)
+        s.at(t + 12, 'shot=%s' % os.path.join(out, 'shot_m%d_after.bmp' % m))
+        t += 15
+        done.append(m)
+    return t + 5, {'campaign': 'OOM-9', 'missions': done, 'speed': args.speed}
+
+
+def plan_load(s, rnd, out, args, game, seed):
+    """Single Player -> Saved Game -> the --row'th save in the list -> OK, then the monkey
+    for --minutes."""
+    saved = os.path.join(game, 'SaveGame')
+    names = sorted(f[:-4].lower() for f in os.listdir(saved) if f.lower().endswith('.gax'))
+    s.click(20, MAIN_SINGLE)
+    s.click(35, SP_SAVED)
+    s.click(45, (300, SAVED_ROW0 + SAVED_STEP * args.row))
+    s.at(47, 'shot=%s' % os.path.join(out, 'shot_saved_list.bmp'))
+    s.click(48, SAVED_OK)
+    start = 120
+    s.at(start, 'shot=%s' % os.path.join(out, 'shot_loaded.bmp'))
+    end = start + args.minutes * 60
+    monkey(s, rnd, start + 2, end - 5, out)
+    return end, {'load': names[args.row] if args.row < len(names) else None, 'row': args.row}
+
+
+ENDGAME = {'load': plan_load, 'defeat': plan_defeat, 'allied': plan_allied, 'victory': plan_victory, 'chain': plan_chain}
+
+
+def run_one(args, i, mode, rnd_seed, out_root, game):
+    rnd = random.Random(rnd_seed)
+    name = '%02d-%s-%d' % (i, mode, rnd_seed)
+    out = os.path.join(out_root, name)
+    os.makedirs(out, exist_ok=True)
+    s = Script()
+    if mode in ENDGAME:
+        end, what = ENDGAME[mode](s, rnd, out, args, game, rnd_seed)
+    else:
+        end, what = plan_play(s, rnd, out, args, mode, rnd_seed)
     s.at(end - 2, 'shot=%s' % os.path.join(out, 'shot_end.bmp'))
     keys = os.path.join(out, 'keys.txt')
     open(keys, 'w', newline='\n').write(s.text())
     log = os.path.join(out, 'run.log')
-    cmd = [args.run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
+    cmd = [args.run, '--run', '--multi', '--headless', '--files', '--exe', args.exe, '--game', game,
            '--watchdog', str(int(end + 5)), '--keys', '@' + keys] + args.extra.split()
     meta = {'name': name, 'mode': mode, 'seed': rnd_seed, 'setup': what, 'minutes': args.minutes,
+            'planned_seconds': round(end),
             'game': game, 'cmd': cmd, 'started': datetime.datetime.now().isoformat(timespec='seconds')}
     t0 = time.time()
     with open(log, 'w', encoding='utf-8', errors='replace') as f:
@@ -349,7 +527,11 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--mode', default='skirmish', choices=['skirmish', 'monkey', 'campaign', 'mixed'])
+    ap.add_argument('--mode', default='skirmish', choices=['skirmish', 'monkey', 'campaign', 'mixed'] + sorted(ENDGAME))
+    ap.add_argument('--after', type=float, default=10, help='victory: minutes played after loading the save')
+    ap.add_argument('--row', type=int, default=0, help='load: the save to load, by its row in the list')
+    ap.add_argument('--first', type=int, default=1, help='chain: the first OOM-9 mission (1-4)')
+    ap.add_argument('--last', type=int, default=3, help='chain: the last OOM-9 mission (1-4)')
     ap.add_argument('--runs', type=int, default=1)
     ap.add_argument('--minutes', type=float, default=25)
     ap.add_argument('--jobs', type=int, default=1, help='runs at once (each with its own game folder)')
