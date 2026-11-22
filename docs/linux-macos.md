@@ -5,7 +5,8 @@ native Mac one) with no Wine: the same lifted C as the Windows build, on
 pcrecomp's `runtime/win32hle` instead of `runtime/native32`. This is how
 Tiberian Sun, Red Alert 2 and Civilization III run on Linux, and Red Alert 2
 on macOS (their `src/linux`). This page has the design, every gap with its
-fix, the build steps and the effort. **State (2026-11-21): designed and
+fix, the build steps and the effort; [linux-bringup.md](linux-bringup.md) is
+the checklist for continuing on a Linux machine. **State (2026-11-21): designed and
 scaffolded. The lifted C compiles under gcc; nothing has been linked or run
 on Linux yet** (no 32-bit toolchain on the machine; see *What is done*).
 
