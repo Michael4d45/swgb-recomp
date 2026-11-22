@@ -9,9 +9,10 @@ mkdir -p "$OUT"
 export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
 
 # t≈12s: menu settled. Hover Single Player (~345,250 from docs/testing.md).
+# Watchdog exits non-zero; shots are what matter.
 "$B" --run --game game --headless --watchdog 25 \
   --shot 12 "$OUT/01-boot.bmp" \
-  --keys "14:move:345:250,16:shot=$OUT/02-hover-single.bmp"
+  --keys "14:move:345:250,16:shot=$OUT/02-hover-single.bmp" || true
 
 for f in "$OUT"/01-boot.bmp "$OUT"/02-hover-single.bmp; do
   [ -f "$f" ] || { echo "missing $f"; exit 1; }

@@ -21,8 +21,9 @@ is the steps.
   - `tools/linux_menu_shots.sh` captures boot + Single Player hover PNGs.
   - `src/linux/eh.c` supplies `recomp_eh_push`/`pop` (win32hle has no
     guest EH yet).
-- pcrecomp: base **`a67767b`**, plus local branch `swgb-linux-palette`
-  for 8bpp GDI text (build with `PCRECOMP=~/star/pcrecomp`).
+- pcrecomp: branch `swgb-linux-palette` (tip **`4d69543`**: 8bpp TextOut +
+  live DD palette nearest-match, softdd's `sync_dib_palette`). Build with
+  `PCRECOMP=~/star/pcrecomp`.
 - Arch notes: no `lib32-sdl2` in repos — use AUR `lib32-sdl2-compat` and
   `lib32-sdl2_ttf`. Ubuntu packages in §1 still apply on Debian/Ubuntu.
 
@@ -143,13 +144,10 @@ your own, so the shared checkout stays as it is:
 then build with `PCRECOMP=~/star/pcrecomp-linux`. Where they go (fork,
 pull request upstream) is your call.
 
-1. **Reach the main menu headless** (step 5's loop).
-2. **Text in 8-bit surfaces** (pcrecomp). In `runtime/win32hle/ddraw.c`,
-   `sf_GetDC` (about line 647) should pass the surface's palette, or else
-   the primary's, to the DC. `gdidc.c` (about line 678) maps a colour to
-   an 8-bit index as grey; make it the nearest palette entry. Symptom
-   without the fix: labels and buttons in the wrong colours. Windows' fix,
-   for reference: `sync_dib_palette` in `src/runtime/softdd.c`.
+1. **Reach the main menu headless** (step 5's loop) — done.
+2. **Text in 8-bit surfaces** (pcrecomp) — done on `swgb-linux-palette`
+   (`4d69543`): `sf_GetDC` passes the live DD palette; `pack()` nearest-
+   matches through it (softdd's `sync_dib_palette`).
 3. **Text fields** (pcrecomp, then here):
    - `user32.c` `edit_proc` (about line 932): `WM_PAINT` and `WM_PRINT`
      draw the text, the selection and the caret into the DC, in the

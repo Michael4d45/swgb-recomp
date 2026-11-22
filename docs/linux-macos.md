@@ -45,7 +45,7 @@ and integer scaling, letterboxing, F11 fullscreen and mouse mapping. Making
 softdd portable would mean writing a GDI for it, which win32hle already is.
 
 What softdd does that win32hle's DirectDraw does not do yet is listed under
-the gaps below: palette-true text in 8-bit surface DCs, and the text fields.
+the gaps below: the text fields (palette-true 8-bit menu text is done).
 `--shot` and `--record` are the native host's own (`main.c`, through
 `hle_dd_frame`), as in Red Alert 2's.
 
@@ -142,18 +142,18 @@ into a copy of the frame with `WM_PRINT` and draws the caret
 Effort: 2 to 3 days. The pcrecomp half is useful to any game with text
 fields over DirectDraw.
 
-### 3. Text in 8-bit surfaces
+### 3. Text in 8-bit surfaces — done
 
 The game draws its labels, buttons and HUD text with GDI into 8-bit
 surfaces' DCs. softdd needed the current palette loaded into the DC to get
 the right colours (fixed on main, `sync_dib_palette`). win32hle's
-`gdidc.c` maps a colour to an 8-bit index as a grey ramp ("nothing blits
-into an 8bpp DIB yet").
+`gdidc.c` used to map a colour to an 8-bit index as a grey ramp, and
+`pack()` truncated an RGB value to its blue byte.
 
-**Fix (pcrecomp):** `ddraw.c`'s `GetDC` hands the surface's palette, or else
-the primary's, to `hle_gdi_surface_dc` as the colour table, and `gdidc.c`
-matches colours against it (nearest entry, cached per palette). Effort: 1
-day.
+**Fix (pcrecomp `swgb-linux-palette`):** `ddraw.c`'s `GetDC` hands the
+surface's palette (else the primary's) to `hle_gdi_surface_dc_pal` as a
+live `PALETTEENTRY` table; `gdidc.c` nearest-matches `SetTextColor` against
+it. Main-menu hangar labels are white with the black drop shadow.
 
 ### 4. Movies (MCIWnd): shared with Track 6
 
@@ -291,10 +291,10 @@ The command line is the Windows host's: `--headless`, `--record`,
 - `cmake/native.cmake`, `cmake/linux-i386.cmake`, `build-linux.sh`,
   `build-macos.sh`, and the branch in `CMakeLists.txt`.
 - Linux `-m32` link of the full lift; headless run to the main-menu hangar
-  (`--shot`). Menu GDI text still missing (gap 3).
+  (`--shot`) with white GDI menu labels (gap 3, pcrecomp
+  `swgb-linux-palette`).
 
-Not done: palette-true 8-bit text, text fields, a played skirmish, music,
-movies, macOS.
+Not done: text fields, a played skirmish, music, movies, macOS.
 
 ## Effort
 
