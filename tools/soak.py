@@ -17,8 +17,9 @@ Every run is `--headless --multi` (never a window, never the user's game):
             minimap, letter and function keys, Escape and Enter. The menu's
             Quit, Restart and Load are never clicked on purpose.
   campaign  Campaigns -> one of the six campaigns -> its first mission ->
-            OK, the briefing, the Objectives' OK, then the skirmish's habits
-            (or --monkey-in-campaign).
+            OK, the briefing, Escape for the Objectives, then the monkey (a
+            first mission has no command center for the idle habits;
+            --idle-campaign for them anyway).
 
 In every mode the game speed is set to Fast (--speed) and the game is saved
 once, 40% of the way in (--no-save).
@@ -75,7 +76,7 @@ CAMPAIGNS = {'Attichitcuk': (160, 322), 'OOM-9': (187, 212), 'Boss Nass': (272, 
              'Darth Vader': (512, 118), 'Princess Leia': (595, 212), 'Chewbacca': (625, 322)}
 CAMPAIGN_MISSION1 = (150, 140)
 CAMPAIGN_OK = (318, 481)             # the difficulty dialog (Easy is chosen)
-OBJECTIVES_OK = (589, 502)           # the mission's opening Objectives, after a ~35 s briefing
+OBJECTIVES_OK = (589, 502)           # the mission's opening Objectives (Escape closes it too)
 # In the game (the 800x600 HUD).
 MAP_VIEW = (0, 20, 799, 425)        # the map, under the resource bar's row and above the panel
 COMMAND_GRID = [(x, y) for y in (452, 495, 538, 577) for x in (25, 70, 115, 152)]
@@ -257,8 +258,26 @@ def analyse(log, keys_text):
     last_key = keyed[-1][1] if keyed else ''
     modes = re.findall(r'SetDisplayMode\((\d+), (\d+)', text)
     frames = re.findall(r'(\d+) frames', text)
+    # --firsthit (a SWGB_TRACE build): the first entry to each lifted function, timed by the
+    # [keys] step before it (stdout and stderr share the log, in order).
+    first, now = [], 0.0
+    for l in lines:
+        if l.startswith('[keys] '):
+            mm = re.match(r'\[keys\] ([0-9.]+)s', l)
+            if mm:
+                now = float(mm.group(1))
+        elif l.startswith('[first] '):
+            first.append((now, l.split()[-1]))
+    fh = None
+    if first:
+        by5 = {}
+        for t, _ in first:
+            by5[int(t // 300) * 5] = by5.get(int(t // 300) * 5, 0) + 1
+        fh = {'functions': len(first), 'new_per_5_minutes': {'%d-%d' % (k, k + 5): v for k, v in sorted(by5.items())},
+              'timeline': [['%.1f' % t, va] for t, va in first]}
     return {'events': events, 'watchdog': bool(m), 'last_key': last_key,
-            'modes': ['%sx%s' % mm for mm in modes], 'frames': int(frames[-1]) if frames else None}
+            'modes': ['%sx%s' % mm for mm in modes], 'frames': int(frames[-1]) if frames else None,
+            'firsthit': fh}
 
 
 def run_one(args, i, mode, rnd_seed, out_root, game):
@@ -270,8 +289,10 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     if mode == 'campaign':
         t, what = setup_campaign(s, rnd, 20)
         start = t + 100                  # the briefing (~35 s), then the mission loads
-        for k in range(4):               # its Objectives dialog: OK (on the map, a minimap click)
-            s.click(start - 30 + 10 * k, OBJECTIVES_OK)
+        # Its Objectives dialog: Escape closes it. Not its OK button: once the dialog is gone,
+        # that spot is the minimap, and the view jumps into unexplored black.
+        for k in range(4):
+            s.at(start - 30 + 10 * k, 'esc')
     else:
         t, what = setup_skirmish(s, rnd, 20)
         start = t + 80                   # the map loads
@@ -284,7 +305,7 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     save_at = start + (end - start) * 0.4 if args.save else None
     if save_at:
         what['save'] = 'soak%d' % rnd_seed
-    if mode == 'monkey' or (mode == 'campaign' and args.monkey_in_campaign):
+    if mode == 'monkey' or (mode == 'campaign' and not args.idle_campaign):
         if save_at:
             monkey(s, rnd, t, save_at - 3, out)
             save_game(s, save_at, what['save'])
@@ -305,7 +326,7 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     open(keys, 'w', newline='\n').write(s.text())
     log = os.path.join(out, 'run.log')
     cmd = [args.run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
-           '--watchdog', str(int(end + 5)), '--keys', '@' + keys]
+           '--watchdog', str(int(end + 5)), '--keys', '@' + keys] + args.extra.split()
     meta = {'name': name, 'mode': mode, 'seed': rnd_seed, 'setup': what, 'minutes': args.minutes,
             'game': game, 'cmd': cmd, 'started': datetime.datetime.now().isoformat(timespec='seconds')}
     t0 = time.time()
@@ -333,7 +354,7 @@ def main():
     ap.add_argument('--minutes', type=float, default=25)
     ap.add_argument('--jobs', type=int, default=1, help='runs at once (each with its own game folder)')
     ap.add_argument('--seed', type=int, default=None)
-    ap.add_argument('--monkey-in-campaign', action='store_true')
+    ap.add_argument('--idle-campaign', action='store_true', help='the idle habits in a campaign, not the monkey')
     ap.add_argument('--speed', default='fast', choices=['fast', 'normal'],
                     help='the game speed (the game menu: Options); fast plays more game per hour')
     ap.add_argument('--no-save', dest='save', action='store_false',
@@ -342,9 +363,13 @@ def main():
     ap.add_argument('--exe', default=r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
     ap.add_argument('--game', default=r'A:\Games\star\games\coverage',
                     help='the game folder; job k > 0 uses a copy, DIR-soakK (hard links)')
+    ap.add_argument('--extra', default='',
+                    help='more host options, e.g. "--firsthit 0x401000 0x651000" with a SWGB_TRACE build')
     ap.add_argument('--out', default=os.path.join(ROOT, 'work', 'soak',
                                                   datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
     args = ap.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)    # a run's line as it ends, into a redirected log too
+    args.out = os.path.abspath(args.out)        # the game runs in its own folder
     seed = args.seed if args.seed is not None else random.randrange(1 << 20)
     rnd = random.Random(seed)
     os.makedirs(args.out, exist_ok=True)
