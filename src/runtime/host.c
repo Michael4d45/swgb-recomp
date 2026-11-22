@@ -32,6 +32,7 @@
 #include "recomp_trace.h"
 #include "softdd.h"
 #include "softdd_int.h"
+#include "movie.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -191,8 +192,15 @@ static void file_seen(const char* name, int ok) {
 
 static void shim_CreateFileA(void) {
     const char* name = (const char*)(uintptr_t)ARG(0);
+    char film[MAX_PATH];
     g_eax = (uint32_t)(uintptr_t)CreateFileA(name, ARG(1), ARG(2), (LPSECURITY_ATTRIBUTES)(uintptr_t)ARG(3),
                                              ARG(4), ARG(5), (HANDLE)(uintptr_t)ARG(6));
+    if (g_eax == (uint32_t)(uintptr_t)INVALID_HANDLE_VALUE && movie_find(name, film, MAX_PATH)) {   /* --films */
+        if (g_log_files) printf("[host] open %s -> missing, --films has %s\n", name, film);
+        name = film;
+        g_eax = (uint32_t)(uintptr_t)CreateFileA(name, ARG(1), ARG(2), (LPSECURITY_ATTRIBUTES)(uintptr_t)ARG(3),
+                                                 ARG(4), ARG(5), (HANDLE)(uintptr_t)ARG(6));
+    }
     file_seen(name, g_eax != (uint32_t)(uintptr_t)INVALID_HANDLE_VALUE);
     g_esp += 4 + 7 * 4;
 }
@@ -204,23 +212,25 @@ static void shim_OpenFile(void) {
     g_esp += 4 + 3 * 4;
 }
 
-/* MCIWndCreateA plays the movies (the intro, the campaign's): an MCI
- * window over the game's, with the file on the play disc. */
+/* MCIWndCreateA plays the movies (the logos, the intro, the campaigns'):
+ * an MCI window over the game's. Ours (movie.c): FFmpeg decodes the Indeo 5
+ * that Windows no longer has, and softdd composes the window's frames. */
 static void shim_MCIWndCreateA(void) {
     const char* file = (const char*)(uintptr_t)ARG(3);
     printf("[host] MCIWndCreateA %s\n", file ? file : "(null)");
     HWND h;
     HWND parent = (HWND)(uintptr_t)ARG(0);
-    HINSTANCE inst = (HINSTANCE)(uintptr_t)ARG(1);
     DWORD style = ARG(2);
     if (g_hide) style &= ~WS_VISIBLE;   /* never on the screen: the movie still plays */
-    typedef HWND (__cdecl *mciwnd_t)(HWND, HINSTANCE, DWORD, LPCSTR);
-    static mciwnd_t real;
-    if (!real) real = (mciwnd_t)GetProcAddress(LoadLibraryA("msvfw32.dll"), "MCIWndCreateA");
-    UNLOCKED(h = real(parent, GetModuleHandleA(NULL), style, file));
-    (void)inst;
+    UNLOCKED(h = movie_create(parent, style, file));
     g_eax = (uint32_t)(uintptr_t)h;
     g_esp += 4;   /* cdecl: the caller pops the four */
+}
+
+/* The game plays films only if ICInfo finds Indeo 5 (0x005E104B). */
+static void shim_ICInfo(void) {
+    g_eax = movie_icinfo(ARG(0), ARG(1), (void*)(uintptr_t)ARG(2));
+    g_esp += 4 + 3 * 4;
 }
 
 /* ---- the window ---------------------------------------------------------------
@@ -532,6 +542,7 @@ static native32_shim_t g_shims[] = {
     { "ShowWindow", shim_ShowWindow },
     { "CreateWindowExA", shim_CreateWindowExA },
     { "MCIWndCreateA", shim_MCIWndCreateA },
+    { "ICInfo", shim_ICInfo },
     { "CreateFileA", shim_CreateFileA },
     { "OpenFile", shim_OpenFile },
     { "MessageBoxA", shim_MessageBoxA },
@@ -681,6 +692,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--exe") && i + 1 < argc) exe = argv[++i];
         else if (!strcmp(argv[i], "--game") && i + 1 < argc) game = argv[++i];
         else if (!strcmp(argv[i], "--cd") && i + 1 < argc) cd = argv[++i];
+        else if (!strcmp(argv[i], "--films") && i + 1 < argc) {
+            static char films[MAX_PATH];   /* the game runs in its own folder */
+            GetFullPathNameA(argv[++i], MAX_PATH, films, NULL);
+            movie_dir = films;
+        }
         else if (!strcmp(argv[i], "--args") && i + 1 < argc) _snprintf(guest_args, sizeof guest_args - 1, " %s", argv[++i]);
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc) parse_keys(argv[++i]);
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = strtoul(argv[++i], NULL, 0);
@@ -689,7 +705,7 @@ int main(int argc, char** argv) {
         else {
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files] [--multi]\n"
-                   "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E]\n"
+                   "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E] [--films DIR]\n"
                    "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;

@@ -350,6 +350,11 @@ void softdd_tick(void) {
     present(g_dd->primary);
 }
 
+/* A film (movie.c) has a new frame: present now, between the game's own. */
+void softdd_refresh(void) {
+    if (g_dd && g_dd->primary) present(g_dd->primary);
+}
+
 static void present(Surf* s) {
     g_last_present = GetTickCount();
     s = compose(s);
