@@ -41,7 +41,26 @@ public static class W {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
-    [DllImport("user32.dll")] public static extern IntPtr FindWindow(string cls, string title);
+    [DllImport("user32.dll")] public static extern bool ClipCursor(IntPtr r);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    // the process's main window: its biggest visible top-level window without an owner
+    public static IntPtr MainWindow(int pid) {
+        IntPtr best = IntPtr.Zero; long area = 0;
+        EnumWindows((h, l) => {
+            uint p; GetWindowThreadProcessId(h, out p);
+            if (p != (uint)pid || !IsWindowVisible(h) || GetWindow(h, 4) != IntPtr.Zero) return true;   // 4: GW_OWNER
+            RECT r; GetWindowRect(h, out r);
+            long a = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+            if (a > area) { area = a; best = h; }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
@@ -55,19 +74,20 @@ public static class W {
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct CURSORINFO { public int cbSize, flags; public IntPtr hCursor; public POINT pt; }
-    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public MOUSEKEYBD u; }
-    [StructLayout(LayoutKind.Explicit, Size = 32)] public struct MOUSEKEYBD {
-        [FieldOffset(0)] public int dx; [FieldOffset(4)] public int dy; [FieldOffset(8)] public uint mouseData;
-        [FieldOffset(12)] public uint mflags; [FieldOffset(0)] public ushort vk; [FieldOffset(2)] public ushort scan;
-        [FieldOffset(4)] public uint kflags; }
-    public static void Key(ushort vk, bool up) {
-        var i = new INPUT[1]; i[0].type = 1; i[0].u.vk = vk; i[0].u.kflags = up ? 2u : 0u;
-        SendInput(1, i, Marshal.SizeOf(typeof(INPUT)));
+    // SendInput's INPUT exactly as Windows has it (40 bytes in a 64-bit process, 28 in a 32-bit one)
+    [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION u; }
+    public static uint Key(ushort vk, bool up) {
+        var i = new INPUT[1]; i[0].type = 1; i[0].u.ki.wVk = vk; i[0].u.ki.dwFlags = up ? 2u : 0u;
+        return SendInput(1, i, Marshal.SizeOf(typeof(INPUT)));
     }
-    public static void Click() {
-        var i = new INPUT[2]; i[0].type = 0; i[0].u.mflags = 2; i[1].type = 0; i[1].u.mflags = 4;
-        SendInput(2, i, Marshal.SizeOf(typeof(INPUT)));
+    public static uint Click() {
+        var i = new INPUT[2]; i[0].type = 0; i[0].u.mi.dwFlags = 2; i[1].type = 0; i[1].u.mi.dwFlags = 4;   // left down, left up
+        return SendInput(2, i, Marshal.SizeOf(typeof(INPUT)));
     }
+    public static int InputSize() { return Marshal.SizeOf(typeof(INPUT)); }
     // the share of pixels that differ (by more than 24 in a channel sum/3) between two screen captures
     public static double Diff(Bitmap a, Bitmap b) {
         if (a.Width != b.Width || a.Height != b.Height) return 1.0;
@@ -111,7 +131,7 @@ $proc = Start-Process -PassThru -FilePath $Exe -RedirectStandardOutput $log -Red
 function Log-Text { (Get-Content $log -Raw -ErrorAction SilentlyContinue) + (Get-Content "$log.err" -Raw -ErrorAction SilentlyContinue) }
 function Sleep-Until([double] $seconds) { $d = $seconds - $sw.Elapsed.TotalSeconds; if ($d -gt 0) { Start-Sleep -Milliseconds ([int]($d * 1000)) } }
 
-function Window { [W]::FindWindow($null, 'Star Wars Galactic Battlegrounds') }
+function Window { [W]::MainWindow($proc.Id) }   # by the process, not the title
 function Client {   # the window's client rectangle on the screen, and the game's own size
     $h = Window
     if ($h -eq [IntPtr]::Zero) { throw 'the game window is gone' }
@@ -131,8 +151,19 @@ function Game-To-Screen([int] $gx, [int] $gy) {
     @([int]($c.X + $p.L + ($gx + 0.5) * $p.W / $c.GW), [int]($c.Y + $p.T + ($gy + 0.5) * $p.H / $c.GH))
 }
 function Mouse([int] $x, [int] $y) { [void][W]::SetCursorPos($x, $y) }
-function Click-Game([int] $gx, [int] $gy) { $s = Game-To-Screen $gx $gy; Mouse $s[0] $s[1]; Start-Sleep -Milliseconds 300; [W]::Click(); Start-Sleep -Milliseconds 400 }
-function Press([byte] $vk) { [W]::Key($vk, $false); Start-Sleep -Milliseconds 80; [W]::Key($vk, $true); Start-Sleep -Milliseconds 200 }
+function Click-Game([int] $gx, [int] $gy) {
+    $s = Game-To-Screen $gx $gy; Mouse $s[0] $s[1]; Start-Sleep -Milliseconds 300
+    if ([W]::Click() -ne 2) { throw 'SendInput refused the click (is an elevated window in front?)' }
+    Start-Sleep -Milliseconds 400
+}
+function Press([int] $vk) {
+    if ([W]::Key($vk, $false) -ne 1) { throw 'SendInput refused a key' }
+    Start-Sleep -Milliseconds 80; [void][W]::Key($vk, $true); Start-Sleep -Milliseconds 200
+}
+function Present-Lines {   # the [present] lines of the log so far: elapsed, presents, shown, Hz
+    [regex]::Matches((Log-Text), '\[present\] ([\d.]+) s: (\d+) presents, (\d+) shown \((\d+) Hz') | ForEach-Object {
+        [pscustomobject]@{ El = [double]$_.Groups[1].Value; P = [int]$_.Groups[2].Value; S = [int]$_.Groups[3].Value; Hz = [int]$_.Groups[4].Value } }
+}
 function Front { [void][W]::SetForegroundWindow((Window)); Start-Sleep -Milliseconds 300 }
 function Grab($c, [string] $name) {   # the client area, as it is on the screen
     $b = New-Object Drawing.Bitmap $c.W, $c.Ht
@@ -145,14 +176,33 @@ function Grab($c, [string] $name) {   # the client area, as it is on the screen
 
 try {
     # wait for the window and the main menu
-    while ((Window) -eq [IntPtr]::Zero -and $sw.Elapsed.TotalSeconds -lt 60) { Start-Sleep -Milliseconds 500 }
+    while ((Window) -eq [IntPtr]::Zero) {
+        if ($proc.HasExited) { throw "the game ended (code $($proc.ExitCode)); its log: $log" }
+        if ($sw.Elapsed.TotalSeconds -gt 60) { throw "no game window after 60 s; its log: $log" }
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Host 'the game window is up; waiting for the main menu...'
     Sleep-Until 14
     Front
     Click-Game 345 250        # Single Player
+    Start-Sleep -Seconds 2
     Click-Game 600 168        # Standard Game
+    Start-Sleep -Seconds 3
     Click-Game 118 568        # Start Game
+    # the map is up when the game presents steadily (in a game: hundreds a second; loading: tens of
+    # thousands; the menus: 4 or 5) for 6 seconds in a row
     Write-Host 'waiting for the map...'
-    Sleep-Until ($sw.Elapsed.TotalSeconds + 55)
+    $from = @(Present-Lines).Count
+    while ($true) {
+        $l = @(Present-Lines) | Select-Object -Skip $from
+        $run = 0; foreach ($x in $l) { $r = $x.P / $x.El; if ($r -ge 40 -and $r -le 20000) { $run++ } else { $run = 0 } }
+        if ($run -ge 6) { break }
+        if ($proc.HasExited) { throw "the game ended (code $($proc.ExitCode)); its log: $log" }
+        if ($sw.Elapsed.TotalSeconds -gt 200) { throw "the map did not come up (no steady game frames in the log); its log: $log" }
+        Start-Sleep -Seconds 1
+    }
+    Start-Sleep -Seconds 2
+    Write-Host 'the map is up'
     Front
     Mouse ((Client).X + 300) ((Client).Y + 300); Start-Sleep -Seconds 1
 
@@ -231,23 +281,25 @@ try {
     }
 
     # the frame rate: from the game's own log, while the skirmish ran
-    $lines = [regex]::Matches((Log-Text), '\[present\] ([\d.]+) s: (\d+) presents, (\d+) shown \((\d+) Hz')
-    $busy = $lines | Where-Object { [int]$_.Groups[2].Value -gt 1.05 * [int]$_.Groups[4].Value * [double]$_.Groups[1].Value }
+    # (presents above the refresh but below loading's tens of thousands: the game itself)
+    $lines = @(Present-Lines)
+    $busy = @($lines | Where-Object { $_.P -gt 1.05 * $_.Hz * $_.El -and $_.P -lt 20000 * $_.El })
     if ($busy.Count -ge 5) {
-        $el = ($busy | ForEach-Object { [double]$_.Groups[1].Value } | Measure-Object -Sum).Sum
-        $shown = ($busy | ForEach-Object { [int]$_.Groups[3].Value } | Measure-Object -Sum).Sum
-        $pres = ($busy | ForEach-Object { [int]$_.Groups[2].Value } | Measure-Object -Sum).Sum
-        $hz = [int]$busy[0].Groups[4].Value
-        Check 'frames shown at about the refresh rate when presents exceed it' (($shown / $el) -ge 0.85 * $hz) ("{0:N0} presents/s, {1:N0} shown/s at {2} Hz" -f ($pres / $el), ($shown / $el), $hz)
+        $el = ($busy | Measure-Object -Property El -Sum).Sum
+        $shown = ($busy | Measure-Object -Property S -Sum).Sum
+        $pres = ($busy | Measure-Object -Property P -Sum).Sum
+        $hz = $busy[0].Hz
+        Check 'frames shown at about the refresh rate when presents exceed it' (($shown / $el) -ge 0.85 * $hz) ("{0:N0} presents/s, {1:N0} shown/s at {2} Hz over {3:N0} s" -f ($pres / $el), ($shown / $el), $hz, $el)
     } else { Write-Host 'INFO: the game never presented faster than the refresh; no frame-rate case' }
-    $idle = $lines | Where-Object { [int]$_.Groups[2].Value -le 8 }
+    $idle = @($lines | Where-Object { $_.P -le 8 })
     if ($idle.Count -ge 5) {
-        $extra = ($idle | ForEach-Object { [int]$_.Groups[3].Value - [int]$_.Groups[2].Value } | Measure-Object -Average).Average
+        $extra = ($idle | ForEach-Object { $_.S - $_.P } | Measure-Object -Average).Average
         Check 'an idle menu shows no more frames than it presents' ($extra -le 2.5) ("{0:N1} more shown than presented a second (the log's timer columns say why if not 0)" -f $extra)
     }
 }
 finally {
-    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+    if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+    [void][W]::ClipCursor([IntPtr]::Zero)   # fullscreen confines the cursor: always let it go
     [void][W]::SetCursorPos($orig.X, $orig.Y)
 }
 Write-Host ("`n{0}/{1} passed" -f $script:pass, ($script:pass + $script:fail))
