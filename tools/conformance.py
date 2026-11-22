@@ -6,7 +6,11 @@ with scripted input, reads its log, and reports PASS/FAIL per milestone and
 N/M at the end. Exit 1 on any FAIL. Without the game data (game\\,
 work\\Battlegrounds.exe) every milestone is SKIP and the exit code is 0.
 
-    py -3 tools/conformance.py [path\\to\\swgbrecomp.exe]
+    py -3 tools/conformance.py [path\\to\\swgbrecomp.exe] [--game DIR] [--exe Battlegrounds.exe]
+
+--game and --exe point a worktree's build at its own game folder and the
+shared executable (docs/parallel-work.md). The run is always --multi, so it
+never ends another run's game.
 
 Milestones, in the order a run reaches them:
   boot       the image maps, binds and enters the game
@@ -31,8 +35,14 @@ CHECKS = [
 
 
 def main():
-    exe = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, 'build', 'swgbrecomp.exe')
-    data = [os.path.join(ROOT, p) for p in ('game', os.path.join('work', 'Battlegrounds.exe'))]
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('run', nargs='?', default=os.path.join(ROOT, 'build', 'swgbrecomp.exe'))
+    ap.add_argument('--game', default=os.path.join(ROOT, 'game'))
+    ap.add_argument('--exe', default=os.path.join(ROOT, 'work', 'Battlegrounds.exe'))
+    a = ap.parse_args()
+    exe = os.path.abspath(a.run)
+    data = [a.game, a.exe]
     if not all(os.path.exists(p) for p in data):
         for name, _ in CHECKS:
             print('SKIP: %s (no game data in game\\ and work\\)' % name)
@@ -41,7 +51,8 @@ def main():
     if not os.path.exists(exe):
         sys.exit('no %s: build it first (README, Building from source)' % exe)
     # The menu is up within ten seconds; Exit is bottom left (40, 565).
-    cmd = [exe, '--run', '--headless', '--files', '--watchdog', '60',
+    cmd = [exe, '--run', '--headless', '--multi', '--files', '--watchdog', '60',
+           '--game', os.path.abspath(a.game), '--exe', os.path.abspath(a.exe),
            '--keys', '20:move:40:565,21:click:40:565']
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, errors='replace', timeout=120)
     log = r.stdout + r.stderr
