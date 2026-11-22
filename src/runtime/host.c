@@ -32,6 +32,7 @@
 #include "recomp_trace.h"
 #include "softdd.h"
 #include "softdd_int.h"
+#include "widescreen.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -566,6 +567,7 @@ static native32_shim_t g_shims[] = {
     { "GetModuleHandleA", shim_GetModuleHandleA },
     { "GetModuleFileNameA", shim_GetModuleFileNameA },
     { "GetCommandLineA", shim_GetCommandLineA },
+    { "LoadStringA", widescreen_LoadStringA },
 };
 
 /* ---- muted by default -------------------------------------------------------
@@ -599,8 +601,7 @@ static int mute_process(void) {
 
 /* ---- reports ---------------------------------------------------------------- */
 recomp_func_t recomp_lookup_manual(uint32_t va) {
-    (void)va;
-    return NULL;
+    return widescreen_lookup(va);
 }
 
 void recomp_not_lifted(uint32_t va) {
@@ -711,10 +712,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
+        else if (!strcmp(argv[i], "--res") && i + 1 < argc) { if (!widescreen_parse(argv[++i])) return 1; }
         else {
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files] [--multi]\n"
-                   "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E]\n"
+                   "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E] [--res WxH|desktop]\n"
                    "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;

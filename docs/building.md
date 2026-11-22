@@ -70,6 +70,42 @@ py -3 tools\conformance.py                                    the milestones, PA
 `--exe` point at other folders. `NATIVE32_TRACE_EH=1` logs every guest
 exception and where it lands.
 
+### Any resolution: `--res`
+
+```
+build\swgbrecomp.exe --run --res 1920x1080     the 1280 x 1024 Screen Size becomes 1920 x 1080
+build\swgbrecomp.exe --run --res desktop       ... the desktop's size
+```
+
+The game's third Screen Size (Options) becomes
+the size given, and the Options dialog names it ("1920 x 1080"). Choose it
+once: the game keeps the choice in the registry as 1280, so a later run
+without `--res` plays at 1280 x 1024. 800 x 600 and 1024 x 768 are
+unchanged, and so are the menus, which are always 800 x 600. The width is
+rounded down to a multiple of 4 (1366 becomes 1364); sizes from 800 x 600 to
+4096 x 4096.
+
+In a game, the interface is laid out at the largest of the game's own
+sizes that fits (1280 x 1024 from 1280 wide and 720 high, else
+1024 x 768, else 800 x 600): its art and panels sit at the bottom,
+centred, with black at the sides, and the map view takes all the rest of
+the screen. Dialogs centre on the whole screen. Tested at 1024x600,
+1280x720, 1366x768, 1600x900, 1920x1080, 2560x1440 and 3440x1440:
+selection, the command buttons, the minimap, scrolling at the right edge,
+the menu and its dialogs, switching to 1024 x 768 from the in-game
+Options, and quitting to the menus and playing again.
+
+![A skirmish at 1920 x 1080, command center selected](screenshots/widescreen-1920x1080.png)
+
+How it works is in `src/runtime/widescreen.c`. In short: the game's
+virtual `set_screen_size` call (and the game screen's own resize, draw
+and paint methods) are indirect calls, so the host takes them over
+(`recomp_lookup_manual`) and lays the screen out at the base size before
+moving the panels. `SWGB_RES_DUMP=FILE` writes the game screen's panel
+tree after each layout. `SWGB_RES_TRACE=FILE` logs every new indirect
+call, with its target, caller, vtable and arguments, from the first mode
+change on; use it to find more of them.
+
 ## Build options
 
 `build.cmd` configures CMake with Ninja for 32-bit MSVC and builds

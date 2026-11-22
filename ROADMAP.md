@@ -61,17 +61,32 @@ what needs research or a new subsystem.
 - **Risk:** low. All of it is in `softdd.c` and `host.c`.
 
 ### 3. Widescreen and any resolution
-- **Known:** the game offers three 4:3 sizes and picks the mode from them;
-  softdd draws any size. The community does this for Clone Campaigns by
-  patching the exe (Expanding Fronts, the All-In-One patch, the WSGF
-  patch); their changes are a map of which constants matter.
-- **Work:** find where the Screen Size choice becomes `SetDisplayMode`'s
-  arguments and the checks on it; a host option (`--res WxH`, or the
-  desktop's size) that replaces the 1280x1024 entry; then the layout: the
-  HUD's interface art is drawn for 800, 1024 and 1280 wide, so the panels
-  need placing (or a filled gap) at other widths, and the map view's
-  clipping, scrolling limits and the minimap need checking.
-- **Risk:** medium. The mode is easy; a HUD that looks right is the work.
+- **Done (2026-11-21):** `--res WxH` / `--res desktop` (`src/runtime/widescreen.c`,
+  `docs/building.md`). The 1280 x 1024 Screen Size becomes WxH; in a game
+  the interface is laid out at the largest of the game's sizes that fits,
+  then sits at the bottom, centred, with black beside it, and the map view
+  takes the rest. Checked at 1024x600, 1280x720, 1366x768, 1600x900,
+  1920x1080, 2560x1440 and 3440x1440: selection, command buttons, minimap,
+  edge scrolling, menu and dialogs (centred on the whole screen), the
+  Options label, quitting and playing again.
+- **Found:** the game object's virtual `set_screen_size` (vtable 0x00665A20
+  + 0x68, `sub_005ED2D0`) gets prog_info +0x8F4/+0x8FC (the registry's
+  "Screen Size", the 800/1024/1280 switches, Options -> `sub_0042C100`). The
+  game screen (vtable 0x0065CE24) lays itself out in `sub_004F5210` from
+  `screen_coords.txt` (DRS 'bina' 50006), with a column per width chosen by
+  an exact match (else 800). Its draw `sub_004FEDB0` blits one
+  screen-sized interface SLP at 0,0 (`sub_005415D0`); the unit-info panel
+  (`sub_005D5D00`) and the resource counters (`sub_005D4930`) pick their
+  800/1024/1280 variants by exact widths. All of these are indirect calls,
+  so the host takes them over; nothing in the lifted C changes.
+- **Left:** the sides of the interface are black (stretching or tiling the
+  art's edges would look better); panels hidden at layout time and placed
+  when shown (some popups) may still use base-layout places; switching the
+  viewed player (`sub_0042F880`, debug and scenario tests) reloads the art
+  by the screen's real size; switching to WxH from the in-game Options is
+  untested, because after an in-game switch to 1024x768 the menu button no
+  longer answers, with or without `--res` (a track 1 lead).
+- **Risk:** done; low for the rest.
 
 ### 4. Clone Campaigns
 - **Known:** the Steam install has `battlegrounds_cc.exe` without the
