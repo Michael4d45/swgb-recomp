@@ -6,8 +6,8 @@ pcrecomp's `runtime/win32hle` instead of `runtime/native32`. This is how
 Tiberian Sun, Red Alert 2 and Civilization III run on Linux, and Red Alert 2
 on macOS (their `src/linux`). This page has the design, every gap with its
 fix, the build steps and the effort; [linux-bringup.md](linux-bringup.md) is
-the checklist for continuing on a Linux machine. **State (2026-11-22): linked and run on Linux (`-m32`). Headless shot reaches
-the main-menu hangar; GDI labels still wrong (gap 3). See
+the checklist for continuing on a Linux machine. **State (2026-11-22): linked and run on Linux (`-m32`). Main-menu GDI text
+works with pcrecomp `swgb-linux-palette` (8bpp TextOut). See
 [linux-bringup.md](linux-bringup.md).**
 
 ## The design
