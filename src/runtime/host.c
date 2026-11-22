@@ -35,6 +35,7 @@
 #include "widescreen.h"
 #include "framerate.h"
 #include "movie.h"
+#include "present.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -265,15 +266,19 @@ static void shim_ICInfo(void) {
  * always active (it pauses otherwise), and mouse messages are scaled from the
  * client area to the mode softdd presents. */
 static WNDPROC g_game_proc;
+static HCURSOR g_game_cursor;   /* what the game last SetCursor'd (shim_SetCursor) */
+static int     g_cursor_known;
 static int g_scripted;   /* --keys (below) */
 
+/* A client pixel -> a game pixel, through the picture's letterboxed rectangle
+ * (present.c): the same one the frame is drawn into. */
 static void to_game(POINT* p) {
     DD* d = softdd_dd();
-    RECT rc;
-    if (!d || !d->w || !g_game_wnd || !GetClientRect(g_game_wnd, &rc) || !rc.right || !rc.bottom) return;
-    p->x = p->x * d->w / rc.right;
-    p->y = p->y * d->h / rc.bottom;
+    if (!d || !d->w || !g_game_wnd) return;
+    present_to_game(g_game_wnd, d->w, d->h, p);
 }
+
+#define WM_SWGB_SIZE (WM_APP + 0x51)   /* --keys size:W:H, run on the window's own thread */
 
 /* Text fields are real EDIT children that softdd draws into the frame and
  * that never take part in hit-testing themselves (an empty window region),
@@ -306,12 +311,15 @@ static int click_child(UINT m, WPARAM w, int x, int y) {
 static HWND g_focus_child;
 
 static LRESULT CALLBACK host_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    /* resized, uncovered or a new display mode: the picture is laid out and shown again */
+    if (m == WM_SIZE || m == WM_PAINT || m == WM_DISPLAYCHANGE) present_invalidate(h);
     switch (m) {
     case WM_ACTIVATEAPP: case WM_NCACTIVATE: w = TRUE; break;
     case WM_ACTIVATE: {
         HWND f = GetFocus();
         int active = LOWORD(w) != WA_INACTIVE;
         if (!active && f && IsChild(h, f)) g_focus_child = f;
+        present_cursor_clip(h, active);   /* fullscreen: the cursor stays on this monitor while active */
         LRESULT r = CallWindowProcA(g_game_proc, h, m, MAKEWPARAM(WA_ACTIVE, HIWORD(w)), l);
         if (active && g_focus_child) {
             if (IsWindow(g_focus_child) && IsChild(h, g_focus_child) && IsWindowVisible(g_focus_child))
@@ -321,11 +329,25 @@ static LRESULT CALLBACK host_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return r;
     }
     case WM_KILLFOCUS: return 0;
-    case WM_WINDOWPOSCHANGING: case WM_WINDOWPOSCHANGED: case WM_GETMINMAXINFO:
-    case WM_NCCALCSIZE: case WM_STYLECHANGED: case WM_STYLECHANGING: case WM_SIZE:
+    case WM_WINDOWPOSCHANGING: present_fs_keep(h, m, w, l); return DefWindowProcA(h, m, w, l);   /* fullscreen survives the game's own moves */
+    case WM_STYLECHANGING: present_fs_keep(h, m, w, l); return DefWindowProcA(h, m, w, l);
+    case WM_WINDOWPOSCHANGED: case WM_GETMINMAXINFO:
+    case WM_NCCALCSIZE: case WM_STYLECHANGED: case WM_SIZE:
         return DefWindowProcA(h, m, w, l);
+    case WM_SETCURSOR:   /* the game's cursor, also back from another window and over the bars */
+        if (LOWORD(l) == HTCLIENT && g_cursor_known) { SetCursor(g_game_cursor); return TRUE; }
+        break;
     case WM_ERASEBKGND: return 1;
-    case WM_TIMER: if (w == SOFTDD_TIMER) { softdd_tick(); return 0; } break;
+    case WM_TIMER: if (w == SOFTDD_TIMER || w == SOFTDD_PACE) { softdd_tick(); return 0; } break;
+    /* Alt+Enter: borderless fullscreen; Alt+F12: the next scaling filter. */
+    case WM_SYSKEYDOWN:
+        if (w == VK_RETURN || w == VK_F12) {
+            if (!(l & (1 << 30))) { if (w == VK_RETURN) present_set_fullscreen(h, -1); else present_cycle_filter(h); }
+            return 0;
+        }
+        break;
+    case WM_SYSKEYUP: case WM_SYSCHAR: if (w == VK_RETURN || w == VK_F12) return 0; break;
+    case WM_SWGB_SIZE: present_set_client_size(h, (int)w, (int)l); return 0;
     }
     if (m >= WM_MOUSEFIRST && m <= WM_MOUSELAST && m != WM_MOUSEWHEEL) {
         POINT p = { GET_X_LPARAM(l), GET_Y_LPARAM(l) };
@@ -392,7 +414,7 @@ static void shim_DirectDrawCreate(void) {
  * left, right, tab, f1..f10, a letter or digit), "click:X:Y", "rclick:X:Y" or "move:X:Y"
  * (game pixels), "shot=FILE", or "on:NAME" (wait for a file open). While a
  * script runs, the real mouse is not read: only the script reaches the game. */
-typedef struct { DWORD at; int vk, x, y, click, move; char on[64], shot[MAX_PATH]; } step_t;
+typedef struct { DWORD at; int vk, x, y, click, move, alt, win, size, wshot; char on[64], shot[MAX_PATH]; } step_t;
 
 static step_t g_steps[128];
 static int g_nsteps;
@@ -404,6 +426,7 @@ static const struct { const char* n; int vk; } g_keynames[] = {
     { "up", VK_UP }, { "down", VK_DOWN }, { "left", VK_LEFT }, { "right", VK_RIGHT },
     { "bksp", VK_BACK }, { "f1", VK_F1 }, { "f2", VK_F2 }, { "f3", VK_F3 }, { "f4", VK_F4 },
     { "f5", VK_F5 }, { "f6", VK_F6 }, { "f7", VK_F7 }, { "f8", VK_F8 }, { "f9", VK_F9 }, { "f10", VK_F10 },
+    { "f11", VK_F11 }, { "f12", VK_F12 },
 };
 
 static int key_by_name(const char* n) {
@@ -426,12 +449,25 @@ static void parse_keys(const char* spec) {
         }
         st.at = (DWORD)(atof(tok) * 1000);
         char* what = c + 1;
-        if (!strncmp(what, "shot=", 5)) {
+        if (!strncmp(what, "wshot=", 6)) {   /* the window as drawn: letterbox bars and all */
+            GetFullPathNameA(what + 6, MAX_PATH, st.shot, NULL);
+            st.wshot = 1;
+        } else if (!strncmp(what, "shot=", 5)) {
             GetFullPathNameA(what + 5, MAX_PATH, st.shot, NULL);
+        } else if (!strncmp(what, "size:", 5)) {   /* the window's client area: W:H */
+            st.size = 1;
+            sscanf(what + 5, "%d:%d", &st.x, &st.y);
+        } else if (!strncmp(what, "wclick:", 7) || !strncmp(what, "wmove:", 6)) {   /* window pixels, mapped like the mouse */
+            st.win = 1;
+            st.click = what[1] == 'c';
+            st.move = 1;
+            sscanf(strchr(what, ':') + 1, "%d:%d", &st.x, &st.y);
         } else if (!strncmp(what, "click:", 6) || !strncmp(what, "rclick:", 7) || !strncmp(what, "move:", 5)) {
             st.click = what[0] == 'c' ? 1 : what[0] == 'r' ? 2 : 0;
             st.move = 1;
             sscanf(strchr(what, ':') + 1, "%d:%d", &st.x, &st.y);
+        } else if (!strncmp(what, "alt+", 4) && (st.vk = key_by_name(what + 4))) {
+            st.alt = 1;   /* Alt+Enter, Alt+F12: the presenter's hotkeys */
         } else if (!(st.vk = key_by_name(what))) {
             fprintf(stderr, "--keys: unknown key \"%s\"\n", what);
             exit(1);
@@ -460,8 +496,20 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
             }
         DWORD at = t0 + st->at, now = GetTickCount();
         if ((int)(at - now) > 0) Sleep(at - now);
-        if (st->shot[0]) { softdd_shot(st->shot); continue; }
+        if (st->shot[0]) { if (st->wshot) present_wshot_request(st->shot); else softdd_shot(st->shot); continue; }
         HWND w = g_game_wnd;
+        if (st->size) {
+            if (w) PostMessageA(w, WM_SWGB_SIZE, (WPARAM)st->x, (LPARAM)st->y);
+            printf("[keys] %.1fs size %dx%d\n", st->at / 1000.0, st->x, st->y);
+            continue;
+        }
+        if (st->win) {   /* window pixels -> game pixels, as the mouse is mapped */
+            POINT p = { st->x, st->y };
+            DD* d = softdd_dd();
+            if (d && d->w && w) present_to_game(w, d->w, d->h, &p);
+            printf("[keys] window %d,%d -> game %ld,%ld\n", st->x, st->y, p.x, p.y);
+            st->x = p.x, st->y = p.y;
+        }
         if (st->move) {
             g_cur_x = st->x, g_cur_y = st->y;
             if (w) PostMessageA(w, WM_MOUSEMOVE, 0, MAKELPARAM(st->x, st->y));
@@ -476,6 +524,13 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
             printf("[keys] %.1fs %s %d,%d\n", st->at / 1000.0, st->click == 2 ? "rclick" : st->click ? "click" : "move", st->x, st->y);
         } else {
             UINT sc = MapVirtualKeyA(st->vk, 0);
+            if (st->alt) {   /* Alt+key: a system key, to the window itself */
+                if (w) PostMessageA(w, WM_SYSKEYDOWN, st->vk, 1 | (sc << 16) | (1 << 29));
+                Sleep(150);
+                if (w) PostMessageA(w, WM_SYSKEYUP, st->vk, 1 | (sc << 16) | (1 << 29) | 0xC0000000u);
+                printf("[keys] %.1fs alt+key %02X\n", st->at / 1000.0, st->vk);
+                continue;
+            }
             {   /* keys go where the game's focus is: a text field is a real edit control */
                 GUITHREADINFO gi = { sizeof gi };
                 if (w && GetGUIThreadInfo(GetWindowThreadProcessId(w, NULL), &gi) && gi.hwndFocus) w = gi.hwndFocus;
@@ -514,6 +569,10 @@ static void shim_GetKeyState(void) {
 static void shim_GetCursorPos(void) {
     POINT* pt = (POINT*)(uintptr_t)ARG(0);
     if (g_scripted || !g_game_wnd) { pt->x = g_cur_x; pt->y = g_cur_y; }
+    else if (GetForegroundWindow() != g_game_wnd && !g_headless) {
+        DD* d = softdd_dd();   /* another window is active: the cursor is nowhere near an edge */
+        pt->x = d ? d->w / 2 : 400, pt->y = d ? d->h / 2 : 300;
+    }
     else { GetCursorPos(pt); ScreenToClient(g_game_wnd, pt); to_game(pt); }
     g_eax = TRUE;
     g_esp += 4 + 1 * 4;
@@ -527,6 +586,33 @@ static void shim_SetCursorPos(void) {
 
 /* The game's client <-> screen conversions work in its mode's pixels: the
  * window is wherever softdd put it, so its client origin is the game's 0,0. */
+/* The game's edge scrolling compares GetCursorPos (above: game pixels, 0..W-1)
+ * with its window's GetWindowRect: the window's real place on the screen, which
+ * is another size and offset the moment it is resized, letterboxed or
+ * fullscreen. The game window's rectangle is the game's own 0,0,W,H, so the
+ * window's (or the monitor's) edge is the game's edge on all four sides. */
+static void shim_GetWindowRect(void) {
+    HWND w = (HWND)(uintptr_t)ARG(0);
+    RECT* r = (RECT*)(uintptr_t)ARG(1);
+    DD* d = softdd_dd();
+    if (w && w == g_game_wnd && d && d->w && r) {
+        r->left = 0, r->top = 0, r->right = d->w, r->bottom = d->h;
+        g_eax = TRUE;
+    } else { BOOL ok; UNLOCKED(ok = GetWindowRect(w, r)); g_eax = ok; }
+    g_esp += 4 + 2 * 4;
+}
+
+/* The game's cursor, kept: after the pointer leaves the window and comes
+ * back, Windows asks WM_SETCURSOR and the default answer is the class arrow. */
+static void shim_SetCursor(void) {
+    HCURSOR c = (HCURSOR)(uintptr_t)ARG(0), prev;
+    g_game_cursor = c;
+    g_cursor_known = 1;
+    prev = SetCursor(c);
+    g_eax = (uint32_t)(uintptr_t)prev;
+    g_esp += 4 + 1 * 4;
+}
+
 static void shim_ScreenToClient(void) { g_eax = TRUE; g_esp += 4 + 2 * 4; }
 static void shim_ClientToScreen(void) { g_eax = TRUE; g_esp += 4 + 2 * 4; }
 
@@ -562,6 +648,8 @@ static native32_shim_t g_shims[] = {
     { "GetCursorPos", shim_GetCursorPos },
     { "SetCursorPos", shim_SetCursorPos },
     { "ScreenToClient", shim_ScreenToClient },
+    { "GetWindowRect", shim_GetWindowRect },
+    { "SetCursor", shim_SetCursor },
     { "ClientToScreen", shim_ClientToScreen },
     { "GetAsyncKeyState", shim_GetAsyncKeyState },
     { "GetKeyState", shim_GetKeyState },
@@ -707,7 +795,7 @@ int main(int argc, char** argv) {
         if ((n = framerate_arg(argc, argv, i))) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--sound")) sound = 1;
-        else if (!strcmp(argv[i], "--headless")) g_headless = softdd_headless = 1;
+        else if (!strcmp(argv[i], "--headless")) g_headless = softdd_headless = present_noclip = 1;
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) {
             static char rec[MAX_PATH];   /* the game runs in its own folder */
             GetFullPathNameA(argv[++i], MAX_PATH, rec, NULL);
@@ -715,6 +803,12 @@ int main(int argc, char** argv) {
         }
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) softdd_stop_after = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) softdd_scale = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
+            if ((present_filter = present_filter_by_name(argv[++i])) < 0) { fprintf(stderr, "--filter: sharp, smooth, nearest or integer\n"); return 1; }
+        }
+        else if (!strcmp(argv[i], "--fullscreen")) present_fullscreen_start = 1;
+        else if (!strcmp(argv[i], "--refresh") && i + 1 < argc) present_refresh = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--present-log")) present_log = 1;
         else if (!strcmp(argv[i], "--files")) g_log_files = 1;
         else if (!strcmp(argv[i], "--multi")) g_multi = 1;
         else if (!strcmp(argv[i], "--shot") && i + 2 < argc && g_shots < 16) {
@@ -740,6 +834,8 @@ int main(int argc, char** argv) {
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E] [--films DIR]\n"
                    "                  [--res WxH|desktop] [--fps N] [--fps-log]\n"
+                   "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
+                   "                  [--refresh HZ] [--present-log]\n"
                    "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
