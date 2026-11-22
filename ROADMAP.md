@@ -187,6 +187,28 @@ what needs research or a new subsystem.
 - **Risk:** large but plausible: the hard part exists; the gaps are
   bounded.
 
+### 8. Performance
+- **Done (2026-11-22, headless, [docs/performance.md](docs/performance.md)):**
+  a sampling profiler (`--profile FILE`, `tools/profile_report.py`: self and
+  inclusive time by lifted function, host function, module and Windows
+  call). The menus wait for input instead of spinning (97% of a core to
+  10%); the frame rate defaults to the display's refresh (`--fps off`: the
+  game's own); indirect calls are cached (`resolve.c`: the dispatch binary
+  search was 13-31% of the game thread); the presenter draws only the rows
+  that changed, with a separable, bit-exact scaler (`scaler.c`); a WM_PAINT
+  no longer re-arms the pacing timer and re-reads the refresh every frame.
+  Skirmish at 800x600: 97% of a core to 18%; at 2560x1440 fullscreen
+  (`play.ps1`'s case): 98% for 111 frames shown a second to 38% for 180.
+- **Tried:** `/O2` on the hottest generated files (`GEN_HOT_FILES`, empty by
+  default): seconds to compile, a few percent at 2560x1440, nothing at
+  800x600. Most of it is pcrecomp's flag helpers not being inlined at `/O1`.
+- **Left:** checking the presenter on the real screen (the user's:
+  `tools/present_check_real.ps1`); `__forceinline` on `recomp_cond` /
+  `recomp_cond_cf` in pcrecomp; the presenter off the game thread (Direct3D
+  or a thread); callbacks into the window procedure without an exception
+  each (pcrecomp).
+- **Risk:** low.
+
 ## Later
 - DirectPlay multiplayer over LAN.
 

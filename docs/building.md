@@ -64,8 +64,10 @@ build\swgbrecomp.exe --run --headless --record out.mp4        no window, record 
 build\swgbrecomp.exe --run --headless --shot 20 menu.bmp      save the frame after 20 s
 build\swgbrecomp.exe --run --keys "10:move:330:240,11:click:330:240"   scripted mouse and keys
 build\swgbrecomp.exe --run --headless --watchdog 60 --files   stop after 60 s, log every file opened
-build\swgbrecomp.exe --run --fps 60                           60 frames a second in game
+build\swgbrecomp.exe --run --fps 60                           60 frames a second in game (default: the refresh)
+build\swgbrecomp.exe --run --fps off                          the game's own rate: ~900 a second, a whole core
 build\swgbrecomp.exe --run --headless --fps-log               frames, game clock, steps a second
+build\swgbrecomp.exe --run --headless --profile p.txt         where the game thread's time goes (performance.md)
 build\swgbrecomp.exe --run --films "<Steam>\Game"            films the game cannot find, from there
 build\swgbrecomp.exe --run --fullscreen --filter integer      borderless fullscreen, whole-number scaling
 py -3 tools\conformance.py                                    the milestones, PASS/FAIL
@@ -129,7 +131,8 @@ from a file, a step to a line.
 `--exe` point at other folders; `--films DIR` is where the films are when
 neither the game folder's `avi\` nor disc 2 has them ([movies.md](movies.md)).
 `NATIVE32_TRACE_EH=1` logs every guest exception and where it lands.
-`--fps N` and `--fps-log` are in [framerate.md](framerate.md).
+`--fps N` and `--fps-log` are in [framerate.md](framerate.md); `--profile` and
+what costs what in [performance.md](performance.md).
 
 ### Any resolution: `--res`
 

@@ -20,7 +20,9 @@ v1.1, 800x600x8, on 2026-11-21.
   frames drawn a second, 8 to 30 differ from the one before.
 - **`--fps N`** sets the gate so frames start N times a second and lets the
   host sleep between them instead of spinning a core. Game speed is
-  unchanged from 10 up (the table below).
+  unchanged from 10 up (the table below). **Since the performance track this
+  is the default, at the display's refresh** (`--fps off`: the game's own
+  rate, as measured below); see [performance.md](performance.md).
 
 ## How a frame is made
 
@@ -140,7 +142,11 @@ What could make motion smoother, none of it host-only:
 
 ## `--fps N`
 
-`src/runtime/framerate.c`. Without it nothing changes. With it, the host's
+`src/runtime/framerate.c`. The default is the refresh the presenter paces
+shown frames to (`--refresh`, or the window's monitor, 30 to 1000): a frame
+drawn faster than that is never shown. `--fps off` changes nothing (the
+game's own rate and its spin, as the measurements on this page were made).
+Otherwise the host's
 `PeekMessageA` (the game's loop, with the machine let go so sent messages
 reach the window procedure) does, when there is no message:
 

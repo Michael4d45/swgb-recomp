@@ -142,7 +142,8 @@ headless run exercises what a real mouse does, short of the operating system.
 **The cursor coming back** (`setcursor`): the pointer is made the arrow (as
 the other window it came from left it) and Windows asks the game window for
 its cursor (`WM_SETCURSOR`); the game thread's cursor must be the game's own
-choice again, not the arrow. **Pacing**: with `--refresh 600` and a game that
+choice again, not the arrow. **Pacing**: with `--refresh 600 --fps off` (the default
+frame rate is the refresh, so the game's own rate is asked for) and a game that
 presents 700 to 1,000 times a second, the frames shown must be about 600 a
 second (a rule of "an interval since the last frame" showed every other
 present: about 450).
