@@ -173,6 +173,7 @@ static void surf_free(Surf* s) {
 static FILE* g_rec;
 static DWORD g_rec_t0;
 static LONG  g_rec_written;
+static int   g_rec_w, g_rec_h;   /* the recording's size: the first mode's */
 #define REC_FPS 30
 
 static void record_open(int w, int h) {
@@ -180,6 +181,7 @@ static void record_open(int w, int h) {
     _snprintf(cmd, sizeof cmd - 1,
               "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgb565le -s %dx%d -r %d -i - "
               "-c:v libx264 -preset veryfast -pix_fmt yuv420p \"%s\"", w, h, REC_FPS, softdd_record);
+    g_rec_w = w, g_rec_h = h;
     g_rec = _popen(cmd, "wb");
     if (!g_rec) { fprintf(stderr, "[softdd] cannot start ffmpeg for %s\n", softdd_record); exit(5); }
     g_rec_t0 = GetTickCount();
@@ -196,17 +198,21 @@ static void record_frame(Surf* s) {
     LONG due = (LONG)((GetTickCount() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1;
     static uint16_t* row;
     static int row_w;
-    if (s->bpp == 8 && row_w < s->w) { free(row); row = (uint16_t*)malloc(2 * s->w); row_w = s->w; }
+    int rw = g_rec_w, rh = g_rec_h;
+    if (row_w < rw) { free(row); row = (uint16_t*)malloc(2 * rw); row_w = rw; }
     PALETTEENTRY* e = screen_palette();
+    /* Another mode (the films are 640x480) is scaled to the recording's size. */
     for (; g_rec_written < due; g_rec_written++)
-        for (int y = 0; y < s->h; y++) {
-            if (s->bpp == 16) { fwrite(s->bits + y * s->pitch, 2, s->w, g_rec); continue; }
-            const uint8_t* src = s->bits + y * s->pitch;   /* 8-bit: through the palette */
-            for (int x = 0; x < s->w; x++) {
-                PALETTEENTRY c = e ? e[src[x]] : (PALETTEENTRY){ src[x], src[x], src[x], 0 };
+        for (int y = 0; y < rh; y++) {
+            const uint8_t* src = s->bits + (y * s->h / rh) * s->pitch;
+            if (s->bpp == 16 && s->w == rw) { fwrite(src, 2, rw, g_rec); continue; }
+            for (int x = 0; x < rw; x++) {
+                int sx = x * s->w / rw;
+                if (s->bpp == 16) { row[x] = ((const uint16_t*)src)[sx]; continue; }
+                PALETTEENTRY c = e ? e[src[sx]] : (PALETTEENTRY){ src[sx], src[sx], src[sx], 0 };   /* through the palette */
                 row[x] = (uint16_t)(((c.peRed >> 3) << 11) | ((c.peGreen >> 2) << 5) | (c.peBlue >> 3));
             }
-            fwrite(row, 2, s->w, g_rec);
+            fwrite(row, 2, rw, g_rec);
         }
     fflush(g_rec);
 }
