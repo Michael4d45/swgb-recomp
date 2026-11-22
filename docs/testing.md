@@ -108,8 +108,8 @@ present_test.exe                                  OK
 py -3 tools\present_check.py [--only A,B,C,D] [--run EXE] [--game DIR] [--out DIR]
 ```
 
-About 17 minutes, `--headless --multi`, nothing on your screens. It prints
-PASS or FAIL per case and exits 1 on any FAIL. Four scripted skirmishes:
+About 21 minutes, `--headless --multi`, nothing on your screens. It prints
+PASS or FAIL per case and exits 1 on any FAIL. Five scripted skirmishes:
 
 | Group | Setup | Cases |
 |---|---|---|
@@ -117,6 +117,7 @@ PASS or FAIL per case and exits 1 on any FAIL. Four scripted skirmishes:
 | B | Alt+Enter on the menus, Options -> 1024 x 768, a game, Quit to the menus | edge scrolling in fullscreen at 1024x768; fullscreen kept at each `SetDisplayMode` (800 -> 1024 -> 800), on the score screen and on the menus |
 | C | `--fullscreen` at launch | the menus are fullscreen from the start; edge scrolling in the monitor's rectangle |
 | D | `--res 1920x1080` in a 1600x900 window, then fullscreen | no bars in a 16:9 window; edge scrolling at that size |
+| E | a window sized to 1100x620 on the menus, Options -> 1024 x 768, a game, Quit to the menus, a second game | the window keeps the player's size through every mode change (the game sizes its own window at each one); edge scrolling in that shape |
 
 **Edge scrolling** is checked at every window shape on all four sides of the
 window, in each letterbox bar (where the shape has them), and past the screen's

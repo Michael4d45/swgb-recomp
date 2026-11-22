@@ -11,6 +11,9 @@ Four scripted skirmishes (--headless --multi, nothing on your screen), each a ca
      and Quit to the menus (800x600 again): fullscreen must survive all of it.
   C  --fullscreen at launch: the same edge checks, in the monitor's rectangle.
   D  --res 1920x1080 in a 16:9 window (no bars), then fullscreen.
+  E  a window the player sized (1100x620) through a mode change (Options -> 1024 x 768
+     and a game), Quit to the menus and a second game: it must keep its size (the game
+     sizes its own window at every mode change; that shrank it a little each time).
 
 In every window shape, edge scrolling is checked on all four sides of the window, in
 each letterbox bar, and that nothing scrolls with the cursor well inside the picture:
@@ -18,7 +21,7 @@ the cursor is put there by the scripted (virtual) cursor, which the host reads b
 through the same path as the real one (screen -> client -> letterbox -> the game's
 pixels), then the map view is compared before and after (the game's frame, shot=).
 
-It prints PASS or FAIL per case and exits 1 on any FAIL. About 17 minutes.
+It prints PASS or FAIL per case and exits 1 on any FAIL. About 21 minutes.
 """
 import argparse, os, re, subprocess, sys, time
 
@@ -201,7 +204,7 @@ def judge_edges(results, group, text, script, mode_hint=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", default="A,B,C,D")
+    ap.add_argument("--only", default="A,B,C,D,E")
     ap.add_argument("--run", default=r"A:\Games\star\builds\presentation\swgbrecomp.exe")
     ap.add_argument("--game", default=r"A:\Games\star\games\presentation")
     ap.add_argument("--exe", default=r"A:\Games\star\swgb-recomp\work\Battlegrounds.exe")
@@ -304,6 +307,34 @@ def main():
         p = pics.get("--res 1920x1080 in a 16:9 window")
         check(results, "D/a 16:9 game in a 16:9 window has no bars", p is not None and p[2] == 0 and p[3] == 0 and p[4] == p[0] and p[5] == p[1],
               f"window and picture {p}")
+
+    if "E" in only:
+        s = Script(a.out)
+        s.at(5, "size:1100:620")                          # the player sizes the window on the menus
+        s.wshot(7, "E_menus_sized")
+        t = s.skirmish(8, radio=(453, 413))               # Options: 1024 x 768, then a game
+        s.wshot(t - 3, "E_game_1024")
+        t = s.battery(t, "a sized window after a mode change")
+        s.at(t, "move:980:624"); s.at(t + 1, "click:980:624")      # Menu, Quit Current Game, Yes
+        s.at(t + 5, "move:512:262"); s.at(t + 6, "click:512:262")
+        s.at(t + 9, "move:417:412"); s.at(t + 10, "click:417:412")
+        s.wshot(t + 18, "E_score")
+        s.at(t + 19, "move:709:514"); s.at(t + 20, "click:709:514")   # Main Menu
+        s.wshot(t + 28, "E_menus_again")
+        t = s.skirmish(t + 28)                            # a second game: the mode changes again
+        s.wshot(t - 3, "E_game_again")
+        s.t = t
+        text = run(a, "E", s, [], results)
+        judge_edges(results, "E", text, s, mode_hint=(1024, 768))
+        modes = game_mode(text)
+        check(results, "E/the mode changed (1024x768, 800x600 on the menus, 1024x768 again)",
+              modes.count((1024, 768)) >= 2 and (800, 600) in modes[1:], "SetDisplayMode: " + ", ".join(f"{x}x{y}" for x, y in modes))
+        for tag, what in (("E_menus_sized", "on the menus, as sized"), ("E_game_1024", "after the change to 1024x768"),
+                          ("E_score", "on the score screen (800x600)"), ("E_menus_again", "back on the menus"),
+                          ("E_game_again", "in the second game")):
+            m = re.search(r"\[wshot\] window (\d+)x(\d+), picture .*?" + tag, text)
+            size = (int(m.group(1)), int(m.group(2))) if m else None
+            check(results, f"E/the window keeps the player's size {what}", size == (1100, 620), f"client {size}, sized 1100x620")
 
     bad = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(bad)}/{len(results)} passed" + (f"; FAILED: {len(bad)}" if bad else ""))

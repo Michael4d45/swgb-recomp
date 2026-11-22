@@ -64,7 +64,10 @@ what needs research or a new subsystem.
   reports the game's own rectangle), the cursor kept to the window in
   fullscreen, fullscreen kept through a mode change, the game's cursor
   restored on re-entry, a steady pacing beat (210 presents a second at 180 Hz
-  showed 105), the 100 ms timer redrawing only for a text field.
+  showed 105), the 100 ms timer redrawing only for a text field; the window
+  shrinking a little at every mode change (the game sizes its window from
+  `GetWindowRect` and `GetClientRect`: both are now the mode's, and its own
+  moves of the window are left to softdd).
 - **Tested without a person:** `tools/present_check.py` (headless, a virtual
   cursor the game reads back as it reads the real one): edge scrolling on all
   four sides and in each bar in every window shape, in fullscreen, at

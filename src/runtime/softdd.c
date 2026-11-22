@@ -440,6 +440,17 @@ static void fit_window(DD* d) {
         static int fs_done;
         if (!fs_done) { fs_done = 1; present_set_fullscreen(d->hwnd, 1); }
     }
+    if (softdd_headless && d->hwnd && d->w && !present_is_fullscreen()) {
+        /* Headless: the window is the mode's size (scripts use game pixels 1:1),
+         * unless a script sized it (size:W:H), which then stays. */
+        static int hw = 800, hh = 600;
+        RECT c;
+        GetClientRect(d->hwnd, &c);
+        if ((c.right == hw && c.bottom == hh) || (c.right == d->w && c.bottom == d->h)) {
+            if (c.right != d->w || c.bottom != d->h) present_set_client_size(d->hwnd, d->w, d->h);
+        }
+        hw = d->w; hh = d->h;
+    }
     if (softdd_headless || !d->hwnd || !d->w) return;
     if (placed) {
         /* A new mode (1280x1024 is 5:4, the menus 4:3): keep the height and

@@ -700,11 +700,12 @@ static void shim_SetCursorPos(void) {
 
 /* The game's client <-> screen conversions work in its mode's pixels: the
  * window is wherever softdd put it, so its client origin is the game's 0,0. */
-/* The game's edge scrolling compares GetCursorPos (above: game pixels, 0..W-1)
- * with its window's GetWindowRect: the window's real place on the screen, which
- * is another size and offset the moment it is resized, letterboxed or
- * fullscreen. The game window's rectangle is the game's own 0,0,W,H, so the
- * window's (or the monitor's) edge is the game's edge on all four sides. */
+/* The game sees its window as the original did on a fullscreen mode: at 0,0,
+ * exactly the mode's size, window and client alike. Its edge scrolling compares
+ * GetCursorPos (above: game pixels, 0..W-1) with GetWindowRect, so the window's
+ * (or the monitor's) edge is the game's edge on all four sides; and at a mode
+ * change it sizes its window from GetWindowRect - GetClientRect, so both must
+ * agree (a real client and a faked window shrank the window at every change). */
 static void shim_GetWindowRect(void) {
     HWND w = (HWND)(uintptr_t)ARG(0);
     RECT* r = (RECT*)(uintptr_t)ARG(1);
@@ -718,6 +719,41 @@ static void shim_GetWindowRect(void) {
 
 /* The game's cursor, kept: after the pointer leaves the window and comes
  * back, Windows asks WM_SETCURSOR and the default answer is the class arrow. */
+static void shim_GetClientRect(void) {
+    HWND w = (HWND)(uintptr_t)ARG(0);
+    RECT* r = (RECT*)(uintptr_t)ARG(1);
+    DD* d = softdd_dd();
+    if (w && w == g_game_wnd && d && d->w && r) {
+        r->left = 0, r->top = 0, r->right = d->w, r->bottom = d->h;
+        g_eax = TRUE;
+    } else g_eax = GetClientRect(w, r);
+    g_esp += 4 + 2 * 4;
+}
+
+/* The game moves and sizes its own window at every mode change (to the mode,
+ * as a fullscreen mode would be). The window is the player's, and softdd's
+ * (fit_window: the height kept, the new mode's shape; or fullscreen): the
+ * game's moves of it are let through without the move and the size. */
+static void shim_MoveWindow(void) {
+    HWND w = (HWND)(uintptr_t)ARG(0);
+    BOOL ok = TRUE;
+    if (w && w == g_game_wnd) {
+        static int once;
+        if (!once++) printf("[host] the game's MoveWindow of its window: left to softdd\n");
+    } else UNLOCKED(ok = MoveWindow(w, (int)ARG(1), (int)ARG(2), (int)ARG(3), (int)ARG(4), (BOOL)ARG(5)));
+    g_eax = ok;
+    g_esp += 4 + 6 * 4;
+}
+static void shim_SetWindowPos(void) {
+    HWND w = (HWND)(uintptr_t)ARG(0);
+    UINT flags = ARG(6);
+    BOOL ok;
+    if (w && w == g_game_wnd) flags |= SWP_NOMOVE | SWP_NOSIZE;   /* z-order, showing, the frame: still the game's */
+    UNLOCKED(ok = SetWindowPos(w, (HWND)(uintptr_t)ARG(1), (int)ARG(2), (int)ARG(3), (int)ARG(4), (int)ARG(5), flags));
+    g_eax = ok;
+    g_esp += 4 + 7 * 4;
+}
+
 static void shim_SetCursor(void) {
     HCURSOR c = (HCURSOR)(uintptr_t)ARG(0), prev;
     g_game_cursor = c;
@@ -763,6 +799,9 @@ static native32_shim_t g_shims[] = {
     { "SetCursorPos", shim_SetCursorPos },
     { "ScreenToClient", shim_ScreenToClient },
     { "GetWindowRect", shim_GetWindowRect },
+    { "GetClientRect", shim_GetClientRect },
+    { "MoveWindow", shim_MoveWindow },
+    { "SetWindowPos", shim_SetWindowPos },
     { "SetCursor", shim_SetCursor },
     { "ClientToScreen", shim_ClientToScreen },
     { "GetAsyncKeyState", shim_GetAsyncKeyState },

@@ -107,6 +107,13 @@ cursor is restored when the pointer comes back from another window. Fullscreen
 survives the game's own window changes at a mode change (Standard Game
 start, back to the menus).
 
+The game sees its window as it saw a real fullscreen mode: at 0,0 and exactly
+the mode's size (`GetWindowRect` and `GetClientRect`), and its own
+`MoveWindow` and `SetWindowPos` of it do not move or size it. Windowed, the
+window is yours: at a mode change it keeps its height and takes the new
+mode's shape (1280 x 1024 is 5:4), unless you have sized it yourself, when
+it stays as you left it.
+
 For scripted tests (`--keys`, see testing.md), all headless: the cursor is a
 virtual one, read back by the game as a real cursor is (screen, client,
 letterbox, game pixels). `size:W:H` resizes the window's client area,
