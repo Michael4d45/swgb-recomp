@@ -101,6 +101,45 @@ up to 16,384 steps; a 30-minute monkey run is about 2,500.
 An unresolved address from any run (or from a player's log) goes into a seed
 with `py -3 tools\seeds_from_logs.py --merge` (docs/lifting.md).
 
+### What the soaks found (2026-11-22)
+
+| Batch | Host | Runs | Game time | Result |
+|---|---|---|---|---|
+| b1 | before the slack fix | 2 skirmish, 2 monkey, 2 campaign, 25 min | 2.5 h | 4 ran the full time; 2 faulted in `sub_0064AC8D`, at 13 min (monkey, right after a save) and 25 min (skirmish, 7 players): `read of 0x1A00FFFF` / `0x19F7FFFF`, the byte before the back buffer (docs/lifting.md, DirectDraw). |
+| b2 | with it | 2 skirmish (6 and 7 computers, Giant and Normal maps), 2 monkey, 2 campaign (OOM-9, Boss Nass), 30 min | 3.3 h | all 6 ran the full time; nothing reached the code-coverage hooks. |
+| trace | with it, `SWGB_TRACE` and `--firsthit` | 1 skirmish, 1 monkey, 30 min | 1.1 h | both ran the full time. |
+
+No run met an unresolved indirect call, a not-lifted stub or an eh32
+funclet miss. Every run saved at 40% (the files are in each game folder's
+`SaveGame`).
+
+**What a long game reaches that a short one does not.** The traced runs
+log the first entry to each lifted function. About 3,050 functions have run
+by the end of loading and 220-280 more in the first game minute; the
+skirmish reached 3,592 in all and the monkey 4,032 (19% of 20,820). After
+minute 5 the skirmish still found 237 new functions and the monkey about
+400, in bursts:
+
+- minutes 5-10: the computers' economy and first attacks ("Your base is
+  being attacked" by 23 minutes in the b1 skirmish), combat and deaths;
+- the save, 110-150 functions at once (the world's writer);
+- THIS_COD's span blitters (`0x00645xxx`-`0x0064Cxxx`), first hit at
+  minutes 13, 14, 21, 23 and 28: each variant runs only when a sprite's
+  span meets the screen in a particular alignment. Both faults were one of
+  these, which is why they came at 13 and 25 minutes and not in the first
+  five.
+
+Two more things only a long game reaches. One is 2^31 indirect calls (about
+ten minutes): past that, the fault report's indirect-call ring printed
+nothing (an `(int)` comparison, fixed in `host.c` and `coverage.c`). The
+other: a 30-minute skirmish makes about 3 billion indirect calls and 2 million
+frames.
+
+Not yet covered: a skirmish played to a victory or a defeat, missions after a
+campaign's first, a saved game loaded back, and multiplayer. In a campaign
+the monkey can scroll the view into unexplored black and stay there
+(`H` has no command center to return to).
+
 `tools/coverage_test.c` checks the host's unresolved-call stop without the
 game (build line in the file): exit code 5 and the line the seed tool reads;
 `SWGB_ICALL_CONTINUE=1` reports once and carries on; eh32's hook still sees

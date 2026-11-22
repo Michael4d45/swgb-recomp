@@ -187,6 +187,43 @@ what needs research or a new subsystem.
 - **Risk:** large but plausible: the hard part exists; the gaps are
   bounded.
 
+### Stability / coverage
+- **Goal:** a complete skirmish against computer players, and a campaign
+  mission, with no crash.
+- **Found:** the catalog lost real functions that are reached only through
+  a pointer. A switch's index table decoded as code made a false function
+  that ran over the real function behind it, and the data scan then dropped
+  the vtable slot as "inside a body". `0x005648A0` ended skirmishes about two
+  minutes in.
+- **Done:** every code pointer in data, and every code-pointer immediate,
+  classified (`tools/code_ptr_seeds.py`; docs/lifting.md, "Pointers the
+  catalog dropped"). 19 seeds: 3 vtable slots, 16 callbacks. 251 rejected:
+  SEH continuations, labels and noise. The lift is 20,820 functions, and
+  no existing function's C changed. An unresolved indirect call now stops
+  the run at the miss with exit code 5 and names the address, instead of
+  faulting later in an unrelated function (`src/runtime/coverage.c`).
+  `tools/seeds_from_logs.py --merge` turns a player's log into a seed.
+  `tools/soak.py` runs long headless games: varied skirmishes, a monkey,
+  a campaign's first mission, at Fast speed with a save mid-game.
+- **Soak results (2026-11-22, headless, about 7 game-hours):** 14 runs of
+  25-30 minutes: skirmishes with 1-7 computers on Tiny to Giant maps, the
+  monkey, and the first mission of three campaigns, all at Fast speed with a
+  save. Before the fix, 2 of 6 faulted in a THIS_COD span blitter that reads
+  the byte before the back buffer (at 13 and 25 minutes). softdd now puts
+  4 KB of slack around every surface, and all 8 runs since went the full
+  time. No unresolved indirect call in any run. A traced pair
+  (`--firsthit`) shows why long games matter: new code still turns up at
+  minutes 5-28 (the computers' attacks, the save, blitter variants). Also
+  fixed: the fault report's indirect-call ring was empty after 2^31 calls.
+- **pcrecomp (for its maintainers):** a vtable run in a data section should
+  outrank a decoded body, and switch index tables should be data
+  (docs/lifting.md).
+- **Left:** a skirmish played to victory or defeat; campaign missions
+  after the first; loading a saved game; the 1024 and 1280 HUDs under the
+  monkey (its clicks are 800x600); the pcrecomp fixes above.
+- **Risk:** medium: each miss is cheap to fix once seen, but only play
+  finds them.
+
 ## Later
 - DirectPlay multiplayer over LAN.
 
