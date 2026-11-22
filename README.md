@@ -77,6 +77,7 @@ Real output of `swgbrecomp.exe --run --headless`, recompiled code throughout:
 - [docs/testing.md](docs/testing.md): the conformance harness and the scripted skirmish
 - [docs/lifting.md](docs/lifting.md): lifting `Battlegrounds.exe`, every wall so far and its fix
 - [docs/exceptions.md](docs/exceptions.md): the game's C++ and SEH exception frames in the lift
+- [docs/framerate.md](docs/framerate.md): how often the game draws and simulates, `--fps N`
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Contributors

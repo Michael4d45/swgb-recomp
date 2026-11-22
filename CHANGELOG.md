@@ -5,6 +5,12 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `--fps N`: the in-game frame rate, the host waiting between frames
+  (9% of a core at 60 against 98%); game speed unchanged from 10 up.
+- `--fps-log`: frames, changed frames, world steps and the game clock a
+  second ([docs/framerate.md](docs/framerate.md)); `rclick:X:Y` in `--keys`.
+
 ## [0.1.0] - 2026-11-20
 
 - Builds against pcrecomp main; the `pcrecomp-ingame` branch is merged.

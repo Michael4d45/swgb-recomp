@@ -67,17 +67,30 @@ what needs research or a new subsystem.
   as references.
 
 ### 5. Higher frame rates
-- **Known:** nothing measured yet. present counts are not frames (see 2).
-  Expanding Fronts advertises 60 fps, so the original runs below that in
-  some states.
-- **Work:** count real frames in a skirmish (Flips per second against the
-  wall clock); find the engine's limiter (the `timeGetTime` loop around
-  `0x00428A80` is a first lead); see what is tied to it (simulation speed,
-  animation, scrolling). Raise the cap only where drawing is independent
-  of the simulation tick.
-- **Risk:** medium-high. If the simulation steps per drawn frame, a higher
-  rate changes game speed and multiplayer sync; a 2D sprite engine has
-  nothing to interpolate.
+- **Known (measured 2026-11-21, [docs/framerate.md](docs/framerate.md)):**
+  drawing and simulation are separate. In game the engine draws one frame
+  (one Blt to the primary, `sub_00471210`) per pass of the game screen's
+  idle, `sub_004F6EA0`, behind a gate of `[screen+0x1258]` ms (1 ms, from
+  the startup settings): ~920 frames a second headless here. The world
+  update (`sub_0061AB70`) steps only when 50 ms have passed, by the real
+  time elapsed (at most 100 ms) times the speed: 20 steps a second, and
+  the game clock gains 1500 game ms a wall second at Normal speed at any
+  frame rate from 10 up. Of the ~920 frames, only 8-30 a second differ
+  from the one before (one per step, and the scroll). `0x00428A80` is the
+  base game idle; its `timeGetTime` calls time its own housekeeping, not frames.
+- **Done:** `--fps N` (the gate set per pass, the host waiting between
+  frames instead of spinning a core) and `--fps-log` (frames, changed
+  frames, steps, the game clock, DirectDraw and `timeGetTime` calls by
+  caller), in `src/runtime/framerate.c`. Game speed unchanged at 60, 30
+  and 10 (game clock and training progress); at 5 the 100 ms step cap
+  halves it. `--fps 60` takes 9% of a core in game against 98%.
+- **Next:** more frames do not move units more smoothly: they move once a
+  step. Smooth motion needs interpolated drawing (objects drawn at their
+  position plus velocity times the time since the step: the view's object
+  pass, sync untouched) or a smaller minimum step (the `0x32` at
+  `0x0061ACAA`; single player only, and untested AI and pathing at small
+  steps). Both are changes to lifted code.
+- **Risk:** low for `--fps`; medium-high for smoother motion.
 
 ### 6. Cutscenes
 - **Known:** the game plays its films through `MCIWndCreateA` (MSVFW32).
