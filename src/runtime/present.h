@@ -27,6 +27,12 @@ void present_layout(int mode, int cw, int ch, int sw, int sh, RECT* out);
  * picture (a click in a bar lands on the nearest edge). */
 void present_to_game(HWND wnd, int gw, int gh, POINT* p);
 
+/* The inverse: a game pixel -> the client pixel that maps back to it (scripted input). */
+void present_to_client(HWND wnd, int gw, int gh, POINT* p);
+/* The rectangle the cursor is confined to (screen pixels) while fullscreen and active, even when
+ * ClipCursor is not called (headless): the scripted cursor honours it. 0: none. */
+int  present_clip_get(RECT* out);
+
 /* Draw a frame (8-bit palettized, or 16-bit RGB565) into the window. */
 void present_paint(HWND wnd, const uint8_t* bits, int w, int h, int pitch, int bpp, const PALETTEENTRY* pal);
 

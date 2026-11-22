@@ -107,11 +107,16 @@ cursor is restored when the pointer comes back from another window. Fullscreen
 survives the game's own window changes at a mode change (Standard Game
 start, back to the menus).
 
-For scripted tests (`--keys`, see testing.md), all headless: `size:W:H`
-resizes the window's client area, `wshot=FILE` writes the window as it would
-be drawn (bars and all, any filter), `wmove:X:Y` and `wclick:X:Y` take window
-pixels and map them like the mouse does, and `alt+enter` and `alt+f12` press
-the hotkeys.
+For scripted tests (`--keys`, see testing.md), all headless: the cursor is a
+virtual one, read back by the game as a real cursor is (screen, client,
+letterbox, game pixels). `size:W:H` resizes the window's client area,
+`wshot=FILE` writes the window as it would be drawn (bars and all, any filter),
+`wmove:X:Y` and `wclick:X:Y` take window pixels, each a number or a place
+(`L R C`, `T B C`, `PL PR PT PB` for the picture's edges, `BL BR BT BB` for the
+middle of a bar, with an offset: `wmove:R:C`, `wmove:PL+60:C`), `alt+enter` and
+`alt+f12` press the hotkeys, `setcursor` has the pointer come back into the
+window (the game's cursor must survive), and `--keys @FILE` reads the script
+from a file, a step to a line.
 
 `--args "..."` passes switches to the game itself; `--game`, `--cd` and
 `--exe` point at other folders; `--films DIR` is where the films are when

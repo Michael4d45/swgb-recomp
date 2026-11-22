@@ -81,6 +81,29 @@ void present_to_game(HWND wnd, int gw, int gh, POINT* p) {
     p->y = (int)((int64_t)(2 * (y - r.top) + 1) * gh / (2 * (int64_t)rh));
 }
 
+void present_to_client(HWND wnd, int gw, int gh, POINT* p) {
+    RECT rc, r;
+    if (!wnd || gw <= 0 || gh <= 0 || !GetClientRect(wnd, &rc) || !rc.right || !rc.bottom) return;
+    present_layout(present_filter, rc.right, rc.bottom, gw, gh, &r);
+    int rw = r.right - r.left, rh = r.bottom - r.top;
+    int cx = r.left + (int)((int64_t)(2 * p->x + 1) * rw / (2 * (int64_t)gw));
+    int cy = r.top + (int)((int64_t)(2 * p->y + 1) * rh / (2 * (int64_t)gh));
+    /* the pixel that maps back to the game pixel asked for (a picture smaller than the frame cannot reach all) */
+    static const int tries[] = { 0, -1, 1, -2, 2 };
+    for (int i = 0; i < 5; i++) {
+        POINT t = { cx + tries[i], 0 };
+        present_to_game(wnd, gw, gh, &t);
+        if (t.x == p->x) { cx += tries[i]; break; }
+    }
+    for (int i = 0; i < 5; i++) {
+        POINT t = { 0, cy + tries[i] };
+        present_to_game(wnd, gw, gh, &t);
+        if (t.y == p->y) { cy += tries[i]; break; }
+    }
+    p->x = cx;
+    p->y = cy;
+}
+
 /* ------------------------------------------------------------- scaling */
 
 static uint32_t* g_src;   static size_t g_src_n;     /* the frame as 0x00RRGGBB */
@@ -306,14 +329,19 @@ void present_set_fullscreen(HWND wnd, int on) {
 /* The cursor cannot leave a fullscreen window for another monitor (the game
  * scrolls the map by the cursor's place at the edge), and is let go whenever
  * the window is not the active one. */
+static int g_clip_on;
+static RECT g_clip_rect;
+int present_clip_get(RECT* out) { if (g_clip_on) *out = g_clip_rect; return g_clip_on; }
+
 void present_cursor_clip(HWND wnd, int active) {
-    if (present_noclip || !wnd) return;
-    if (active && g_fs) {
-        RECT r;
-        GetClientRect(wnd, &r);
-        MapWindowPoints(wnd, NULL, (POINT*)&r, 2);
-        ClipCursor(&r);
-    } else ClipCursor(NULL);
+    if (!wnd) return;
+    g_clip_on = active && g_fs;
+    if (g_clip_on) {
+        GetClientRect(wnd, &g_clip_rect);
+        MapWindowPoints(wnd, NULL, (POINT*)&g_clip_rect, 2);
+    }
+    if (present_noclip) return;   /* the window station's cursor is the user's: headless never clips it */
+    ClipCursor(g_clip_on ? &g_clip_rect : NULL);
 }
 
 void present_fs_keep(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
@@ -379,7 +407,7 @@ static int monitor_hz(HWND wnd) {
             EnumDisplaySettingsA(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1)
             hz = (int)dm.dmDisplayFrequency;
     }
-    return hz < 20 ? 20 : hz > 360 ? 360 : hz;
+    return hz < 5 ? 5 : hz > 2000 ? 2000 : hz;   /* a real display tops out far below; --refresh is for tests */
 }
 
 static void learn_hz(HWND wnd) {

@@ -436,6 +436,10 @@ static void maybe_present(Surf* s) {
  * times --scale. */
 static void fit_window(DD* d) {
     static int placed, pw, ph;
+    if (softdd_headless && present_fullscreen_start && d->hwnd && d->w) {   /* --fullscreen, once (tested headless) */
+        static int fs_done;
+        if (!fs_done) { fs_done = 1; present_set_fullscreen(d->hwnd, 1); }
+    }
     if (softdd_headless || !d->hwnd || !d->w) return;
     if (placed) {
         /* A new mode (1280x1024 is 5:4, the menus 4:3): keep the height and

@@ -65,6 +65,12 @@ what needs research or a new subsystem.
   fullscreen, fullscreen kept through a mode change, the game's cursor
   restored on re-entry, a steady pacing beat (210 presents a second at 180 Hz
   showed 105), the 100 ms timer redrawing only for a text field.
+- **Tested without a person:** `tools/present_check.py` (headless, a virtual
+  cursor the game reads back as it reads the real one): edge scrolling on all
+  four sides and in each bar in every window shape, in fullscreen, at
+  `--res 1920x1080` and after an Options size change; fullscreen kept at a
+  mode change; the cursor back in the window; pacing near the refresh.
+  `tools/present_check_real.ps1` is the same on the real screen, for the user.
 - **Left:** remember the window size, filter and fullscreen between runs;
   `softdd`'s `GetMonitorFrequency` still says 60. The CPU scaler costs 3 ms (1080p) to
   11 ms (4K) a frame for `sharp`/`smooth`: a GPU path (Direct3D 11) would
