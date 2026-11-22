@@ -35,6 +35,13 @@ Exit code 1 on any FAIL; the full log is `work\conformance.log`. Without the
 game data (`game\`, `work\Battlegrounds.exe`) every milestone is SKIP
 and the exit code is 0, so it is safe on a machine with no copy.
 
+It always runs `--multi`. In a worktree, point it at your build, your game
+folder and the shared executable:
+
+```
+py -3 tools\conformance.py A:\Games\star\builds\<track>\swgbrecomp.exe --game A:\Games\star\games\<track> --exe A:\Games\star\swgb-recomp\work\Battlegrounds.exe
+```
+
 ## Into a skirmish
 
 ```
@@ -51,6 +58,53 @@ a key name, or `shot=FILE.bmp`.
 `--watchdog` ends the run and says where the game was; `--files` logs every
 file opened; `NATIVE32_TRACE_EH=1` logs every guest exception and where it
 lands.
+
+## Long games: `tools/soak.py`
+
+```
+py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed] [--runs N] [--minutes M] [--jobs J]
+                     [--seed S] [--run EXE] [--game DIR] [--speed fast|normal] [--no-save] [--out DIR]
+```
+
+Headless and `--multi`, each run in a game folder of its own (job k > 0 gets
+`DIR-soakK`, hard links like `worktree_env.ps1` makes). The defaults are this
+track's build (`A:\Games\star\builds\coverage`) and game folder; pass
+`--run` and `--game` for another.
+
+| Mode | What it does after the main menu |
+|---|---|
+| `skirmish` | Standard Game with a setup varied from the seed: 1-7 computer players with random civilizations, one of 16 locations, a map size from Tiny to Giant, a difficulty from Easiest to Hardest. Start Game, then an idle player: `H`, the command center trains a worker, a right-click somewhere, every 25-45 s. |
+| `monkey` | The same start, then random input every 0.4-2 s: left and right clicks on the map, the command grid, the minimap and its buttons; the HUD's panels (objectives, chat, diplomacy, the tech tree), with a click or two inside and then Escape; the game menu's Options and About; letters, digits, arrows, Tab, Enter, Escape and F1-F11. It never clicks Quit, Restart or Load. F10, the menu's hotkey, is left out. |
+| `campaign` | Campaigns, one of the six campaigns, its first mission, the difficulty dialog's OK, the briefing, Escape for the Objectives, then the monkey: a first mission has no command center for the idle player (`--idle-campaign` runs it anyway). |
+| `mixed` | The three in turn. |
+
+Every run sets the game speed to Fast (the game menu, Options, Speed) and
+saves once, 40% of the way in (the game menu, Save, a name, OK). Out of
+`DIR\<run>\` come `run.log`, `keys.txt` (the `--keys @FILE` script, so a run
+can be repeated exactly), PNG shots (at the start, every five minutes, at
+the end) and `summary.json`. The summary prints each run's outcome and every
+`ICALL`/`ITAIL`, fault, not-lifted stub and `[coverage]` line, with the eight
+`[keys]` steps before it. The outcome comes from the host's exit code:
+
+| Exit | Outcome |
+|---|---|
+| 4 | survived: the watchdog ended it at the planned length |
+| 0 | the game exited by itself |
+| 2 | a not-lifted stub |
+| 3 | a fault |
+| 5 | an unresolved indirect call (`coverage.c`; docs/lifting.md) |
+
+The clicks are 800x600 game pixels: run it in a game folder whose Screen Size
+is 800 (it warns if the first `SetDisplayMode` is not 800x600). `--keys` takes
+up to 16,384 steps; a 30-minute monkey run is about 2,500.
+
+An unresolved address from any run (or from a player's log) goes into a seed
+with `py -3 tools\seeds_from_logs.py --merge` (docs/lifting.md).
+
+`tools/coverage_test.c` checks the host's unresolved-call stop without the
+game (build line in the file): exit code 5 and the line the seed tool reads;
+`SWGB_ICALL_CONTINUE=1` reports once and carries on; eh32's hook still sees
+each address first.
 
 ## The game's three resolutions
 
