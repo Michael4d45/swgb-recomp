@@ -184,3 +184,29 @@ Layout: `run_lift.py` (lift driver), `src/runtime/` (host, `softdd`
 DirectDraw, `present` for scaling, fullscreen and pacing, the deflate decoder), `tools/` (setup, the update unpacker, the
 conformance harness), `third_party/miniz` (MIT, see `NOTICE`), and the
 gitignored `game/`, `cd/`, `work/` and `src/recomp/gen/`.
+
+## Clone Campaigns
+
+The expansion is a second lift and a second host, `swgbrecomp_cc.exe`,
+from Steam's install (its `Game` folder has the `_x1` data and
+`battlegrounds_x1.exe`):
+
+```
+py -3 tools\steamstub_swgb.py game\battlegrounds_x1.exe work\battlegrounds_x1.exe
+py -3 ..\pcrecomp\tools\disasm\disasm32.py work\battlegrounds_x1.exe -o work\functions_x1.json
+py -3 run_lift.py --build cc --all
+build.cmd
+build\swgbrecomp_cc.exe --run
+```
+
+Expected: `Functions: 21057` (about two minutes), then `lifted 21057
+not-lifted stubs 0   errors 0` and 5.5M lines of C in `src\recomp\gen_cc\`.
+`build.cmd` builds `swgbrecomp_cc.exe` beside `swgbrecomp.exe` whenever
+`src\recomp\gen_cc` has a lift in it. Its default `--exe` is
+`work\battlegrounds_x1.exe`. Lift `battlegrounds_x1.exe`, not
+`battlegrounds_cc.exe`: that one is the same build with a community
+widescreen mod in it, and `run_lift.py` refuses it ([lifting.md](lifting.md#clone-campaigns)).
+
+The generated C is as large as the base game's, and each compiler can take
+about 1 GB. On a machine short of memory (`C1002: compiler is out of heap
+space`), build with fewer jobs (`build.cmd -j 4`) or `-DGEN_OPT=/Od`.

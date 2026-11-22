@@ -7,14 +7,17 @@ N/M at the end. Exit 1 on any FAIL. Without the game data (game\\,
 work\\Battlegrounds.exe) every milestone is SKIP and the exit code is 0.
 
     py -3 tools/conformance.py [path\\to\\swgbrecomp.exe] [--game DIR] [--exe Battlegrounds.exe]
+    py -3 tools/conformance.py --cc [path\\to\\swgbrecomp_cc.exe] [--game DIR] [--exe battlegrounds_x1.exe]
 
+--cc checks Clone Campaigns: build\\swgbrecomp_cc.exe, work\\battlegrounds_x1.exe,
+data\\genie_x1.dat and its own entry (run_lift.py --build cc).
 --game and --exe point a worktree's build at its own game folder and the
 shared executable (docs/parallel-work.md). The run is always --multi, so it
 never ends another run's game.
 
 Milestones, in the order a run reaches them:
   boot       the image maps, binds and enters the game
-  genie      data\\genie.dat is read and inflated (the host's decoder)
+  genie      data\\genie.dat (genie_x1.dat) is read and inflated (the host's decoder)
   directdraw the 800x600x8 mode is set and 100 frames are presented
   menu       the main menu's child windows exist (its text-entry control)
   exit       a click on the menu's Exit button ends the game with code 0
@@ -25,6 +28,11 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# (host, exe, entry, genie file) per build, as run_lift.py --build names them.
+BUILDS = {
+    'base': ('swgbrecomp.exe', 'Battlegrounds.exe', 0x00632881, 'genie'),
+    'cc': ('swgbrecomp_cc.exe', 'battlegrounds_x1.exe', 0x00636601, 'genie_x1'),
+}
 CHECKS = [
     ('boot', r'entering 0x00632881'),
     ('genie', r'open data\\genie\.dat -> ok'),
@@ -37,10 +45,16 @@ CHECKS = [
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('run', nargs='?', default=os.path.join(ROOT, 'build', 'swgbrecomp.exe'))
+    ap.add_argument('run', nargs='?')
+    ap.add_argument('--cc', action='store_true', help='Clone Campaigns (swgbrecomp_cc.exe)')
     ap.add_argument('--game', default=os.path.join(ROOT, 'game'))
-    ap.add_argument('--exe', default=os.path.join(ROOT, 'work', 'Battlegrounds.exe'))
+    ap.add_argument('--exe')
     a = ap.parse_args()
+    host, guest, entry, genie = BUILDS['cc' if a.cc else 'base']
+    a.run = a.run or os.path.join(ROOT, 'build', host)
+    a.exe = a.exe or os.path.join(ROOT, 'work', guest)
+    CHECKS[0] = ('boot', 'entering 0x%08X' % entry)
+    CHECKS[1] = ('genie', r'open data\\%s\.dat -> ok' % genie)
     exe = os.path.abspath(a.run)
     data = [a.game, a.exe]
     if not all(os.path.exists(p) for p in data):
@@ -56,7 +70,8 @@ def main():
            '--keys', '20:move:40:565,21:click:40:565']
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, errors='replace', timeout=120)
     log = r.stdout + r.stderr
-    open(os.path.join(ROOT, 'work', 'conformance.log'), 'w', encoding='utf-8').write(log)
+    open(os.path.join(ROOT, 'work', 'conformance%s.log' % ('_cc' if a.cc else '')), 'w',
+         encoding='utf-8').write(log)
     passed = 0
     for name, pat in CHECKS:
         ok = re.search(pat, log) is not None and (name != 'exit' or r.returncode == 0)

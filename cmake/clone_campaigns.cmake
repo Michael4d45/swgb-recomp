@@ -47,9 +47,14 @@ target_compile_definitions(swgb_cc PRIVATE ${SWGB_DEFS} SWGB_CC=1)
 target_link_libraries(swgb_cc PRIVATE swgb_cc_gen)
 target_link_options(swgb_cc PRIVATE "/WHOLEARCHIVE:$<IF:$<BOOL:${SWGB_CC_GEN_LIB}>,${SWGB_CC_GEN_LIB},$<TARGET_FILE:swgb_cc_gen>>")
 # The same layout as the base host: the guest's 0x00400000..0x00A5A000 free
-# (battlegrounds_x1.exe's image is 0x00400000..0x007B1000).
+# (battlegrounds_x1.exe's image is 0x00400000..0x007B1000). The stack is
+# 256 MB, not 16: THIS_COD's sprite decoder is threaded code (0x00651E40
+# reads a command and jumps to its handler, the handler jumps back through
+# [0x007A4044]), every one of those jumps is a host call in the lift, so a
+# sprite's commands nest. Built /Od, a skirmish with a building selected
+# overflowed 16 MB there (docs/lifting.md).
 target_link_options(swgb_cc PRIVATE /BASE:0x60000000 /FIXED:NO /DYNAMICBASE:NO
-                                          /NXCOMPAT /LARGEADDRESSAWARE /STACK:0x1000000
+                                          /NXCOMPAT /LARGEADDRESSAWARE /STACK:0x10000000
                                           /MANIFESTUAC:NO /MANIFEST:NO)
 target_link_libraries(swgb_cc PRIVATE user32 gdi32 kernel32 ole32 uuid dxguid winmm ws2_32 shlwapi advapi32)
 if(SWGB_TRACE)

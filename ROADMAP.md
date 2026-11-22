@@ -109,22 +109,29 @@ what needs research or a new subsystem.
 - **Risk:** done; low for the rest.
 
 ### 4. Clone Campaigns
-- **Known:** the Steam install has `battlegrounds_cc.exe` without the
-  SteamStub wrapper (no `.bind` section, `.text` entropy 6.5 against 8.0
-  for the wrapped `battlegrounds_x1.exe`), PE stamp `0x3CF57142`
-  (2002-05-29), the same 14 DLLs and 258 imports as the base game, image
-  0x3B1000 bytes (fits below 0x00A5A000). `host.c` has no exe-specific
-  address but the image base.
-- **Work:** confirm `battlegrounds_cc.exe` is the same program as the
-  unwrapped `battlegrounds_x1.exe` (`tools/steamstub_swgb.py`, then
-  compare); teach `run_lift.py` a second build: its own catalog, its own
-  generated sources and target, the ~50 per-exe seeds (the `THIS_COD`
-  blitter's jump tables and the rest) found again, its EH frames; the
-  `_x1` data (`genie_x1.dat`, `*_x1.drs`, `language_x1.dll`). Every softdd
-  fix is shared.
-- **Risk:** medium, mostly time: a second 4M-line lift and build. It
-  unlocks most community work (Expanding Fronts, the widescreen patches)
-  as references.
+- **Done (2026-11-21):** a second lift and host. Steam's
+  `battlegrounds_x1.exe`, unwrapped (`tools/steamstub_swgb.py`), is the
+  program; `battlegrounds_cc.exe` is the same build with a community
+  widescreen mod in it (2560x1440, `wide1280*.drs`, a `uage.dll` loader at
+  the entry), so it is refused. `run_lift.py --build cc`: 21,057 functions,
+  0 lift errors, 5.5M lines in `src/recomp/gen_cc`; its seeds, the deflate
+  decoder's address and the `THIS_COD` jump tables found again (the base
+  game's + 0x3000 there). `swgbrecomp_cc.exe` (`cmake/clone_campaigns.cmake`,
+  `SWGB_CC` in `host.c`); conformance `--cc` 5/5; headless: its main menu,
+  the `_x1` data, the New Player dialog, a Standard Game, the command
+  center selected and a Worker trained. Details in `docs/lifting.md`.
+- **Next:** an `/O1` build (this one is `/Od`: the machine was short of
+  memory for 8 compilers), and see whether 16 MB of stack is enough there;
+  play a skirmish through, with the new civilizations (Confederacy,
+  Republic); the Episode II campaign; the intro films from the top of
+  `Game` (track 6); seeds from longer runs (`work/run_seeds_cc.json`).
+- **Shared, found here:** the view scrolls left while the mouse rests at
+  x = 30 (the command panel), in the base game too: the host's mouse
+  handling. A profile saved by the widescreen mod's exe makes the plain
+  one set 2560x1440 and draw 800x600 in its corner: a map of the
+  constants for track 3 is in `docs/lifting.md`.
+- **Risk:** low now. It is the same engine, and every host and softdd fix is
+  shared.
 
 ### 5. Higher frame rates
 - **Known (measured 2026-11-21, [docs/framerate.md](docs/framerate.md)):**

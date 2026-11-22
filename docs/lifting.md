@@ -233,3 +233,112 @@ The dispatch table's pointers are an incremental link's jump stubs
 (`E9 rel32`); the bodies are where they jump. `FPS_STACK` with
 `--fps-log` does this at DirectDraw and `timeGetTime` calls
 ([framerate.md](framerate.md)); it found the game's frame path in one run.
+
+## Clone Campaigns
+
+The expansion is its own program, lifted by the same pipeline into its own
+tree and linked into its own host:
+
+```
+py -3 tools\steamstub_swgb.py <Steam>\Game\battlegrounds_x1.exe work\battlegrounds_x1.exe
+py -3 ..\pcrecomp\tools\disasm\disasm32.py work\battlegrounds_x1.exe -o work\functions_x1.json
+py -3 run_lift.py --build cc --all          # -> src\recomp\gen_cc\
+build.cmd                                   # also builds swgbrecomp_cc.exe
+build\swgbrecomp_cc.exe --run --headless    # --exe defaults to work\battlegrounds_x1.exe
+```
+
+### Which exe
+
+Steam's install has two: `battlegrounds_x1.exe`, SteamStub-wrapped (a
+`.bind` section, `.text` encrypted), and `battlegrounds_cc.exe`, not
+wrapped. Both have PE stamp `0x3CF57142` (2002-05-29), and unwrapped
+(`tools/steamstub_swgb.py`, a SteamStub 3.x `C0DEC0DE` unwrapper over
+pcrecomp's `tools/drm/steamstub.py`) `battlegrounds_x1.exe` is
+`battlegrounds_cc.exe` with the same sections at the same places. But 338
+bytes differ, and `battlegrounds_cc.exe` is a community mod of it:
+
+| Where | `battlegrounds_x1.exe` | `battlegrounds_cc.exe` |
+|---|---|---|
+| `0x0063667B`, the CRT start | `mov [0x007A3A28], eax` | `jmp 0x006539B9`, a cave in `THIS_COD`: `pushad; LoadLibraryA("uage.dll"); popad` (the string is the tail of `language.dll`), then back |
+| 15 places in `.text`: `0x00426234`, `0x0045ACB9`, `0x00463E9E`, `0x0046A914`, `0x004F670B`, `0x0050EDCB`, `0x005D853E` and others | 1280 (`0x500`), 1024 (`0x400`), 1200 (`0x4B0`); `cmp eax, 3` at `0x00428058` | 2560, 1440, 1441; `cmp eax, 5`: the largest Screen Size made 2560x1440 (a map for track 3, widescreen) |
+| `.data` | `interfac.drs`, `interfac_x1.drs` | `wide1280.drs`, `wide1280_x1.drs` |
+| `0x005FD4FA`, 8 times | `cmp byte [esp+eax+24h], 1; jbe` | `and byte [esp+eax+24h], 80h; je` |
+| `0x0064DC8D` (a `THIS_COD` blitter) | 25 bytes of code | `nop`s |
+
+`uage.dll` (2024) hooks the running code, and a static lift has no such
+code to hook. So the lift is of the plain program, the unwrapped
+`battlegrounds_x1.exe`. `run_lift.py --build cc` checks its stamp, refuses
+a wrapped copy (a `.bind` section) and refuses `battlegrounds_cc.exe` by a
+digest of `.text` and `THIS_COD`, since its stamp is the same.
+
+### Its own addresses
+
+The expansion's `.text` is 0x3D60 bytes longer than the base game's, so
+everything after its first change moved. What `run_lift.py` keeps per build:
+
+| | Base game | Clone Campaigns | How it was found |
+|---|---|---|---|
+| Entry | `0x00632881` | `0x00636601` | the PE header |
+| The deflate decoder (`HLE`) | `0x0062343B` | `0x006271AB` | its first 48 bytes, one match; the state block is `0xAD90` bytes in both (the `Inf32Dat` section), so `inflate.c` is unchanged |
+| The pointer-called seed | `0x00427090` | `0x00427920` | its first 128 bytes, with absolute addresses and branch displacements masked: one match |
+| `THIS_COD` | `0x00645000` | `0x00648000` | the same 0xB9B9 bytes but for 4,550 absolute addresses, every one moved by +0x3000 (into `THIS_COD`) or +0x2000 (into data) |
+| The blitter's jump tables | `0x0064C300-0x0064E780` | `0x0064F300-0x00651780` | 720 targets, all of them a catalog entry or a seed (the base game's 43 table seeds plus 0x3000) |
+
+pcrecomp's disasm32 now finds most of those seeds itself (41 of the 45 are
+already catalog entries); they stay in `run_lift.py` for an older catalog.
+The C++ and SEH frames are found in the catalog at lift time
+(`eh32.frame`), so nothing about them is per build: 13 functions with
+somewhere to continue and 19 resume points, the same as the base game.
+
+The lift: 21,057 functions (the base game: 20,801), 0 stubs, 0 lift errors,
+182 with no terminator, 5.5M lines of C in 53 files. The catalog: 21,057
+entries, 95.3% of the code range.
+
+### The host
+
+The lifted code and its dispatch table are linked into the host, so one
+host runs one program: `swgbrecomp_cc.exe` is a second target
+(`cmake/clone_campaigns.cmake`, built only when `src\recomp\gen_cc` has a
+lift in it), from the same runtime sources with `SWGB_CC` defined. That
+picks three things in `host.c`: the exe's name (the guest's own
+`GetModuleFileNameA` and its icons come from `battlegrounds_x1.exe` in the
+game folder), its registry key (`...Star Wars Galactic Battlegrounds: Clone
+Campaigns\1.0`, where `CDPath` goes), and what is on its disc. The
+expansion looks on every CD-ROM drive, C to Y, for
+`gamedata\game\battlegrounds_x1.exe` (`0x00424930`-`0x00424A2C`) and starts
+without it, as the base game does on Steam.
+
+### Running it
+
+```
+build\swgbrecomp_cc.exe --run --headless --multi --watchdog 180 --keys "15:move:340:240,16:click:340:240,20:a,21:b,23:move:323:352,24:click:323:352,30:move:600:228,31:click:600:228,37:move:118:568,38:click:118:568,100:move:335:170,101:click:335:170,104:move:420:330,107:a,170:shot=cc-skirmish.bmp"
+```
+
+With no player profile: Single Player, a name in the New Player dialog, OK,
+Standard Game, Start Game, the command center selected and a Worker trained
+with its hotkey. The menus are at the base game's places. On the way:
+
+- **The data.** `genie_x1.dat` inflates through the same host decoder;
+  `gamedata_x1.drs` and the `_x1` interface, terrain, graphics and sound
+  archives open over the base game's; `language_x1.dll` loads from the game
+  folder (`SetDllDirectoryA`). Nothing in the host had to change for them.
+- **The films.** It looks for `avi\xintro.avi` and `avi\xlogo1.avi` in the
+  game folder, then `game\avi\` on the disc. Steam has them at the top of
+  `Game`, so they are skipped (track 6 plays them).
+- **The stack.** Built `/Od`, selecting the command center overflowed the
+  host's 16 MB stack (`0xC00000FD` in `sub_00651E40`). The `THIS_COD`
+  sprite decoder is threaded code: `0x00651E40` reads a command byte and
+  jumps through a table to its handler (`0x00648006` copies a pixel), and
+  each handler jumps back through `[0x007A4044]`. Each jump is a host call
+  in the lift, so a sprite's commands nest, and `/Od` frames are large.
+  The recursion is bounded: with a 256 MB stack the same run plays on.
+  `swgbrecomp_cc.exe` links with that. The base game has the same
+  decoder (`0x0064EE40`, `0x00645006`), and its `/O1` build fits in 16 MB.
+- **A profile saved by the widescreen mod.** Steam's `player.nf1` was last
+  saved by `battlegrounds_cc.exe` with its largest Screen Size, which that
+  mod makes 2560x1440. The plain `battlegrounds_x1.exe` asks softdd for
+  2560x1440 and lays the game out for 800x600 in its top left corner. With
+  a fresh profile it is 800x600 throughout.
+- **The view scrolls left with the mouse resting at x = 30** (on the
+  command panel). The base game on the base host does the same, so it is
+  in the shared host's mouse handling, not the expansion.

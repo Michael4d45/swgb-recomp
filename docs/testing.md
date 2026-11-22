@@ -31,7 +31,10 @@ PASS: exit
 | `menu` | the main menu's child windows exist |
 | `exit` | the click on Exit ends the game with code 0 |
 
-Exit code 1 on any FAIL; the full log is `work\conformance.log`. Without the
+`--cc` checks Clone Campaigns the same way (`build\swgbrecomp_cc.exe`,
+`work\battlegrounds_x1.exe`, `genie_x1.dat`, its entry `0x00636601`), and
+`--game` points at another game folder (a worktree's). Exit code 1 on any
+FAIL; the full log is `work\conformance.log` (`work\conformance_cc.log`). Without the
 game data (`game\`, `work\Battlegrounds.exe`) every milestone is SKIP
 and the exit code is 0, so it is safe on a machine with no copy.
 
