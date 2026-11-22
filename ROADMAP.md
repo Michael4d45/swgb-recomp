@@ -215,12 +215,20 @@ what needs research or a new subsystem.
   (`--firsthit`) shows why long games matter: new code still turns up at
   minutes 5-28 (the computers' attacks, the save, blitter variants). Also
   fixed: the fault report's indirect-call ring was empty after 2^31 calls.
+- **Games to the end (about 4.4 more game-hours, no events):** natural
+  defeats against Hardest computers (three: at 7-12 minutes), each with the
+  score screen; a victory after 22 minutes of a 7-computer game (the chat
+  cheat), the score screen's tabs, Main Menu, and that game's save loaded
+  from Saved Game and played 15 minutes more; OOM-9's missions 1-5 played in
+  a row and won, with their briefings, triggers, score screens and Scenario
+  Menu; two older saves (one a campaign's) loaded and played.
 - **pcrecomp (for its maintainers):** a vtable run in a data section should
   outrank a decoded body, and switch index tables should be data
   (docs/lifting.md).
-- **Left:** a skirmish played to victory or defeat; campaign missions
-  after the first; loading a saved game; the 1024 and 1280 HUDs under the
-  monkey (its clicks are 800x600); the pcrecomp fixes above.
+- **Left:** a victory won by fighting (an idle player is rushed first: it
+  needs a scripted defence or a human); missions 6 and later, and the other
+  campaigns past mission 1; the in-game Load; the 1024 and 1280 HUDs under
+  the monkey (its clicks are 800x600); the pcrecomp fixes above.
 - **Risk:** medium: each miss is cheap to fix once seen, but only play
   finds them.
 

@@ -94,12 +94,12 @@ TEAM_X, TEAM_ME_Y = 472, 94          # the setup screen's Team buttons: each cli
 SCORE_TABS = [(130, 562), (238, 562), (346, 562), (454, 562), (562, 562), (672, 562)]
 SCORE_MENU = (710, 514)              # the score screen: Main Menu (Scenario Menu in a campaign)
 # OOM-9's missions on its campaign screen, in order (each appears when the one before is won).
-OOM9_MISSIONS = [(150, 140), (372, 140), (135, 265), (368, 265)]
+OOM9_MISSIONS = [(150, 140), (372, 140), (135, 265), (368, 265), (90, 430)]
 WIN_CHEAT = 'skywalker'              # typed in the chat: instant victory
 COMMAND_CENTER = (400, 170)         # where the view starts: the command center
 MONKEY_KEYS = list('abcdefghijklmnopqrstuvwxyz0123456789') + \
     ['esc', 'enter', 'space', 'tab', 'up', 'down', 'left', 'right', 'home', 'end', 'bksp'] + \
-    ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f11']   # F10 opens the menu, kept off
+    ['f1', 'f2', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f11']   # F3 pauses, F10 is the menu: kept off
 
 # What the host prints when the game reaches code it cannot run.
 EVENTS = re.compile(r'ICALL: unresolved|ITAIL: unresolved|=== fault|\[not-lifted\]|=== unresolved|'
@@ -194,6 +194,9 @@ def chat(s, t, words):
     return t + 3 + 0.3 * len(words)
 
 
+SHOT_DIR = ['.']                     # setup_fixed's shot of the setup screen: run_one sets it
+
+
 def setup_fixed(s, t, others, size, diff, teams=None):
     """Standard Game with a fixed setup. teams: team clicks per row, me first (0 = no team)."""
     s.click(t, MAIN_SINGLE)
@@ -202,11 +205,17 @@ def setup_fixed(s, t, others, size, diff, teams=None):
     t = pick(DD_OTHERS, others - 1, s, t)
     t = pick(DD_SIZE, size, s, t)
     t = pick(DD_DIFFICULTY, diff, s, t)
+    # A click just after a drop-down closes, or a second one on a button the cursor has
+    # not left, did not count (a 6-allies game started with me and the 7th on no team).
+    t += 2
     for row, n in enumerate(teams or []):
         y = TEAM_ME_Y if row == 0 else CIV_ROW0 + CIV_ROW_STEP * (row - 1)
         for k in range(n):
-            s.click(t, (TEAM_X, y))
-            t += 1.2
+            s.at(t, 'move:%d:%d' % (TEAM_X - 60, y))
+            s.click(t + 0.7, (TEAM_X, y))
+            t += 1.6
+    s.at(t + 1, 'shot=%s' % os.path.join(SHOT_DIR[0], 'shot_setup.bmp'))
+    t += 1
     s.click(t + 1, SETUP_START)
     return t + 1, {'others': others, 'size': SIZES[size], 'difficulty': DIFFICULTIES[diff], 'teams': teams}
 
@@ -392,9 +401,14 @@ def plan_defeat(s, rnd, out, args, game, seed):
 
 
 def plan_allied(s, rnd, out, args, game, seed):
-    """Me and two Hardest computers (team 1) against one (team 2), a Medium map: the allies
-    win the game for an idle player, a victory with nothing typed (won1/won2.mp3)."""
-    t, what = setup_fixed(s, 20, others=3, size=2, diff=4, teams=[1, 1, 1, 2])
+    """Me and --allies Hardest computers (team 1) against one (team 2): the allies win the
+    game for an idle player, a victory with nothing typed (won1/won2.mp3). In practice the
+    one Hardest enemy rushes the idle player first, with 2 allies on a Medium map and with
+    6 on a Large one (defeats at 7-12 minutes): my defeat does not wait for my team. It is
+    a natural defeat with allies on the map; a victory by fighting needs a defence."""
+    n = args.allies
+    size = min(4, max(2, (n + 2 + 1) // 2))            # Medium .. Large: the allies close in sooner
+    t, what = setup_fixed(s, 20, others=n + 1, size=size, diff=4, teams=[1] * (n + 1) + [2])
     start = t + 80
     s.at(start, 'shot=%s' % os.path.join(out, 'shot_start.bmp'))
     t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
@@ -494,6 +508,7 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     out = os.path.join(out_root, name)
     os.makedirs(out, exist_ok=True)
     s = Script()
+    SHOT_DIR[0] = out
     if mode in ENDGAME:
         end, what = ENDGAME[mode](s, rnd, out, args, game, rnd_seed)
     else:
@@ -529,9 +544,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--mode', default='skirmish', choices=['skirmish', 'monkey', 'campaign', 'mixed'] + sorted(ENDGAME))
     ap.add_argument('--after', type=float, default=10, help='victory: minutes played after loading the save')
+    ap.add_argument('--allies', type=int, default=6, help='allied: computer allies (1-6)')
     ap.add_argument('--row', type=int, default=0, help='load: the save to load, by its row in the list')
-    ap.add_argument('--first', type=int, default=1, help='chain: the first OOM-9 mission (1-4)')
-    ap.add_argument('--last', type=int, default=3, help='chain: the last OOM-9 mission (1-4)')
+    ap.add_argument('--first', type=int, default=1, help='chain: the first OOM-9 mission (1-5)')
+    ap.add_argument('--last', type=int, default=3, help='chain: the last OOM-9 mission (1-5)')
     ap.add_argument('--runs', type=int, default=1)
     ap.add_argument('--minutes', type=float, default=25)
     ap.add_argument('--jobs', type=int, default=1, help='runs at once (each with its own game folder)')

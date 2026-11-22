@@ -62,8 +62,10 @@ lands.
 ## Long games: `tools/soak.py`
 
 ```
-py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed] [--runs N] [--minutes M] [--jobs J]
-                     [--seed S] [--run EXE] [--game DIR] [--speed fast|normal] [--no-save] [--out DIR]
+py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed|defeat|allied|victory|chain|load]
+                     [--runs N] [--minutes M] [--jobs J] [--seed S] [--run EXE] [--game DIR]
+                     [--speed fast|normal] [--no-save] [--out DIR]
+                     [--after M] [--allies N] [--first K] [--last K] [--row R]
 ```
 
 Headless and `--multi`, each run in a game folder of its own (job k > 0 gets
@@ -74,9 +76,24 @@ track's build (`A:\Games\star\builds\coverage`) and game folder; pass
 | Mode | What it does after the main menu |
 |---|---|
 | `skirmish` | Standard Game with a setup varied from the seed: 1-7 computer players with random civilizations, one of 16 locations, a map size from Tiny to Giant, a difficulty from Easiest to Hardest. Start Game, then an idle player: `H`, the command center trains a worker, a right-click somewhere, every 25-45 s. |
-| `monkey` | The same start, then random input every 0.4-2 s: left and right clicks on the map, the command grid, the minimap and its buttons; the HUD's panels (objectives, chat, diplomacy, the tech tree), with a click or two inside and then Escape; the game menu's Options and About; letters, digits, arrows, Tab, Enter, Escape and F1-F11. It never clicks Quit, Restart or Load. F10, the menu's hotkey, is left out. |
+| `monkey` | The same start, then random input every 0.4-2 s: left and right clicks on the map, the command grid, the minimap and its buttons; the HUD's panels (objectives, chat, diplomacy, the tech tree), with a click or two inside and then Escape; the game menu's Options and About; letters, digits, arrows, Tab, Enter, Escape and F1-F11. It never clicks Quit, Restart or Load. F3 (pause) and F10 (the menu) are left out: a monkey run that paused sat idle for its last minutes. |
 | `campaign` | Campaigns, one of the six campaigns, its first mission, the difficulty dialog's OK, the briefing, Escape for the Objectives, then the monkey: a first mission has no command center for the idle player (`--idle-campaign` runs it anyway). |
 | `mixed` | The three in turn. |
+| `defeat` | Alone against two Hardest computers on one team, a Tiny map, no defence: the computers win. |
+| `allied` | Me and `--allies` Hardest computers (team 1) against one (team 2), the idle player: meant as a victory nobody types. |
+| `victory` | A varied skirmish played for `--minutes` with the save, then won with the chat cheat `skywalker` (Enter, the word, Enter), the score screen's six tabs, Main Menu, Single Player -> Saved Game -> that save -> OK, and `--after` more minutes of the loaded game. |
+| `chain` | OOM-9's missions `--first`..`--last` in a row (1-5), each: its box on the campaign screen, the briefing, the monkey for `--minutes`, `skywalker`, the score screen, Scenario Menu. A mission's box appears once the one before is won, in that game folder's player profile. |
+| `load` | Single Player -> Saved Game -> the `--row`th save (the list is alphabetical) -> OK, then the monkey. |
+
+The setup screen's Team buttons step to the next team on each click. A click
+right after a drop-down closes, or a second click with the cursor still on
+the button, does not count, so the tool waits and moves the cursor off
+between clicks. Its `shot_setup` shows what was chosen.
+
+The runs log file opens (`--files`), and the summary's `endings` lists each
+game over by the music the game opens for it: `sound\stream\won1.mp3` (or
+`won2`) for a victory, `lost.mp3` for a defeat. On the score screen, a
+defeated player's Teams column reads `-`.
 
 Every run sets the game speed to Fast (the game menu, Options, Speed) and
 saves once, 40% of the way in (the game menu, Save, a name, OK). Out of
@@ -109,8 +126,21 @@ with `py -3 tools\seeds_from_logs.py --merge` (docs/lifting.md).
 | b2 | with it | 2 skirmish (6 and 7 computers, Giant and Normal maps), 2 monkey, 2 campaign (OOM-9, Boss Nass), 30 min | 3.3 h | all 6 ran the full time; nothing reached the code-coverage hooks. |
 | trace | with it, `SWGB_TRACE` and `--firsthit` | 1 skirmish, 1 monkey, 30 min | 1.1 h | both ran the full time. |
 
-No run met an unresolved indirect call, a not-lifted stub or an eh32
-funclet miss. Every run saved at 40% (the files are in each game folder's
+| endings | with it | below | 4.4 h | every run went its planned length or to its end; no events. |
+
+**Games to the end** (2026-11-22, the fixed host):
+
+| Run | What happened |
+|---|---|
+| `defeat`, 2 Hardest on a Tiny map | a real defeat about 11 minutes in: the base destroyed, `lost.mp3`, the score screen (the two computers on team 1); then 35 minutes idling on the score screen. |
+| `allied`, 2 allies, Medium | also a defeat, at 12 minutes: the one Hardest enemy rushed my base before the allies won. My defeat does not wait for my team. |
+| `allied`, 6 allies, Large (twice; the first with the team clicks lost) | defeats at 7-9 minutes, the same way. Diplomacy at the start was right (6 Ally, 1 Enemy, also checked at 4, 7 and 8 players): an idle player is just the nearest target. A natural victory needs a player that defends. |
+| `victory`, 7 computers on a Large Islands map | 22 minutes of play with a save at 9, then `skywalker`: "You are victorious!", `won1.mp3`, the score screen and its tabs, Main Menu, the save in Saved Game's list (row 0), loaded, and 15 more minutes of the loaded game. |
+| `chain`, OOM-9 missions 3, 4 and 5 | each briefing, the mission (Spinnaker's Spoils; Capturing The Crown, Tech Level 4 with the droid army; The Search For An Underwater Kingdom), 15-20 minutes with the monkey, the victory, its end briefing, the score screen, Scenario Menu and the next mission's box. Missions 1 and 2 were won the same way while the tool was written. |
+| `load` x2 | the monkey's save from b1 (made seconds before that run's fault) and a Boss Nass mission-1 save, each loaded and played 15 minutes. |
+
+No run met an unresolved indirect call, a not-lifted stub, an eh32 funclet
+miss or a fault. Every run saved at 40% (the files are in each game folder's
 `SaveGame`).
 
 **What a long game reaches that a short one does not.** The traced runs
@@ -135,10 +165,12 @@ nothing (an `(int)` comparison, fixed in `host.c` and `coverage.c`). The
 other: a 30-minute skirmish makes about 3 billion indirect calls and 2 million
 frames.
 
-Not yet covered: a skirmish played to a victory or a defeat, missions after a
-campaign's first, a saved game loaded back, and multiplayer. In a campaign
-the monkey can scroll the view into unexplored black and stay there
-(`H` has no command center to return to).
+Not yet covered: a victory won by fighting (the idle player dies first; the
+victory above is the cheat's, through the same game-over path), missions 6
+and later and the other five campaigns past mission 1, the in-game Load
+(the main menu's Saved Game is covered), and multiplayer. In a campaign the
+monkey can scroll the view into unexplored black and stay there (`H` has no
+command center to return to).
 
 `tools/coverage_test.c` checks the host's unresolved-call stop without the
 game (build line in the file): exit code 5 and the line the seed tool reads;
