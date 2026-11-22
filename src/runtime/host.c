@@ -32,6 +32,7 @@
 #include "recomp_trace.h"
 #include "softdd.h"
 #include "softdd_int.h"
+#include "framerate.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -346,12 +347,13 @@ static void shim_GetActiveWindow(void) {
 
 static void shim_DirectDrawCreate(void) {
     g_eax = (uint32_t)softdd_create((void**)(uintptr_t)ARG(1));
+    framerate_on_ddraw(*(void**)(uintptr_t)ARG(1));
     g_esp += 4 + 3 * 4;
 }
 
 /* ---- scripted input (--keys) ---------------------------------------------------
  * "SECONDS:what,..." where what is a key name (esc, enter, space, up, down,
- * left, right, tab, f1..f10, a letter or digit), "click:X:Y" or "move:X:Y"
+ * left, right, tab, f1..f10, a letter or digit), "click:X:Y", "rclick:X:Y" or "move:X:Y"
  * (game pixels), "shot=FILE", or "on:NAME" (wait for a file open). While a
  * script runs, the real mouse is not read: only the script reaches the game. */
 typedef struct { DWORD at; int vk, x, y, click, move; char on[64], shot[MAX_PATH]; } step_t;
@@ -390,8 +392,8 @@ static void parse_keys(const char* spec) {
         char* what = c + 1;
         if (!strncmp(what, "shot=", 5)) {
             GetFullPathNameA(what + 5, MAX_PATH, st.shot, NULL);
-        } else if (!strncmp(what, "click:", 6) || !strncmp(what, "move:", 5)) {
-            st.click = what[0] == 'c';
+        } else if (!strncmp(what, "click:", 6) || !strncmp(what, "rclick:", 7) || !strncmp(what, "move:", 5)) {
+            st.click = what[0] == 'c' ? 1 : what[0] == 'r' ? 2 : 0;
             st.move = 1;
             sscanf(strchr(what, ':') + 1, "%d:%d", &st.x, &st.y);
         } else if (!(st.vk = key_by_name(what))) {
@@ -429,12 +431,13 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
             if (w) PostMessageA(w, WM_MOUSEMOVE, 0, MAKELPARAM(st->x, st->y));
             if (st->click) {
                 Sleep(100);
-                g_vk_until[VK_LBUTTON] = GetTickCount() + 150;
-                if (w) PostMessageA(w, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(st->x, st->y));
+                int r = st->click == 2;
+                g_vk_until[r ? VK_RBUTTON : VK_LBUTTON] = GetTickCount() + 150;
+                if (w) PostMessageA(w, r ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, r ? MK_RBUTTON : MK_LBUTTON, MAKELPARAM(st->x, st->y));
                 Sleep(150);
-                if (w) PostMessageA(w, WM_LBUTTONUP, 0, MAKELPARAM(st->x, st->y));
+                if (w) PostMessageA(w, r ? WM_RBUTTONUP : WM_LBUTTONUP, 0, MAKELPARAM(st->x, st->y));
             }
-            printf("[keys] %.1fs %s %d,%d\n", st->at / 1000.0, st->click ? "click" : "move", st->x, st->y);
+            printf("[keys] %.1fs %s %d,%d\n", st->at / 1000.0, st->click == 2 ? "rclick" : st->click ? "click" : "move", st->x, st->y);
         } else {
             UINT sc = MapVirtualKeyA(st->vk, 0);
             {   /* keys go where the game's focus is: a text field is a real edit control */
@@ -541,6 +544,8 @@ static native32_shim_t g_shims[] = {
     { "GetModuleHandleA", shim_GetModuleHandleA },
     { "GetModuleFileNameA", shim_GetModuleFileNameA },
     { "GetCommandLineA", shim_GetCommandLineA },
+    { "timeGetTime", framerate_timeGetTime },
+    { "PeekMessageA", framerate_PeekMessageA },
 };
 
 /* ---- muted by default -------------------------------------------------------
@@ -662,6 +667,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         int n = recomp_trace_arg(argc, argv, i);
         if (n) { i += n - 1; continue; }
+        if ((n = framerate_arg(argc, argv, i))) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--sound")) sound = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = softdd_headless = 1;
@@ -690,7 +696,8 @@ int main(int argc, char** argv) {
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E]\n"
-                   "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
+                   "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n"
+                   "                  [--fps N] [--fps-log]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
@@ -728,6 +735,7 @@ int main(int argc, char** argv) {
     }
     printf("  audio: %s\n", sound ? "on" : m == 2 ? "muted (no audio device)" : "muted (a test run; --sound to hear it)");
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
+    framerate_start();
     if (g_shots) CloseHandle(CreateThread(NULL, 0, shot_thread, NULL, 0, NULL));
     g_file_seen = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (g_nsteps) CloseHandle(CreateThread(NULL, 0, keys_thread, NULL, 0, NULL));
