@@ -420,12 +420,19 @@ void present_disarm(HWND wnd) {
     g_armed = 0;
 }
 
+static int g_damaged;   /* the window itself changed (not just a frame held back) */
+int  present_damaged(void) { int d = g_damaged; g_damaged = 0; return d; }
+
 void present_invalidate(HWND wnd) {
+    g_damaged = 1;
     g_bars_dirty = 1;
     g_hz_known = 0;   /* a new monitor, maybe */
     present_disarm(wnd);
     present_defer(wnd);
 }
+
+static long g_why[4];
+void present_why(int why) { if (why >= 1 && why <= 3) g_why[why]++; }
 
 void present_note(int presented, int shown) {
     static int64_t t0;
@@ -435,8 +442,9 @@ void present_note(int presented, int shown) {
     np += presented;
     ns += shown;
     if (present_log && t - t0 >= 1000000) {
-        fprintf(stderr, "[present] %.1f s: %ld presents, %ld shown (%d Hz, %s)\n", (double)(t - t0) / 1e6, np, ns,
-                (int)(1000000 / g_interval_us), present_filter_name(present_filter));
+        fprintf(stderr, "[present] %.1f s: %ld presents, %ld shown (%d Hz, %s); by the timer: %ld held, %ld window damage, %ld text field\n",
+                (double)(t - t0) / 1e6, np, ns, (int)(1000000 / g_interval_us), present_filter_name(present_filter),
+                g_why[1], g_why[2], g_why[3]);
     }
-    if (t - t0 >= 1000000) { t0 = t; np = ns = 0; }
+    if (t - t0 >= 1000000) { t0 = t; np = ns = 0; g_why[1] = g_why[2] = g_why[3] = 0; }
 }

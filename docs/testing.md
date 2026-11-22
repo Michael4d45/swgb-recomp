@@ -85,15 +85,15 @@ run a private copy of the game's HKCU keys per `--game` folder
 user's game or another worktree's. To check that it persists: pick a size, end
 the game from the main menu (Exit at 40,565) and run
 `toolses_check.py SIZE --no-options`: it reaches that size without touching
-Options. In `--keys` the cursor is in game pixels (the host does not scale it),
-so the scaling of a real mouse (`to_game`) is not exercised here.
+Options. In `--keys` the cursor is in game pixels (the host does not scale it); the
+letterboxed mouse is tested with `wmove`/`wclick` (next section).
 
 ## The picture (scaling, fullscreen, pacing)
 
 Headless too. The presenter's layout and mouse mapping, without the game:
 
 ```
-cl /nologo tools\present_test.c srcuntime\present.c /Isrcuntime user32.lib gdi32.lib
+cl /nologo tools\present_test.c src\runtime\present.c /Isrc\runtime user32.lib gdi32.lib
 present_test.exe                                  OK
 ```
 
@@ -103,6 +103,13 @@ With the game: resize the window, look at it, and click through the letterbox:
 build\swgbrecomp.exe --run --headless --multi --watchdog 40 --present-log ^
   --keys "9:size:1200:700,10:wshot=win.bmp,11:wclick:180:661"
 ```
+
+To check edge scrolling, start a skirmish (above, or `tools/res_check.py`),
+`size:1100:620` once the map is up, then hold the cursor on each window edge
+for a few seconds with `wmove:0:300`, `wmove:1099:300`, `wmove:550:0` and
+`wmove:550:619`, with a `shot=` after each: the view scrolls toward every edge.
+`alt+enter` first and the edges of the monitor (`wmove:2559:720` on a 2560x1440
+one) do the same.
 
 `win.bmp` is the 800x600 frame centred in 1200x700 (picture 133,0 933x700),
 and `wclick:180:661` is the Exit button's place in that window, so the run

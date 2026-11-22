@@ -84,7 +84,7 @@ rectangle (a click in a bar lands on the nearest edge of the picture).
 | `--fullscreen` | `Alt+Enter` toggles | A borderless window the size of the monitor the window is on. The desktop's display mode is never changed, so Alt+Tab and other monitors behave as for any window. |
 | `--scale N` | | The window starts at N times the game's mode (default: 85% of the screen height). Resize it freely after that. |
 | `--refresh HZ` | | Pace frames to HZ instead of the monitor's refresh rate. |
-| `--present-log` | | Once a second on stderr: presents, frames shown, the refresh rate and filter. |
+| `--present-log` | | Once a second on stderr: presents, frames shown, the refresh rate and filter, and how many frames the timer showed (held back, window damage, a text field up). |
 
 The game presents far more often than a display refreshes (every
 `Unlock`/`ReleaseDC` of a primary without a back buffer: tens of thousands a
@@ -94,6 +94,18 @@ one-shot timer draws the latest after the interval, so the last frame before
 the game goes quiet is never lost. `--shot`, `--record` (30 fps by the wall
 clock) and `--frames` still see every frame they need, and the game's text
 fields are composed into the frame that is drawn.
+
+The mouse and the map's edge scrolling follow the letterbox: the game scrolls
+when the cursor is within a few pixels of its window's edge, so the game
+window's rectangle is reported as the game's own `0,0,W,H`, and the cursor
+(clamped to the picture) reaches `0` and `W-1` at the window's or monitor's
+edge on all four sides, in any window shape, fullscreen and at any `--res`.
+The bars count as the edge. While another window is active the game sees the
+cursor in the middle of its picture (no scrolling), and in fullscreen the
+cursor is confined to the window while the game is active. The game's own
+cursor is restored when the pointer comes back from another window. Fullscreen
+survives the game's own window changes at a mode change (Standard Game
+start, back to the menus).
 
 For scripted tests (`--keys`, see testing.md), all headless: `size:W:H`
 resizes the window's client area, `wshot=FILE` writes the window as it would

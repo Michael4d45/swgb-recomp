@@ -59,11 +59,14 @@ what needs research or a new subsystem.
   `docs/building.md`; tests: `docs/testing.md`, `tools/present_test.c`.
   Measured: loading is 60,000+ presents a second, an idle menu 4 or 5; the
   shown rate follows the refresh.
-- **Left:** the user's windowed and fullscreen check (look, Alt+Enter, a
-  resize, the filters); remember the window size, filter and fullscreen
-  between runs; confine the mouse to the window in fullscreen (a second
-  monitor lets it leave while scrolling the map); `softdd`'s
-  `GetMonitorFrequency` still says 60. The CPU scaler costs 3 ms (1080p) to
+- **Found by the user's windowed check, fixed:** edge scrolling (the game
+  compares `GetCursorPos` with its window's `GetWindowRect`; the window now
+  reports the game's own rectangle), the cursor kept to the window in
+  fullscreen, fullscreen kept through a mode change, the game's cursor
+  restored on re-entry, a steady pacing beat (210 presents a second at 180 Hz
+  showed 105), the 100 ms timer redrawing only for a text field.
+- **Left:** remember the window size, filter and fullscreen between runs;
+  `softdd`'s `GetMonitorFrequency` still says 60. The CPU scaler costs 3 ms (1080p) to
   11 ms (4K) a frame for `sharp`/`smooth`: a GPU path (Direct3D 11) would
   take it off the game thread.
 - **Risk:** low.

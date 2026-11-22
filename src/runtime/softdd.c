@@ -354,6 +354,7 @@ static Surf* compose(Surf* s) {
     return &g_comp;
 }
 
+static void present(Surf* s);
 static void present_impl(Surf* s, int from_game);
 
 /* From the game window's timers (the 100 ms one and the pacing one): show a
@@ -362,8 +363,13 @@ static void present_impl(Surf* s, int from_game);
 void softdd_tick(void) {
     if (!g_dd || !g_dd->primary) return;
     present_disarm(g_dd->hwnd);
-    if (present_dirty()) { present_impl(g_dd->primary, 0); return; }
+    if (present_dirty()) {
+        present_why(present_damaged() ? PRES_WHY_DAMAGE : PRES_WHY_HELD);
+        present_impl(g_dd->primary, 0);
+        return;
+    }
     if (GetTickCount() - g_last_present < 90 || !has_edit()) return;
+    present_why(PRES_WHY_FIELD);
     present_impl(g_dd->primary, 0);
 }
 

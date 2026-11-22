@@ -49,9 +49,12 @@ int  present_due(HWND wnd);          /* 1: show this one */
 void present_painted(void);          /* a frame was shown */
 void present_defer(HWND wnd);        /* not shown: arm the timer */
 int  present_dirty(void);
+int  present_damaged(void);          /* since asked: resized, uncovered... (clears) */
 void present_disarm(HWND wnd);       /* the timer fired (or any tick): clear it */
 void present_invalidate(HWND wnd);   /* resized, uncovered, display change: show the current frame again */
-void present_note(int presented, int shown);   /* per-second counts for --present-log */
+void present_note(int presented, int shown);
+void present_why(int why);           /* a frame shown by the timer: PRES_WHY_* (for --present-log) */
+enum { PRES_WHY_HELD = 1, PRES_WHY_DAMAGE, PRES_WHY_FIELD };   /* per-second counts for --present-log */
 
 /* --keys wshot=FILE: the window as it is, bars and all, written as a .bmp
  * from the next frame (also headless: the window is just not shown). */
