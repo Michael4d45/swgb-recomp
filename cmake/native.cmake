@@ -88,6 +88,7 @@ endif()
 add_executable(swgb
   src/linux/main.c
   src/linux/shims.c
+  src/linux/eh.c
   src/runtime/keyscript.c
   src/runtime/inflate.c
   third_party/miniz/miniz.c
