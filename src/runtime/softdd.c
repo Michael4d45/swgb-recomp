@@ -414,7 +414,7 @@ static void present_impl(Surf* s, int from_game) {
         record_frame(s);
     }
     if (paint) {
-        if (!softdd_headless && win) present_paint(win, s->bits, s->w, s->h, s->pitch, s->bpp, screen_palette());
+        if ((!softdd_headless || present_headless_paint()) && win) present_paint(win, s->bits, s->w, s->h, s->pitch, s->bpp, screen_palette());
         present_painted();
     } else present_defer(win);
     if (softdd_stop_after && n >= softdd_stop_after) {

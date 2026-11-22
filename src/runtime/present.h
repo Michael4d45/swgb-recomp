@@ -57,8 +57,10 @@ void present_defer(HWND wnd);        /* not shown: arm the timer */
 int  present_dirty(void);
 int  present_damaged(void);          /* since asked: resized, uncovered... (clears) */
 void present_disarm(HWND wnd);       /* the timer fired (or any tick): clear it */
-void present_invalidate(HWND wnd);   /* resized, uncovered, display change: show the current frame again */
+void present_invalidate(HWND wnd);   /* resized, display change: lay out and draw the whole frame again */
+void present_repaint(HWND wnd);      /* WM_PAINT: show the current frame again (not damage: DWM keeps it) */
 double present_refresh_hz(void);     /* the refresh frames are paced to (--refresh, or the window's monitor) */
+int  present_headless_paint(void);   /* SWGB_PAINT_HEADLESS: paint headless too (to measure the cost) */
 void present_note(int presented, int shown);
 void present_why(int why);           /* a frame shown by the timer: PRES_WHY_* (for --present-log) */
 enum { PRES_WHY_HELD = 1, PRES_WHY_DAMAGE, PRES_WHY_FIELD };   /* per-second counts for --present-log */

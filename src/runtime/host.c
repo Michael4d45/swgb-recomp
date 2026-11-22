@@ -316,8 +316,9 @@ static int click_child(UINT m, WPARAM w, int x, int y) {
 static HWND g_focus_child;
 
 static LRESULT CALLBACK host_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    /* resized, uncovered or a new display mode: the picture is laid out and shown again */
-    if (m == WM_SIZE || m == WM_PAINT || m == WM_DISPLAYCHANGE) present_invalidate(h);
+    /* resized or a new display mode: the picture is laid out and drawn again; a paint: shown again */
+    if (m == WM_SIZE || m == WM_DISPLAYCHANGE) present_invalidate(h);
+    else if (m == WM_PAINT) present_repaint(h);
     switch (m) {
     case WM_ACTIVATEAPP: case WM_NCACTIVATE: w = TRUE; break;
     case WM_ACTIVATE: {
