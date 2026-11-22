@@ -63,12 +63,15 @@ build\swgbrecomp.exe --run --headless --record out.mp4        no window, record 
 build\swgbrecomp.exe --run --headless --shot 20 menu.bmp      save the frame after 20 s
 build\swgbrecomp.exe --run --keys "10:move:330:240,11:click:330:240"   scripted mouse and keys
 build\swgbrecomp.exe --run --headless --watchdog 60 --files   stop after 60 s, log every file opened
+build\swgbrecomp.exe --run --fps 60                           60 frames a second in game
+build\swgbrecomp.exe --run --headless --fps-log               frames, game clock, steps a second
 py -3 tools\conformance.py                                    the milestones, PASS/FAIL
 ```
 
 `--args "..."` passes switches to the game itself; `--game`, `--cd` and
 `--exe` point at other folders. `NATIVE32_TRACE_EH=1` logs every guest
-exception and where it lands.
+exception and where it lands. `--fps N` and `--fps-log` are in
+[framerate.md](framerate.md).
 
 ### Any resolution: `--res`
 

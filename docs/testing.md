@@ -45,7 +45,8 @@ Single Player, a name typed into the New Player dialog, OK, Standard Game,
 Start Game; then the command center is clicked. It passes when `skirmish.bmp`
 shows the map with the command center selected
 ([the screenshot](screenshots/skirmish.png) is this run). Each `--keys` entry
-is `seconds:action`: `move:X:Y`, `click:X:Y`, a key name, or `shot=FILE.bmp`.
+is `seconds:action`: `move:X:Y`, `click:X:Y`, `rclick:X:Y` (right button),
+a key name, or `shot=FILE.bmp`.
 
 `--watchdog` ends the run and says where the game was; `--files` logs every
 file opened; `NATIVE32_TRACE_EH=1` logs every guest exception and where it

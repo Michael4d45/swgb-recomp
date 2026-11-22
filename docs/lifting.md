@@ -81,3 +81,15 @@ letter afterwards ("You must insert a game CD"). The host finds the real
 drive with disc 2 in it (`CD_DRIVE`, `--cd E`, or the first CD-ROM drive with
 `Game\Avi`) and stores that letter in `CDPath` before the game starts, so a
 disc image mounted on a new letter still passes.
+
+## Who called: the host stack
+
+Lifted functions call each other as C functions, so the call chain of
+any import is on the host stack, as return addresses into the lifted
+code. The generated C has no frame pointers (`/O1`), so the stack is
+scanned instead: a value counts when it falls in lifted code just after a
+call instruction, and maps back to the lifted function that holds it.
+The dispatch table's pointers are an incremental link's jump stubs
+(`E9 rel32`); the bodies are where they jump. `FPS_STACK` with
+`--fps-log` does this at DirectDraw and `timeGetTime` calls
+([framerate.md](framerate.md)); it found the game's frame path in one run.
