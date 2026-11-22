@@ -171,7 +171,11 @@ clicks through to a skirmish with `SendInput`, puts the real cursor
 shape and in fullscreen (Alt+Enter), and compares screen captures of the game
 before and after. It parks the cursor at the corner of the screen and brings
 it back to look at the Windows cursor, and reads the frame rate from the
-present log. **It takes over your mouse and keyboard for about five minutes**
+present log (only seconds in the game with presents at least 1.3 times the
+refresh: just above the refresh, and unevenly spaced, some refreshes get no
+new frame at all, so 185 presents a second at 180 Hz show about 160 under any
+pacing). First run, 2026-11-22, 2560x1440 at 180 Hz: 40/40. **It takes over
+your mouse and keyboard for about five minutes**
 (`-Quick`: one shape, about three); do not touch them until it prints the
 summary. Captures and the log are in `%TEMP%\present_check_real`. The Options
 size change while fullscreen is only in the headless tool.

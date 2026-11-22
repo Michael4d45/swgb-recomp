@@ -60,12 +60,19 @@ int main(void) {
                 CHECK(abs(p.x - gw / 2) <= 1 && abs(p.y - gh / 2) <= 1, "mode %d centre -> %ld,%ld", m, p.x, p.y);
             }
     /* pacing: presents at 210 a second against a 180 Hz display show about 180 a second
-     * (an interval-since-the-last rule showed every other one: 105), and 60 a second show all 60 */
+     * (an interval-since-the-last rule showed every other one: 105), and 60 a second show all 60.
+     * The game's presents are not evenly spaced: the jittered cases put each one up to 45% of a
+     * spacing early or late (a rule that took only presents on or just before the slot lost one
+     * slot in eight on a real 180 Hz display at 185 presents a second). */
     {
-        static const int rates[][3] = { { 210, 180, 170 }, { 60, 180, 58 }, { 1000, 180, 170 }, { 400, 60, 56 } };
-        for (int i = 0; i < 4; i++) {
+        static const int rates[][4] = { { 210, 180, 170, 0 }, { 185, 180, 170, 0 }, { 175, 180, 170, 0 }, { 60, 180, 58, 0 },
+                                        { 1000, 180, 170, 0 }, { 400, 60, 56, 0 }, { 900, 600, 560, 0 },
+                                        { 185, 180, 165, 45 }, { 210, 180, 165, 45 }, { 300, 180, 170, 45 } };
+        for (int i = 0; i < (int)(sizeof rates / sizeof rates[0]); i++) {
             LARGE_INTEGER f, t0, t;
             int shown = 0, n = 0;
+            unsigned seed = 12345;
+            double due = 0;
             QueryPerformanceFrequency(&f);
             present_refresh = rates[i][1];
             present_invalidate(NULL);   /* learn the rate again */
@@ -75,12 +82,17 @@ int main(void) {
                 QueryPerformanceCounter(&t);
                 double s = (double)(t.QuadPart - t0.QuadPart) / f.QuadPart;
                 if (s >= 2.0) break;
-                if (s * rates[i][0] >= n) {   /* a present is due now */
+                if (s >= due) {   /* a present is due now */
                     n++;
+                    seed = seed * 1103515245u + 12345u;
+                    double j = rates[i][3] / 100.0 * (((seed >> 8) & 0xFFFF) / 32768.0 - 1.0);   /* -jitter..+jitter */
+                    due = (n + j) / rates[i][0];
                     if (present_due(NULL)) { shown++; present_painted(); }
                 }
             }
-            CHECK(shown / 2 >= rates[i][2] && shown / 2 <= rates[i][1] + 2, "%d presents/s at %d Hz: %d shown/s (want >= %d)", rates[i][0], rates[i][1], shown / 2, rates[i][2]);
+            printf("  pacing: %d presents/s%s at %d Hz -> %d shown/s\n", rates[i][0], rates[i][3] ? " (jittered)" : "", rates[i][1], shown / 2);
+            CHECK(shown / 2 >= rates[i][2] && shown / 2 <= rates[i][1] + 2, "%d presents/s%s at %d Hz: %d shown/s (want >= %d)",
+                  rates[i][0], rates[i][3] ? " (jittered)" : "", rates[i][1], shown / 2, rates[i][2]);
         }
     }
     printf(g_fail ? "%d FAILED\n" : "OK\n", g_fail);

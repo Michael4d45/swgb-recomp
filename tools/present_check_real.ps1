@@ -202,6 +202,7 @@ try {
         Start-Sleep -Seconds 1
     }
     Start-Sleep -Seconds 2
+    $mapFrom = @(Present-Lines).Count   # the frame-rate case counts only the game from here
     Write-Host 'the map is up'
     Front
     Mouse ((Client).X + 300) ((Client).Y + 300); Start-Sleep -Seconds 1
@@ -274,23 +275,26 @@ try {
 
     if (-not $Quick) {
         Write-Host '--- Alt+Enter: borderless fullscreen'
-        [W]::Key(0x12, $false); Press 0x0D; [W]::Key(0x12, $true); Start-Sleep -Seconds 2
+        [void][W]::Key(0x12, $false); Press 0x0D; [void][W]::Key(0x12, $true); Start-Sleep -Seconds 2
         Battery 'fullscreen' $true
         Write-Host '--- the Options size change while fullscreen is checked by the headless tool (present_check.py B)'
-        [W]::Key(0x12, $false); Press 0x0D; [W]::Key(0x12, $true); Start-Sleep -Seconds 1
+        [void][W]::Key(0x12, $false); Press 0x0D; [void][W]::Key(0x12, $true); Start-Sleep -Seconds 1
     }
 
     # the frame rate: from the game's own log, while the skirmish ran
-    # (presents above the refresh but below loading's tens of thousands: the game itself)
+    # Only seconds in the game (after the map came up) with presents well above the refresh: when the
+    # game presents just a little faster than the refresh, and unevenly, some refreshes get no new
+    # frame at all, and no pacing can show one (185 presents a second at 180 Hz show about 160). At
+    # 1.3x and more every refresh has one; a rule that showed every other present gives ~0.6 of it.
     $lines = @(Present-Lines)
-    $busy = @($lines | Where-Object { $_.P -gt 1.05 * $_.Hz * $_.El -and $_.P -lt 20000 * $_.El })
+    $busy = @($lines | Select-Object -Skip $mapFrom | Where-Object { $_.P -ge 1.3 * $_.Hz * $_.El -and $_.P -lt 3000 * $_.El })
     if ($busy.Count -ge 5) {
         $el = ($busy | Measure-Object -Property El -Sum).Sum
         $shown = ($busy | Measure-Object -Property S -Sum).Sum
         $pres = ($busy | Measure-Object -Property P -Sum).Sum
         $hz = $busy[0].Hz
         Check 'frames shown at about the refresh rate when presents exceed it' (($shown / $el) -ge 0.85 * $hz) ("{0:N0} presents/s, {1:N0} shown/s at {2} Hz over {3:N0} s" -f ($pres / $el), ($shown / $el), $hz, $el)
-    } else { Write-Host 'INFO: the game never presented faster than the refresh; no frame-rate case' }
+    } else { Write-Host "INFO: only $($busy.Count) s in the game with presents 1.3x the refresh or more; no frame-rate case" }
     $idle = @($lines | Where-Object { $_.P -le 8 })
     if ($idle.Count -ge 5) {
         $extra = ($idle | ForEach-Object { $_.S - $_.P } | Measure-Object -Average).Average
