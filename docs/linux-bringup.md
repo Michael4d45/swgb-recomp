@@ -6,20 +6,23 @@ how to build, what to expect on the first runs, and the work in order.
 [linux-macos.md](linux-macos.md) has the design and the reasons; this page
 is the steps.
 
-## Where it stands (2026-11-21)
+## Where it stands (2026-11-22)
 
 - Branch `track/linux-macos` on the fork, PR
   [Michael4d45/swgb-recomp#1](https://github.com/Michael4d45/swgb-recomp/pull/1).
-- Done and checked on Windows and WSL:
-  - the whole lift passes gcc's syntax check (64-bit based);
-  - `src/linux/main.c` and `src/linux/shims.c` compile clean against
-    win32hle;
-  - the CMake configure gets as far as needing SDL2;
-  - the Windows build is unchanged.
-- **Never done:** a link, or a run on Linux. Everything below is untried
-  on real Linux.
-- pcrecomp: the work was checked against `main` at **`a67767b`**. Use that
-  commit or newer.
+- **Linked and run on Linux (Omarchy/Arch, `-m32`):**
+  - SteamStub unwrapped with Steamless under mono; catalog + lift
+    (`errors 0`); `./build-linux.sh` produces `build-linux/swgbrecomp`.
+  - Dry run: `0 imports not implemented yet`.
+  - Headless `--shot` reaches the main-menu hangar at 800×600. GDI menu
+    labels are missing (palette text — step 6.2). DirectPlay Create needs
+    a stub object plus VERSION APIs that report 4.06.03.0516, or the game
+    MessageBox-exits on "requires DirectPlay 6.1a".
+  - `src/linux/eh.c` supplies `recomp_eh_push`/`pop` (win32hle has no
+    guest EH yet).
+- pcrecomp: checked against `main` at **`a67767b`**.
+- Arch notes: no `lib32-sdl2` in repos — use AUR `lib32-sdl2-compat` and
+  `lib32-sdl2_ttf`. Ubuntu packages in §1 still apply on Debian/Ubuntu.
 
 ## 1. Packages
 

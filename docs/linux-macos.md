@@ -6,9 +6,9 @@ pcrecomp's `runtime/win32hle` instead of `runtime/native32`. This is how
 Tiberian Sun, Red Alert 2 and Civilization III run on Linux, and Red Alert 2
 on macOS (their `src/linux`). This page has the design, every gap with its
 fix, the build steps and the effort; [linux-bringup.md](linux-bringup.md) is
-the checklist for continuing on a Linux machine. **State (2026-11-21): designed and
-scaffolded. The lifted C compiles under gcc; nothing has been linked or run
-on Linux yet** (no 32-bit toolchain on the machine; see *What is done*).
+the checklist for continuing on a Linux machine. **State (2026-11-22): linked and run on Linux (`-m32`). Headless shot reaches
+the main-menu hangar; GDI labels still wrong (gap 3). See
+[linux-bringup.md](linux-bringup.md).**
 
 ## The design
 
@@ -83,7 +83,9 @@ are answered in `src/linux/shims.c`, registered ahead of win32hle:
 | `MCIWndCreateA` (MSVFW32) | NULL: no movie, as on a PC without the films | Track 6's player (below) |
 | `ICInfo` (MSVFW32) | FALSE: no codecs | the same |
 | `mciSendCommandA` (WINMM) | `MCIERR_INVALID_DEVICE_NAME`: no CD music | CD audio from the Ogg tracks (below) |
-| `DPLAYX` #1, #2, #4 | `DPERR_UNAVAILABLE`, no providers | the same: DirectPlay is out of scope |
+| `DPLAYX` #1 | stub `IDirectPlay4` (Create must succeed or boot MessageBox-exits) | multiplayer still empty |
+| `DPLAYX` #2, #4 | empty enum / `DPERR_UNAVAILABLE` | the same: DirectPlay MP out of scope |
+| `GetFileVersionInfo*` / `VerQueryValueA` | FIXEDFILEINFO 4.06.03.0516 (DirectX 6.1a) | the same, or win32hle VERSION later |
 | `IsDBCSLeadByte`, `GetPriorityClass`, `WinExec` | code page 1252, normal priority, refused | the same |
 | `GetLastActivePopup`, `GetWindowThreadProcessId`, `IsClipboardFormatAvailable`, `SystemParametersInfoA`, `SetClassLongA`, `GetCaretBlinkTime`, `DrawTextExA`, `SetSysColors`, `IsIconic` | the smallest true answer (`DrawTextExA` is `DrawTextA`) | the same, or moved into win32hle |
 | `CreateICA` (GDI32) | a 1x1 32-bit DC | the same |
@@ -228,9 +230,11 @@ fault report, answer it.
 
 ### 8. DirectPlay
 
-Out of scope, as on Windows (`ROADMAP.md`, *Later*). `shims.c` refuses
-`DirectPlayCreate` and `DirectPlayLobbyCreateA`, and enumerates no service
-providers.
+Multiplayer is out of scope, as on Windows (`ROADMAP.md`, *Later*). Boot
+still calls `DirectPlayCreate` and versions `dplayx.dll`; refusing Create
+or VERSION makes the game exit with "requires DirectPlay 6.1a". `shims.c`
+returns a stub `IDirectPlay4` and FIXEDFILEINFO 4.06.03.0516. Enumerations
+stay empty; lobby Create stays `DPERR_UNAVAILABLE`.
 
 ### 9. macOS
 
@@ -277,22 +281,20 @@ The command line is the Windows host's: `--headless`, `--record`,
 `--args`, plus `--cd DIR` (a folder, not a letter), `--fullscreen` and
 `--scale sharp|smooth|crt|nearest|integer` (F11 and F12 in the window).
 
-## What is done (2026-11-21)
+## What is done (2026-11-22)
 
 - `src/runtime/guest.h`; `inflate.c` on it (no change on Windows: rebuilt,
   and the headless run reaches the main menu).
 - `src/runtime/keyscript.c`: the `--keys` grammar with no Win32.
-- `src/linux/main.c` and `shims.c`: the native host and the 21 missing
-  imports, checked with gcc against `win32hle.h` (no SDL needed for that).
+- `src/linux/main.c`, `shims.c`, `eh.c`: native host, DirectPlay stub +
+  VERSION for the 6.1a check, and `recomp_eh_push`/`pop`.
 - `cmake/native.cmake`, `cmake/linux-i386.cmake`, `build-linux.sh`,
-  `build-macos.sh`, and the branch in `CMakeLists.txt`. Configuring in WSL
-  goes as far as `pkg_check_modules(sdl2)` and stops there, because SDL2 is
-  not installed.
-- The whole lift through gcc's front end, clean.
+  `build-macos.sh`, and the branch in `CMakeLists.txt`.
+- Linux `-m32` link of the full lift; headless run to the main-menu hangar
+  (`--shot`). Menu GDI text still missing (gap 3).
 
-Not done: a link or a run on Linux. That needs `gcc-multilib` and i386 SDL2
-and SDL2_ttf (or the 64-bit SDL2 and a based build), installed with the
-user's approval.
+Not done: palette-true 8-bit text, text fields, a played skirmish, music,
+movies, macOS.
 
 ## Effort
 
