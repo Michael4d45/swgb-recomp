@@ -87,6 +87,9 @@ static const uint8_t *compose(surf_t *s) {
         if (!child_shown(c, &l, &t, &r, &b)) continue;
         cls = hle_window_class(c);
         if (!cls || (strcasecmp(cls, "Edit") && strcasecmp(cls, "EDIT"))) continue;
+        /* softdd SetWindowRgn(empty): the control keeps focus/keys but game-
+         * drawn OK/Cancel under/near it receive the clicks. */
+        hle_window_set_no_hit(c, 1);
         if (l < 0) l = 0;
         if (t < 0) t = 0;
         if (r > s->w) r = s->w;

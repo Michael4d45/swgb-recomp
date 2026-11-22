@@ -330,17 +330,38 @@ static void absolute(const char* p, char* out, size_t n) {
 
 /* The play disc (disc 2), mounted or copied: a folder with Game/Avi in it,
  * from --cd DIR or $SWGB_CD. It becomes drive D:, which the game finds as a
- * CD-ROM (shims.c) through CDPath, the letter it checks after its first run. */
-static void cd_pick(const char* dir) {
-    char full[PATH_MAX], probe[PATH_MAX + 16];
+ * CD-ROM (shims.c) through CDPath, the letter it checks after its first run.
+ * Without --cd, try the Steam Saga install (parent of Game/). Without a disc
+ * the game's own “insert a game CD” panel blocks Single Player. */
+static int cd_try(const char* dir, char* full, size_t n) {
+    char probe[PATH_MAX + 16];
     struct stat st;
+    if (!dir || !*dir || !realpath(dir, full)) return 0;
+    snprintf(probe, sizeof probe, "%s/Game", full);
+    if (stat(probe, &st) != 0 || !S_ISDIR(st.st_mode)) return 0;
+    snprintf(probe, sizeof probe, "%s/Game/Avi", full);
+    if (stat(probe, &st) != 0) mkdir(probe, 0755);       /* Steam keeps .avi in Game/; the check wants Avi/ */
+    return 1;
+}
+static void cd_pick(const char* dir) {
+    char full[PATH_MAX], home_buf[PATH_MAX], local_buf[PATH_MAX];
+    const char* home = getenv("HOME");
     if (!dir || !*dir) dir = getenv("SWGB_CD");
-    if (!dir || !*dir || !realpath(dir, full)) {
+    if (home && *home) {
+        snprintf(home_buf, sizeof home_buf,
+                 "%s/.steam/steam/steamapps/common/STAR WARS - Galactic Battlegrounds Saga", home);
+        snprintf(local_buf, sizeof local_buf,
+                 "%s/.local/share/Steam/steamapps/common/STAR WARS - Galactic Battlegrounds Saga", home);
+    } else {
+        home_buf[0] = local_buf[0] = 0;
+    }
+    if ((!dir || !*dir || !cd_try(dir, full, sizeof full)) &&
+        !(home_buf[0] && cd_try(home_buf, full, sizeof full)) &&
+        !(local_buf[0] && cd_try(local_buf, full, sizeof full))) {
         printf("  no play disc: mount disc 2 and pass --cd DIR (or set SWGB_CD)\n");
+        printf("  without it, Single Player stops on \"insert a game CD\"\n");
         return;
     }
-    snprintf(probe, sizeof probe, "%s/Game", full);
-    if (stat(probe, &st) != 0) printf("  %s has no Game folder: is it disc 2?\n", full);
     swgb_cd_letter = 'D';
     hle_set_drive('D', full);
     hle_reg_set_string(0x80000002u, REG_GAME, "CDPath", "D:\\");   /* HKEY_LOCAL_MACHINE */
