@@ -14,6 +14,8 @@ typedef struct Surf {
     uint32_t  rmask, gmask, bmask, amask;    /* 16 and 32 bits; 8 is palettized */
     uint8_t*  bits;
     HBITMAP   hbm;
+    HANDLE    map;                       /* the section behind bits and hbm (surf_new) */
+    void*     view;                      /* our view of it: bits - SURF_SLACK */
     HDC       hdc;                       /* lazily, for GetDC */
     struct Surf* back;                   /* primary -> its back buffer */
     struct Surf* zbuf;                   /* AddAttachedSurface'd depth buffer */

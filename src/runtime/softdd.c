@@ -141,6 +141,16 @@ static void surf_pixfmt(Surf* s, DDPIXELFORMAT* pf) {
     }
 }
 
+/* The game's span blitters read and write whole dwords around a span's ends:
+ * THIS_COD's palette remap (0x0064AC8D) does `mov eax, [edi-3]` at x = 2 of
+ * the first row, the byte before the surface. DirectDraw's surfaces (heap or
+ * video memory) have bytes there; a DIB section's bits start on an allocation
+ * boundary, so a monkey soak faulted after a save (`read of 0x1A00FFFF`,
+ * docs/testing.md). So the bits are a view of our own section with this much
+ * slack before and after, and the DIB is the same section at that offset: the
+ * game and GDI see the same pixels. */
+#define SURF_SLACK 4096u
+
 static Surf* surf_new(int w, int h, DWORD caps) {
     Surf* s = (Surf*)calloc(1, sizeof *s);
     s->lpVtbl = &surf_vt;
@@ -158,14 +168,21 @@ static Surf* surf_new(int w, int h, DWORD caps) {
         if (g_new_fmt->dwFlags & DDPF_PALETTEINDEXED8) s->bpp = 8;
     }
     s->pitch = (w * (s->bpp / 8) + 3) & ~3;
-    s->hbm = CreateDIBSection(NULL, bmi_of(s), DIB_RGB_COLORS, (void**)&s->bits, NULL, 0);
+    DWORD size = SURF_SLACK + (DWORD)(s->pitch * h) + SURF_SLACK;
+    void* gdi_bits = NULL;
+    s->map = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, size, NULL);
+    s->view = s->map ? MapViewOfFile(s->map, FILE_MAP_ALL_ACCESS, 0, 0, size) : NULL;
+    s->hbm = s->view ? CreateDIBSection(NULL, bmi_of(s), DIB_RGB_COLORS, &gdi_bits, s->map, SURF_SLACK) : NULL;
     if (!s->hbm) { fprintf(stderr, "[softdd] CreateDIBSection %dx%d failed\n", w, h); exit(5); }
+    s->bits = (uint8_t*)s->view + SURF_SLACK;
     return s;
 }
 
 static void surf_free(Surf* s) {
     if (s->hdc) DeleteDC(s->hdc);
     DeleteObject(s->hbm);
+    if (s->view) UnmapViewOfFile(s->view);
+    if (s->map) CloseHandle(s->map);
     free(s);
 }
 
@@ -664,8 +681,11 @@ static HRESULT WINAPI s_Flip(IDirectDrawSurface* This, LPDIRECTDRAWSURFACE over,
     Surf* b = SELF->back;
     if (b) {
         uint8_t* bits = SELF->bits; HBITMAP hbm = SELF->hbm; HDC hdc = SELF->hdc;
+        HANDLE map = SELF->map; void* view = SELF->view;
         SELF->bits = b->bits; SELF->hbm = b->hbm; SELF->hdc = b->hdc;
+        SELF->map = b->map; SELF->view = b->view;
         b->bits = bits; b->hbm = hbm; b->hdc = hdc;
+        b->map = map; b->view = view;
     }
     present(SELF);
     return DD_OK;
