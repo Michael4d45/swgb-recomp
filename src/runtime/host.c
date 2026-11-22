@@ -34,6 +34,7 @@
 #include "softdd_int.h"
 #include "widescreen.h"
 #include "framerate.h"
+#include "profile.h"
 #include "movie.h"
 #include "present.h"
 
@@ -176,6 +177,7 @@ static void shim_OutputDebugStringA(void) {
 static void shim_ExitProcess(void) {
     UINT code = ARG(0);
     printf("[host] ExitProcess(%u) from sub_%08X\n", code, g_cur_func);
+    profile_finish();
     softdd_finish();
     recomp_trace_flush();
     fflush(NULL);   /* ExitProcess skips the CRT's own flush: a piped log lost its tail */
@@ -918,6 +920,7 @@ static DWORD WINAPI watchdog(LPVOID unused) {
             g_watchdog_s, g_cur_func, g_cur_import, g_icall_count, softdd_frames);
     native32_dump_icalls(8);
     recomp_trace_flush();
+    profile_finish();
     softdd_finish();
     fflush(stdout);
     fflush(stderr);
@@ -946,6 +949,7 @@ int main(int argc, char** argv) {
         int n = recomp_trace_arg(argc, argv, i);
         if (n) { i += n - 1; continue; }
         if ((n = framerate_arg(argc, argv, i))) { i += n - 1; continue; }
+        if ((n = profile_arg(argc, argv, i))) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--sound")) sound = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = softdd_headless = present_noclip = 1;
@@ -987,6 +991,7 @@ int main(int argc, char** argv) {
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E] [--films DIR]\n"
                    "                  [--res WxH|desktop] [--fps N] [--fps-log]\n"
+                   "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
                    "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
                    "                  [--refresh HZ] [--present-log]\n"
                    "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
@@ -1029,12 +1034,14 @@ int main(int argc, char** argv) {
     printf("  audio: %s\n", sound ? "on" : m == 2 ? "muted (no audio device)" : "muted (a test run; --sound to hear it)");
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     framerate_start();
+    profile_start();
     if (g_shots) CloseHandle(CreateThread(NULL, 0, shot_thread, NULL, 0, NULL));
     g_file_seen = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (g_nsteps) CloseHandle(CreateThread(NULL, 0, keys_thread, NULL, 0, NULL));
     printf("  entering 0x%08X\n\n", swgb_entry_va);
     native32_call_guest(swgb_entry_va, 0, NULL);
     printf("\nentry returned eax=%08X\n", g_eax);
+    profile_finish();
     softdd_finish();
     return (int)g_eax;
 }
