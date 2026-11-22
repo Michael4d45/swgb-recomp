@@ -416,11 +416,17 @@ static void learn_hz(HWND wnd) {
     g_interval_us = 1000000 / hz;
     if (hz != shown_hz) fprintf(stderr, "[present] pacing to %d Hz\n", hz);
     shown_hz = hz;
-    g_hz_known = 1;
+    g_hz_known = GetTickCount() | 1;
+}
+
+/* The refresh shown frames are paced to: framerate.c's default frame rate. */
+double present_refresh_hz(void) {
+    if (!g_hz_known) return monitor_hz(NULL);
+    return 1e6 / (double)g_interval_us;
 }
 
 int present_due(HWND wnd) {
-    if (!g_hz_known) learn_hz(wnd);
+    if (!g_hz_known || GetTickCount() - (DWORD)g_hz_known > 2000) learn_hz(wnd);   /* moved to another monitor */
     return now_us() >= g_next_us - g_interval_us / 8;   /* a little early is fine: jitter must not skip a refresh */
 }
 

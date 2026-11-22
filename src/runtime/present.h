@@ -58,6 +58,7 @@ int  present_dirty(void);
 int  present_damaged(void);          /* since asked: resized, uncovered... (clears) */
 void present_disarm(HWND wnd);       /* the timer fired (or any tick): clear it */
 void present_invalidate(HWND wnd);   /* resized, uncovered, display change: show the current frame again */
+double present_refresh_hz(void);     /* the refresh frames are paced to (--refresh, or the window's monitor) */
 void present_note(int presented, int shown);
 void present_why(int why);           /* a frame shown by the timer: PRES_WHY_* (for --present-log) */
 enum { PRES_WHY_HELD = 1, PRES_WHY_DAMAGE, PRES_WHY_FIELD };   /* per-second counts for --present-log */
