@@ -116,6 +116,29 @@ static void shim_MessageBoxA(void) {
     g_esp += 4 + 4 * 4;
 }
 
+/* The game allows one copy: CreateMutexA with its name, and on
+ * ERROR_ALREADY_EXISTS it finds the other window and exits (0x004279E0).
+ * --multi makes every named mutex this process's own, so several runs (test
+ * agents working side by side) do not end each other. Without it, nothing
+ * changes. */
+static int g_multi;
+static void shim_CreateMutexA(void) {
+    LPSECURITY_ATTRIBUTES sa = (LPSECURITY_ATTRIBUTES)(uintptr_t)ARG(0);
+    BOOL own = (BOOL)ARG(1);
+    const char* name = (const char*)(uintptr_t)ARG(2);
+    char unique[MAX_PATH];
+    if (g_multi && name) {
+        _snprintf(unique, sizeof unique - 1, "%s.%lu", name, GetCurrentProcessId());
+        unique[sizeof unique - 1] = 0;
+        name = unique;
+    }
+    HANDLE h = CreateMutexA(sa, own, name);
+    DWORD err = GetLastError();
+    SetLastError(err);   /* the game reads ERROR_ALREADY_EXISTS from here */
+    g_eax = (uint32_t)(uintptr_t)h;
+    g_esp += 4 + 3 * 4;
+}
+
 static void shim_OutputDebugStringA(void) {
     if (ARG(0)) printf("[dbg] %s", (const char*)(uintptr_t)ARG(0));
     g_esp += 4 + 1 * 4;
@@ -513,6 +536,7 @@ static native32_shim_t g_shims[] = {
     { "OpenFile", shim_OpenFile },
     { "MessageBoxA", shim_MessageBoxA },
     { "OutputDebugStringA", shim_OutputDebugStringA },
+    { "CreateMutexA", shim_CreateMutexA },
     { "ExitProcess", shim_ExitProcess },
     { "GetModuleHandleA", shim_GetModuleHandleA },
     { "GetModuleFileNameA", shim_GetModuleFileNameA },
@@ -649,6 +673,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) softdd_stop_after = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) softdd_scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--files")) g_log_files = 1;
+        else if (!strcmp(argv[i], "--multi")) g_multi = 1;
         else if (!strcmp(argv[i], "--shot") && i + 2 < argc && g_shots < 16) {
             g_shot_s[g_shots] = strtoul(argv[++i], NULL, 0);
             GetFullPathNameA(argv[++i], MAX_PATH, g_shot_file[g_shots++], NULL);
@@ -663,7 +688,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else {
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
-                   "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files]\n"
+                   "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E]\n"
                    "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
             recomp_trace_help();
