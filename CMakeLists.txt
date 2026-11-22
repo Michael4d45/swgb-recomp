@@ -78,7 +78,9 @@ set(GEN_OPT "/O1" CACHE STRING "optimization for the generated C")
 # The few generated files the game spends its time in, at GEN_HOT_OPT instead
 # (docs/performance.md: tools/profile_report.py --hot picks them; a re-lift
 # moves functions between files, so pick them again after one).
-set(GEN_HOT_FILES "" CACHE STRING "generated files (names, ;-separated) compiled with GEN_HOT_OPT")
+# They compile at /O2 as fast as at /O1 (27 s for the largest, recomp_0040.c).
+set(GEN_HOT_FILES "recomp_0022.c;recomp_0040.c;recomp_0050.c;recomp_0051.c" CACHE STRING
+    "generated files (names, ;-separated) compiled with GEN_HOT_OPT")
 set(GEN_HOT_OPT "/O2" CACHE STRING "optimization for GEN_HOT_FILES")
 if(GEN_SOURCES)
   set_source_files_properties(${GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "/w;${GEN_OPT}")

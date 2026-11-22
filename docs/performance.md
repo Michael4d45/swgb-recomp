@@ -125,9 +125,9 @@ nothing changed.
 
 `recomp_cond` and `recomp_cond_cf` are `static inline` in pcrecomp's
 `recomp_types.h`, compiled into every generated file; at `/O1` they are not
-inlined, so every lifted conditional branch is a call. Marking them
-`__forceinline` in pcrecomp would remove that cost at `/O1` in every file;
-pcrecomp is read-only to this track, so the experiment below tried `/O2`.
+inlined, so every lifted conditional branch whose flags come from another
+block is a call. The experiment below tried `/O2` on the hot files, and
+`__forceinline`.
 
 ## The generated code at /O2
 
@@ -151,13 +151,19 @@ say is hot:
   38% (36, 41, 37) against 35% (39, 32, 35) of a core, helpers 0.49 to
   0.30 ms a frame on average: within the run-to-run spread of the random
   maps.
-- So `CMakeLists.txt` gets `GEN_HOT_FILES` (a list of generated file names)
-  and `GEN_HOT_OPT` (`/O2`), **empty by default**: for a full build of the
-  generated code (not with `SWGB_GEN_LIB`),
-  `-DGEN_HOT_FILES="recomp_0040.c;recomp_0051.c;recomp_0050.c;recomp_0022.c"`
-  costs about a minute of compile and buys a few percent at 2560x1440. A
-  re-lift moves functions between files: pick them again with `--hot`.
-  `__forceinline` on the two helpers in pcrecomp is the better fix.
+- So `CMakeLists.txt` gets `GEN_HOT_FILES` (generated file names) and
+  `GEN_HOT_OPT` (`/O2`), set to those four files. It applies only to a full
+  build of the generated code (not with `SWGB_GEN_LIB`), costs nothing in
+  compile time (at `/O1` the four took 31, 29, 17 and 5 s; at `/O2` 27,
+  20, 11 and 4 s) and buys a few percent at 2560x1440. A re-lift moves
+  functions between files: pick them again with `--hot`
+  (`-DGEN_HOT_FILES=` to turn it off).
+- **`__forceinline` on the helpers is worse:** with it, `recomp_0040.c` at
+  `/O1` took 237 s to compile instead of 31 (tried in a pcrecomp worktree,
+  not kept). `/O1` inlining big functions is what is slow; `/O2` is not.
+  These numbers also suggest `/O2` for the whole lift may no longer stall
+  (the files here compile as fast at `/O2` as at `/O1`); that needs a full
+  build of the generated code to confirm.
 
 ## Measuring
 
@@ -200,16 +206,18 @@ gdi32.lib`; "OK" when the pictures match the old scaler's).
 
 ## Not done, or left
 
-- **On the real screen:** the presenter's change-only drawing is tested
-  headless (bit-exact scaler, the scripted runs, `present_check.py`: 109 of
-  109 cases on this build) but
-  the real window's GDI cost and look are the user's to check:
-  `tools/present_check_real.ps1`, or a game at 2560x1440 fullscreen.
+- **On the real screen** (2026-11-22, with the user's go-ahead):
+  `tools/present_check_real.ps1` passes 38/38 on this build (edge scrolling
+  in every window shape and fullscreen, the cursor, 180 shown a second at
+  180 Hz). The scripted 2560x1440 fullscreen skirmish, in game: before,
+  with `--fps 180`, 95% of a core for 143 frames drawn and 128 shown a
+  second; after, 45% for 185 drawn and 180 shown.
 - The presenter still runs on the game thread; a GPU path (Direct3D 11) or a
   second thread would take its remaining cost off it.
 - Callbacks into the game's window procedure go through an exception each
   (native32's VEH, which also calls `getenv` on every one); in game that is
   ~2 a frame. pcrecomp's.
-- The flag helpers (above): `__forceinline` in pcrecomp.
+- `/O2` for the whole lift (above): one full build of the generated code to
+  time it and measure.
 - Loading: a map loads in under a second here; its progress presents are
   held back by the pacing and cost little.

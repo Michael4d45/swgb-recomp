@@ -199,14 +199,17 @@ what needs research or a new subsystem.
   no longer re-arms the pacing timer and re-reads the refresh every frame.
   Skirmish at 800x600: 97% of a core to 18%; at 2560x1440 fullscreen
   (`play.ps1`'s case): 98% for 111 frames shown a second to 38% for 180.
-- **Tried:** `/O2` on the hottest generated files (`GEN_HOT_FILES`, empty by
-  default): seconds to compile, a few percent at 2560x1440, nothing at
-  800x600. Most of it is pcrecomp's flag helpers not being inlined at `/O1`.
-- **Left:** checking the presenter on the real screen (the user's:
-  `tools/present_check_real.ps1`); `__forceinline` on `recomp_cond` /
-  `recomp_cond_cf` in pcrecomp; the presenter off the game thread (Direct3D
-  or a thread); callbacks into the window procedure without an exception
-  each (pcrecomp).
+- **Tried:** `/O2` on the hottest generated files (`GEN_HOT_FILES`, now the
+  four hot files by default): as fast to compile as `/O1`, a few percent at
+  2560x1440, nothing at 800x600 (pcrecomp's flag helpers, not inlined at
+  `/O1`). `__forceinline` on the helpers made `/O1` 7x slower to compile:
+  not kept.
+- **Real screen (2026-11-22, with the user's go-ahead):**
+  `present_check_real.ps1` 38/38; 2560x1440 fullscreen in game: 95% of a core
+  for 128 frames shown a second before, 45% for 180 after.
+- **Left:** `/O2` for the whole lift (one full build to time it); the
+  presenter off the game thread (Direct3D); callbacks into the window
+  procedure without an exception each (pcrecomp).
 - **Risk:** low.
 
 ## Later
