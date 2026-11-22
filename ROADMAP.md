@@ -207,9 +207,10 @@ what needs research or a new subsystem.
 - **Real screen (2026-11-22, with the user's go-ahead):**
   `present_check_real.ps1` 38/38; 2560x1440 fullscreen in game: 95% of a core
   for 128 frames shown a second before, 45% for 180 after.
-- **Left:** `/O2` for the whole lift (one full build to time it); the
-  presenter off the game thread (Direct3D); callbacks into the window
-  procedure without an exception each (pcrecomp).
+- **GPU presenter:** `--present d3d11` (`present_d3d.c`), opt-in: real-screen
+  check 38/38 and text fields fine, but the same CPU as change-only GDI here.
+- **Left:** `/O2` for the whole lift (one full build to time it); callbacks
+  into the window procedure without an exception each (pcrecomp).
 - **Risk:** low.
 
 ## Later

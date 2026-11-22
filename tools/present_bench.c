@@ -1,6 +1,6 @@
 /* The presenter's scaler: the same picture as the old one-pass scaler, and
  * what a frame costs, without the game:
- *   cl /nologo /O2 tools\present_bench.c src\runtime\scaler.c /Isrc\runtime user32.lib gdi32.lib
+ *   cl /nologo /O2 tools\present_bench.c src\runtime\present.c src\runtime\scaler.c src\runtime\present_d3d.c /Isrc\runtime user32.lib gdi32.lib d3d11.lib dxgi.lib dxguid.lib
  *   present_bench.exe            (exit 0 and "OK" when every picture matches)
  *
  * For each frame size, picture size and filter: random 8-bit frames with a

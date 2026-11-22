@@ -86,6 +86,7 @@ rectangle (a click in a bar lands on the nearest edge of the picture).
 | `--fullscreen` | `Alt+Enter` toggles | A borderless window the size of the monitor the window is on. The desktop's display mode is never changed, so Alt+Tab and other monitors behave as for any window. |
 | `--scale N` | | The window starts at N times the game's mode (default: 85% of the screen height). Resize it freely after that. |
 | `--refresh HZ` | | Pace frames to HZ instead of the monitor's refresh rate. |
+| `--present gdi\|d3d11` | | How the picture reaches the window: GDI (default) or a Direct3D 11 flip-model swap chain that scales on the GPU (falls back to GDI if it cannot start); [performance.md](performance.md). |
 | `--present-log` | | Once a second on stderr: presents, frames shown, the refresh rate and filter, and how many frames the timer showed (held back, window damage, a text field up). |
 
 The game presents far more often than a display refreshes (every

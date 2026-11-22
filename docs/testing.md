@@ -98,7 +98,7 @@ The layout, the mouse mapping through the letterbox and the pacing beat,
 without the game:
 
 ```
-cl /nologo tools\present_test.c src\runtime\present.c /Isrc\runtime user32.lib gdi32.lib
+cl /nologo tools\present_test.c src\runtime\present.c src\runtime\scaler.c src\runtime\present_d3d.c /Isrc\runtime user32.lib gdi32.lib d3d11.lib dxgi.lib dxguid.lib
 present_test.exe                                  OK
 ```
 

@@ -38,6 +38,7 @@
 #include "resolve.h"
 #include "movie.h"
 #include "present.h"
+#include "present_d3d.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -969,6 +970,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--fullscreen")) present_fullscreen_start = 1;
         else if (!strcmp(argv[i], "--refresh") && i + 1 < argc) present_refresh = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--present-log")) present_log = 1;
+        else if (!strcmp(argv[i], "--present") && i + 1 < argc) present_d3d_enabled = !_strnicmp(argv[++i], "d3d", 3);
         else if (!strcmp(argv[i], "--files")) g_log_files = 1;
         else if (!strcmp(argv[i], "--multi")) g_multi = 1;
         else if (!strcmp(argv[i], "--shot") && i + 2 < argc && g_shots < 16) {
@@ -996,7 +998,7 @@ int main(int argc, char** argv) {
                    "                  [--res WxH|desktop] [--fps N] [--fps-log]\n"
                    "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
                    "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
-                   "                  [--refresh HZ] [--present-log]\n"
+                   "                  [--refresh HZ] [--present-log] [--present gdi|d3d11]\n"
                    "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;

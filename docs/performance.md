@@ -165,6 +165,35 @@ say is hot:
   (the files here compile as fast at `/O2` as at `/O1`); that needs a full
   build of the generated code to confirm.
 
+## The GPU: `--present d3d11`
+
+Only the last step can move to the GPU: the game draws everything itself
+into an 8-bit frame in memory (lifted software rendering). `present_d3d.c`
+takes over from the converted frame: the changed rows are uploaded to a
+texture, the GPU scales it into the letterbox (the `sharp` filter as a pixel
+shader, `smooth` bilinear, `nearest`/`integer` point sampling), and a
+flip-model swap chain hands it to DWM. Anything that fails (no Direct3D 11,
+no `d3dcompiler_47.dll`, a lost device twice) falls back to GDI for the run.
+
+On the real screen (2026-11-22) it passes `present_check_real.ps1` 38/38
+(windowed shapes, bars, fullscreen, edge scrolling read from screen
+captures), and a text field (New Player) shows what is typed. It does not
+save CPU here, because after change-only drawing the presenter is a small
+part of a frame:
+
+| 2560x1440 fullscreen, in game, process CPU | GDI | Direct3D 11 |
+|---|---|---|
+| `--res 2560x1440` (1:1) | 34%, 38%, 40%, 40% | 34%, 38%, 40% |
+| 1280x1024 scaled to 1800x1440 | 18%, 22%, 25% | 20%, 21%, 30% |
+| the same, the view scrolling (~20 changed frames a second) | 19%, 20% | 20%, 22% |
+| frames shown a second (of 180) | 176-180 | 178-180 |
+
+So GDI stays the default and Direct3D 11 is opt-in: for flip-model
+presentation (DWM shows the swap chain without its own copy), a 4K monitor
+with a smaller frame (the CPU scaler's worst case, 8.5 ms for a whole frame),
+or a machine where GDI is slow. The game thread's remaining cost is the game
+itself (above).
+
 ## Measuring
 
 ```
@@ -200,9 +229,9 @@ Also: `--fps-log` (frames drawn, changed and steps a second, CPU) and
 [framerate.md](framerate.md) and [building.md](building.md);
 `SWGB_PAINT_HEADLESS=1` to include the presenter in a headless run;
 `SWGB_NO_RESOLVE_CACHE=1` and `--fps off` for the old behaviour;
-`tools/present_bench.c` for the scaler (`cl /O2 tools\present_bench.c
-src\runtime\present.c src\runtime\scaler.c /Isrc\runtime user32.lib
-gdi32.lib`; "OK" when the pictures match the old scaler's).
+`--present d3d11` for the Direct3D presenter;
+`tools/present_bench.c` for the scaler (its first lines have the `cl`
+command; "OK" when the pictures match the old scaler's).
 
 ## Not done, or left
 
@@ -212,8 +241,6 @@ gdi32.lib`; "OK" when the pictures match the old scaler's).
   180 Hz). The scripted 2560x1440 fullscreen skirmish, in game: before,
   with `--fps 180`, 95% of a core for 143 frames drawn and 128 shown a
   second; after, 45% for 185 drawn and 180 shown.
-- The presenter still runs on the game thread; a GPU path (Direct3D 11) or a
-  second thread would take its remaining cost off it.
 - Callbacks into the game's window procedure go through an exception each
   (native32's VEH, which also calls `getenv` on every one); in game that is
   ~2 a frame. pcrecomp's.

@@ -32,6 +32,7 @@
 
 #include "present.h"
 #include "scaler.h"
+#include "present_d3d.h"
 
 int present_filter = PRES_SHARP;
 int present_fullscreen_start;
@@ -164,6 +165,16 @@ void present_paint(HWND wnd, const uint8_t* bits, int w, int h, int pitch, int b
     int gdi = present_filter == PRES_NEAREST || present_filter == PRES_INTEGER;   /* GDI scales these: cheap at any size */
     int bars = g_bars_dirty || memcmp(&g_bars_client, &rc, sizeof rc) || memcmp(&g_bars_rect, &r, sizeof r);
     int full = g_full || bars || GetTickCount() - g_full_at >= 1000;
+    if (present_d3d_ready(wnd)) {   /* present_d3d.c: the GPU scales; only changed rows are uploaded */
+        if (!scaler_run(&g_sc_win, bits, w, h, pitch, bpp, pal, w, h, present_filter, full, &y0, &y1)) return;
+        if (y0 >= y1 && !bars && !full) return;   /* the same picture */
+        if (present_d3d_draw(wnd, scaler_picture(&g_sc_win), w, h, y0, y1, rc.right, rc.bottom, &r, present_filter, full)) {
+            if (full) { g_full = 0; g_full_at = GetTickCount(); }
+            g_bars_client = rc; g_bars_rect = r; g_bars_dirty = 0;
+            return;
+        }
+        g_full = g_bars_dirty = full = bars = 1;   /* GDI from here: all of it */
+    }
     if (!scaler_run(&g_sc_win, bits, w, h, pitch, bpp, pal, gdi ? w : dw, gdi ? h : dh, present_filter, full, &y0, &y1))
         return;
     if (full) { g_full = 0; g_full_at = GetTickCount(); }
