@@ -1,10 +1,18 @@
 /*
  * keyscript: the --keys script's steps, parsed. host.c runs them (keys_thread,
  * keys_live_thread, key_run); this half needs nothing of the game, so
- * tests/unit/keys_test.c checks it alone (tools/test.py --level unit).
+ * tests/unit/keys_test.c checks it alone (tools/test.py --level unit). No Win32 is
+ * needed: the Linux and macOS host (src/linux/main.c) runs the same grammar.
  */
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <strings.h>
+#include <unistd.h>
+#define _stricmp strcasecmp
+#define _strdup strdup
+#endif
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,12 +21,24 @@
 #include "keyscript.h"
 
 static const struct { const char* n; int vk; } g_keynames[] = {
-    { "esc", VK_ESCAPE }, { "enter", VK_RETURN }, { "space", VK_SPACE }, { "tab", VK_TAB },
-    { "up", VK_UP }, { "down", VK_DOWN }, { "left", VK_LEFT }, { "right", VK_RIGHT },
-    { "bksp", VK_BACK }, { "f1", VK_F1 }, { "f2", VK_F2 }, { "f3", VK_F3 }, { "f4", VK_F4 },
-    { "f5", VK_F5 }, { "f6", VK_F6 }, { "f7", VK_F7 }, { "f8", VK_F8 }, { "f9", VK_F9 }, { "f10", VK_F10 },
-    { "f11", VK_F11 }, { "f12", VK_F12 }, { "home", VK_HOME }, { "end", VK_END },
+    { "esc", KS_VK_ESCAPE }, { "enter", KS_VK_RETURN }, { "space", KS_VK_SPACE }, { "tab", KS_VK_TAB },
+    { "up", KS_VK_UP }, { "down", KS_VK_DOWN }, { "left", KS_VK_LEFT }, { "right", KS_VK_RIGHT },
+    { "bksp", KS_VK_BACK }, { "f1", KS_VK_F1 }, { "f2", KS_VK_F1 + 1 }, { "f3", KS_VK_F1 + 2 }, { "f4", KS_VK_F1 + 3 },
+    { "f5", KS_VK_F1 + 4 }, { "f6", KS_VK_F1 + 5 }, { "f7", KS_VK_F1 + 6 }, { "f8", KS_VK_F1 + 7 }, { "f9", KS_VK_F1 + 8 },
+    { "f10", KS_VK_F1 + 9 }, { "f11", KS_VK_F1 + 10 }, { "f12", KS_VK_F1 + 11 }, { "home", KS_VK_HOME }, { "end", KS_VK_END },
 };
+
+/* FILE as an absolute path (it need not exist yet): a shot lands where the command line meant
+ * even if the game changes directory. */
+static void full_path(const char* in, char* out, size_t cap) {
+#ifdef _WIN32
+    GetFullPathNameA(in, (DWORD)cap, out, NULL);
+#else
+    char cwd[KEYSCRIPT_PATH];
+    if (in[0] == '/' || !getcwd(cwd, sizeof cwd)) snprintf(out, cap, "%s", in);
+    else snprintf(out, cap, "%s/%s", cwd, in);
+#endif
+}
 
 int key_by_name(const char* n) {
     for (int i = 0; i < (int)(sizeof g_keynames / sizeof g_keynames[0]); i++)
@@ -51,17 +71,17 @@ int key_parse(char* tok, step_t* out, int strict) {
     char* c = strchr(tok, ':');
     if (!c) return 0;
     if (!strncmp(tok, "on:", 3)) {
-        lstrcpynA(st.on, tok + 3, sizeof st.on);
+        snprintf(st.on, sizeof st.on, "%s", tok + 3);
         *out = st;
         return 1;
     }
-    st.at = (DWORD)(atof(tok) * 1000);
+    st.at = (unsigned long)(atof(tok) * 1000);
     char* what = c + 1;
     if (!strncmp(what, "wshot=", 6)) {   /* the window as drawn: letterbox bars and all */
-        GetFullPathNameA(what + 6, MAX_PATH, st.shot, NULL);
+        full_path(what + 6, st.shot, sizeof st.shot);
         st.wshot = 1;
     } else if (!strncmp(what, "shot=", 5)) {
-        GetFullPathNameA(what + 5, MAX_PATH, st.shot, NULL);
+        full_path(what + 5, st.shot, sizeof st.shot);
     } else if (!strncmp(what, "size:", 5)) {   /* the window's client area: W:H */
         st.size = 1;
         sscanf(what + 5, "%d:%d", &st.x, &st.y);
