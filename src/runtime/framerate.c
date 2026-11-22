@@ -206,13 +206,18 @@ WRAP_SET(v3)
 /* Frames that differ from the one before: what the player can see change. */
 static volatile LONG g_changed;
 static void on_present(const uint8_t* bits, int w, int h, int pitch, long frame) {
-    static uint64_t last;
-    uint64_t x = 1469598103934665603ull;
-    const uint32_t* p = (const uint32_t*)bits;
+    /* against a copy of the last one: a 64-bit hash of every word cost more than
+     * the game's own frame at 2560x1440, and --fps-log is for measuring */
+    static uint8_t* last;
+    static size_t cap, size;
+    size_t n = (size_t)h * pitch;
     (void)w; (void)frame;
-    for (size_t i = 0, n = (size_t)h * pitch / 4; i < n; i++) x = (x ^ p[i]) * 1099511628211ull;
-    if (x != last) InterlockedIncrement(&g_changed);
-    last = x;
+    if (n != size || !last || memcmp(bits, last, n)) {
+        if (cap < n) { free(last); last = (uint8_t*)malloc(n); cap = last ? n : 0; }
+        if (last) memcpy(last, bits, n);
+        size = last ? n : 0;
+        InterlockedIncrement(&g_changed);
+    }
 }
 
 void framerate_on_ddraw(void* dd) {
