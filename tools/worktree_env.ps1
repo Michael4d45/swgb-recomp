@@ -52,18 +52,26 @@ if (-not $OwnGen -and -not (Test-Path $sharedLib)) { throw "missing $sharedLib (
 # --- the game folder ---------------------------------------------------------
 $writable = @('SaveGame', 'Scenario')                  # directories the game writes
 $writableFiles = '^player\.nf'                         # files in the root it rewrites
-if ($FreshGame -and (Test-Path $gameDir)) { Remove-Item -Recurse -Force $gameDir }
-if (-not (Test-Path $gameDir)) {
+if ($FreshGame -and (Test-Path -LiteralPath $gameDir)) { [System.IO.Directory]::Delete($gameDir, $true) }
+if (-not (Test-Path -LiteralPath $gameDir)) {
     Write-Host "game folder: $gameDir (hard links + copies of what the game writes)"
-    Get-ChildItem $sharedGame -Recurse -File | ForEach-Object {
+    # The Win32 call itself: New-Item's wildcard handling trips on file names
+    # with brackets ("[EF] ..."), and Windows PowerShell has no literal form.
+    if (-not ('WtEnv.Link' -as [type])) {
+        Add-Type -Namespace WtEnv -Name Link -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+public static extern bool CreateHardLink(string newFile, string existing, System.IntPtr sa);
+'@
+    }
+    Get-ChildItem -LiteralPath $sharedGame -Recurse -File | ForEach-Object {
         $rel = $_.FullName.Substring($sharedGame.Length + 1)
         $dst = Join-Path $gameDir $rel
-        New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+        [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($dst))
         $top = $rel.Split('\')[0]
         if ($writable -contains $top -or ($rel -notmatch '\\' -and $_.Name -match $writableFiles)) {
-            Copy-Item $_.FullName $dst
-        } else {
-            New-Item -ItemType HardLink -Path $dst -Target $_.FullName | Out-Null
+            [System.IO.File]::Copy($_.FullName, $dst, $true)
+        } elseif (-not [WtEnv.Link]::CreateHardLink($dst, $_.FullName, [IntPtr]::Zero)) {
+            throw "hard link failed ($([Runtime.InteropServices.Marshal]::GetLastWin32Error())): $dst"
         }
     }
 }
