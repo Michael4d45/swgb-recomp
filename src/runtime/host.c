@@ -35,6 +35,7 @@
 #include "widescreen.h"
 #include "framerate.h"
 #include "profile.h"
+#include "resolve.h"
 #include "movie.h"
 #include "present.h"
 
@@ -860,7 +861,8 @@ static int mute_process(void) {
 
 /* ---- reports ---------------------------------------------------------------- */
 recomp_func_t recomp_lookup_manual(uint32_t va) {
-    return widescreen_lookup(va);
+    recomp_func_t f = widescreen_lookup(va);
+    return f ? f : resolve_cached(va);
 }
 
 void recomp_not_lifted(uint32_t va) {
@@ -1016,6 +1018,7 @@ int main(int argc, char** argv) {
     uint32_t span = native32_map(exe_full, IMAGE_BASE);
     if (!span) { fprintf(stderr, "cannot map %s at 0x%08X\n", exe_full, IMAGE_BASE); return 1; }
     printf("  mapped %s: 0x%08X-0x%08X\n", exe, IMAGE_BASE, IMAGE_BASE + span);
+    resolve_init(IMAGE_BASE);
     SetDllDirectoryA(game_full);   /* language.dll */
     if (native32_bind(IMAGE_BASE, g_shims, (int)(sizeof g_shims / sizeof g_shims[0]))) return 1;
     printf("  guest command line %s\n", g_guest_cmdline);
