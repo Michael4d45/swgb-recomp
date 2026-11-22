@@ -54,6 +54,7 @@ add_executable(swgb
   src/runtime/inflate.c
   src/runtime/widescreen.c
   src/runtime/movie.c
+  src/runtime/coverage.c
   third_party/miniz/miniz.c
   ${PCRECOMP}/runtime/native32/native32.c
   ${PCRECOMP}/runtime/recomp32/image_loader.c

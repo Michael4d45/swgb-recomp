@@ -36,6 +36,7 @@
 #include "framerate.h"
 #include "movie.h"
 #include "present.h"
+#include "coverage.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -422,7 +423,7 @@ static void shim_DirectDrawCreate(void) {
  * script runs, the real mouse is not read: only the script reaches the game. */
 typedef struct { DWORD at; int vk, x, y, click, move, alt, win, size, wshot, setcursor; char xs[24], ys[24], on[64], shot[MAX_PATH]; } step_t;
 
-#define MAX_STEPS 2048
+#define MAX_STEPS 16384   /* tools/soak.py: a 30-minute monkey run is a few thousand steps */
 static step_t g_steps[MAX_STEPS];
 static int g_nsteps;
 static volatile DWORD g_vk_until[256];
@@ -1005,6 +1006,7 @@ int main(int argc, char** argv) {
     /* __try/__except frames: RaiseException goes to the guest's own chain
      * (pcrecomp seh32.c); the lift gives each __try function its frame. */
     native32_guest_seh = 1;
+    coverage_init();    /* an unresolved indirect call stops the run there, loudly */
     AddVectoredExceptionHandler(0, crash);
     printf("Galactic Battlegrounds recomp host\n  lifted functions in dispatch: %u\n", recomp_dispatch_count);
 
