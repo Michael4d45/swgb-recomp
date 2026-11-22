@@ -33,6 +33,7 @@
 
 #include "softdd.h"
 #include "softdd_int.h"
+#include "present.h"
 
 int         softdd_headless;
 int         softdd_scale = 0;   /* --scale N; 0: fit the screen */
@@ -265,6 +266,18 @@ static int has_children(void) {
     return 0;
 }
 
+/* A text field is up: only that needs frames between the game's own (typing, the
+ * caret). The other children (the menus' helper windows) are composed when a frame
+ * is drawn anyway, but never make the timer redraw an idle screen. */
+static int has_edit(void) {
+    RECT r;
+    char cls[16];
+    if (!g_dd || !g_dd->hwnd) return 0;
+    for (HWND c = GetWindow(g_dd->hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
+        if (child_shown(c, &r) && GetClassNameA(c, cls, sizeof cls) && !_stricmp(cls, "EDIT")) return 1;
+    return 0;
+}
+
 /* One child, printed straight into the composed frame at its place. Into the
  * frame itself, not a 32-bit bitmap: on an 8-bit DIB GDI cannot smooth text,
  * just as on the real 8-bit screen, so the game's bold Arial keeps its solid
@@ -342,12 +355,22 @@ static Surf* compose(Surf* s) {
 }
 
 static void present(Surf* s);
+static void present_impl(Surf* s, int from_game);
 
-/* From the game window's timer: while a text field is up, show typing and
- * the caret even when the game itself draws nothing new. */
+/* From the game window's timers (the 100 ms one and the pacing one): show a
+ * frame that was held back, or, while a text field is up, typing and the
+ * caret even when the game itself draws nothing new. */
 void softdd_tick(void) {
-    if (!g_dd || !g_dd->primary || GetTickCount() - g_last_present < 90 || !has_children()) return;
-    present(g_dd->primary);
+    if (!g_dd || !g_dd->primary) return;
+    present_disarm(g_dd->hwnd);
+    if (present_dirty()) {
+        present_why(present_damaged() ? PRES_WHY_DAMAGE : PRES_WHY_HELD);
+        present_impl(g_dd->primary, 0);
+        return;
+    }
+    if (GetTickCount() - g_last_present < 90 || !has_edit()) return;
+    present_why(PRES_WHY_FIELD);
+    present_impl(g_dd->primary, 0);
 }
 
 /* A film (movie.c) has a new frame: present now, between the game's own. */
@@ -355,26 +378,45 @@ void softdd_refresh(void) {
     if (g_dd && g_dd->primary) present(g_dd->primary);
 }
 
-static void present(Surf* s) {
-    g_last_present = GetTickCount();
+static void present(Surf* s) { present_impl(s, 1); }
+
+/* A recording frame is due (30 fps by the wall clock, or the first one). */
+static int record_due(void) {
+    return !g_rec || (LONG)((GetTickCount() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1 > g_rec_written;
+}
+
+/* The game presents far more often than a display refreshes: a frame is
+ * shown (composed, drawn) when a refresh interval has passed (present.c),
+ * and otherwise held back, and shown by a timer if nothing newer comes. A
+ * --shot, a recording tick or the last --frames frame is never held back. */
+static void present_impl(Surf* s, int from_game) {
+    LONG n = softdd_frames;
+    if (from_game) {
+        g_last_present = GetTickCount();
+        n = InterlockedIncrement(&softdd_frames);
+        if (n == 1 || n == 10 || n == 100 || n % 1000 == 0)
+            fprintf(stderr, "[softdd] frame %ld presented\n", n);
+    }
+    HWND win = g_dd ? g_dd->hwnd : NULL;
+    int paint = present_due(win);
+    present_note(from_game, paint);
+    if (!paint && !softdd_on_present && !g_shot_due && !present_wshot_pending() &&
+        !(softdd_stop_after && n >= softdd_stop_after) && !(softdd_record && record_due())) {
+        present_defer(win);
+        return;
+    }
     s = compose(s);
-    LONG n = InterlockedIncrement(&softdd_frames);
-    if (n == 1 || n == 10 || n == 100 || n % 1000 == 0)
-        fprintf(stderr, "[softdd] frame %ld presented\n", n);
     if (softdd_on_present) softdd_on_present(s->bits, s->w, s->h, s->pitch, n);
     if (g_shot_due) { write_shot(s); InterlockedExchange(&g_shot_due, 0); }
+    if (present_wshot_pending()) present_wshot_write(win, s->bits, s->w, s->h, s->pitch, s->bpp, screen_palette());
     if (softdd_record && (s->bpp == 16 || s->bpp == 8)) {
         if (!g_rec) record_open(s->w, s->h);
         record_frame(s);
     }
-    if (!softdd_headless && g_dd && g_dd->hwnd) {
-        RECT rc;
-        HDC dc = GetDC(g_dd->hwnd);
-        GetClientRect(g_dd->hwnd, &rc);
-        StretchDIBits(dc, 0, 0, rc.right, rc.bottom, 0, 0, s->w, s->h, s->bits,
-                      bmi_of(s), DIB_RGB_COLORS, SRCCOPY);
-        ReleaseDC(g_dd->hwnd, dc);
-    }
+    if (paint) {
+        if (!softdd_headless && win) present_paint(win, s->bits, s->w, s->h, s->pitch, s->bpp, screen_palette());
+        present_painted();
+    } else present_defer(win);
     if (softdd_stop_after && n >= softdd_stop_after) {
         fprintf(stderr, "[softdd] %ld frames: stopping (--frames)\n", n);
         softdd_finish();
@@ -394,12 +436,28 @@ static void maybe_present(Surf* s) {
  * times --scale. */
 static void fit_window(DD* d) {
     static int placed, pw, ph;
+    if (softdd_headless && present_fullscreen_start && d->hwnd && d->w) {   /* --fullscreen, once (tested headless) */
+        static int fs_done;
+        if (!fs_done) { fs_done = 1; present_set_fullscreen(d->hwnd, 1); }
+    }
+    if (softdd_headless && d->hwnd && d->w && !present_is_fullscreen()) {
+        /* Headless: the window is the mode's size (scripts use game pixels 1:1),
+         * unless a script sized it (size:W:H), which then stays. */
+        static int hw = 800, hh = 600;
+        RECT c;
+        GetClientRect(d->hwnd, &c);
+        if ((c.right == hw && c.bottom == hh) || (c.right == d->w && c.bottom == d->h)) {
+            if (c.right != d->w || c.bottom != d->h) present_set_client_size(d->hwnd, d->w, d->h);
+        }
+        hw = d->w; hh = d->h;
+    }
     if (softdd_headless || !d->hwnd || !d->w) return;
     if (placed) {
         /* A new mode (1280x1024 is 5:4, the menus 4:3): keep the height and
          * take the new shape, unless the player has sized the window since. */
         RECT c, wr;
         if (d->w == pw && d->h == ph) return;
+        if (present_is_fullscreen()) { pw = d->w; ph = d->h; return; }   /* the monitor's shape, not the mode's */
         GetClientRect(d->hwnd, &c);
         if (abs(c.right * ph - c.bottom * pw) <= ph) {
             int nw = c.bottom * d->w / d->h;
@@ -424,6 +482,7 @@ static void fit_window(DD* d) {
     AdjustWindowRect(&r, style, FALSE);
     SetWindowPos(d->hwnd, HWND_NOTOPMOST, 64, 64, r.right - r.left, r.bottom - r.top,
                  SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    if (present_fullscreen_start) present_set_fullscreen(d->hwnd, 1);   /* --fullscreen */
 }
 
 /* ------------------------------------------------------------- blits */

@@ -47,18 +47,38 @@ what needs research or a new subsystem.
 - **Risk:** low.
 
 ### 2. Presentation: scaling, fullscreen, pacing
-- **Known:** windowed, the frame is `StretchDIBits`-ed to the whole client
-  area (85% of the screen height at 4:3, or `--scale N`), so a window
-  resized to another shape distorts it, and there is no smoothing choice
-  or fullscreen. A primary without a back buffer presents on every
-  `Unlock`/`ReleaseDC`: hundreds of presents a second in the menus.
-- **Work:** aspect-correct letterboxing; nearest, integer and smooth
-  scaling (pcrecomp's `win32hle/screen.c` has these modes for SDL2 to
-  borrow from); a borderless fullscreen toggle (Alt+Enter) that never
-  changes the desktop's mode; coalesce presents to the display's refresh.
-  Mouse mapping (`to_game`) and the text-field composition follow the
-  letterbox.
-- **Risk:** low. All of it is in `softdd.c` and `host.c`.
+- **Done (headless-verified; the windowed check is the user's):** a new
+  presenter (`src/runtime/present.c`) letterboxes the frame at its own
+  aspect in any window shape; filters `sharp` (default), `smooth`, `nearest`
+  and `integer` (`--filter`, Alt+F12); borderless fullscreen (`--fullscreen`,
+  Alt+Enter) on the window's monitor, never a display-mode change; presents
+  coalesced to the display's refresh, with the last frame always shown by a
+  timer; `--shot`, `--record`, `--frames` and the text-field composition
+  still get every frame they need. The mouse (`to_game`, and so
+  `click_child`) goes through the letterbox rectangle. Flags and hotkeys:
+  `docs/building.md`; tests: `docs/testing.md`, `tools/present_test.c`.
+  Measured: loading is 60,000+ presents a second, an idle menu 4 or 5; the
+  shown rate follows the refresh.
+- **Found by the user's windowed check, fixed:** edge scrolling (the game
+  compares `GetCursorPos` with its window's `GetWindowRect`; the window now
+  reports the game's own rectangle), the cursor kept to the window in
+  fullscreen, fullscreen kept through a mode change, the game's cursor
+  restored on re-entry, a steady pacing beat (210 presents a second at 180 Hz
+  showed 105), the 100 ms timer redrawing only for a text field; the window
+  shrinking a little at every mode change (the game sizes its window from
+  `GetWindowRect` and `GetClientRect`: both are now the mode's, and its own
+  moves of the window are left to softdd).
+- **Tested without a person:** `tools/present_check.py` (headless, a virtual
+  cursor the game reads back as it reads the real one): edge scrolling on all
+  four sides and in each bar in every window shape, in fullscreen, at
+  `--res 1920x1080` and after an Options size change; fullscreen kept at a
+  mode change; the cursor back in the window; pacing near the refresh.
+  `tools/present_check_real.ps1` is the same on the real screen, for the user.
+- **Left:** remember the window size, filter and fullscreen between runs;
+  `softdd`'s `GetMonitorFrequency` still says 60. The CPU scaler costs 3 ms (1080p) to
+  11 ms (4K) a frame for `sharp`/`smooth`: a GPU path (Direct3D 11) would
+  take it off the game thread.
+- **Risk:** low.
 
 ### 3. Widescreen and any resolution
 - **Done (2026-11-21):** `--res WxH` / `--res desktop` (`src/runtime/widescreen.c`,

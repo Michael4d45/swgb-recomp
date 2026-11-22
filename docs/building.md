@@ -67,8 +67,63 @@ build\swgbrecomp.exe --run --headless --watchdog 60 --files   stop after 60 s, l
 build\swgbrecomp.exe --run --fps 60                           60 frames a second in game
 build\swgbrecomp.exe --run --headless --fps-log               frames, game clock, steps a second
 build\swgbrecomp.exe --run --films "<Steam>\Game"            films the game cannot find, from there
+build\swgbrecomp.exe --run --fullscreen --filter integer      borderless fullscreen, whole-number scaling
 py -3 tools\conformance.py                                    the milestones, PASS/FAIL
 ```
+
+### The picture: scaling, fullscreen, pacing
+
+The game draws a fixed frame (800x600, 1024x768, 1280x1024: always 4:3); the
+window can be any shape. The frame is fitted into the client area with its
+aspect kept and black bars, and the mouse is mapped through that same
+rectangle (a click in a bar lands on the nearest edge of the picture).
+
+| Flag | Hotkey | What |
+|---|---|---|
+| `--filter sharp\|smooth\|nearest\|integer` | `Alt+F12` cycles | `sharp` (default): nearest inside a texel, a one-pixel blend at its edges, so no shimmer and no blur at fractional scales. `smooth`: bilinear. `nearest`: nearest neighbour at any size (uneven pixels at odd scales). `integer`: nearest, whole multiples only (bars around, falls back to a fit when the window is smaller than the frame). The window title shows the filter. |
+| `--fullscreen` | `Alt+Enter` toggles | A borderless window the size of the monitor the window is on. The desktop's display mode is never changed, so Alt+Tab and other monitors behave as for any window. |
+| `--scale N` | | The window starts at N times the game's mode (default: 85% of the screen height). Resize it freely after that. |
+| `--refresh HZ` | | Pace frames to HZ instead of the monitor's refresh rate. |
+| `--present-log` | | Once a second on stderr: presents, frames shown, the refresh rate and filter, and how many frames the timer showed (held back, window damage, a text field up). |
+
+The game presents far more often than a display refreshes (every
+`Unlock`/`ReleaseDC` of a primary without a back buffer: tens of thousands a
+second while loading, a handful in an idle menu). A frame is drawn when a
+refresh interval has passed since the last one; otherwise it is held, and a
+one-shot timer draws the latest after the interval, so the last frame before
+the game goes quiet is never lost. `--shot`, `--record` (30 fps by the wall
+clock) and `--frames` still see every frame they need, and the game's text
+fields are composed into the frame that is drawn.
+
+The mouse and the map's edge scrolling follow the letterbox: the game scrolls
+when the cursor is within a few pixels of its window's edge, so the game
+window's rectangle is reported as the game's own `0,0,W,H`, and the cursor
+(clamped to the picture) reaches `0` and `W-1` at the window's or monitor's
+edge on all four sides, in any window shape, fullscreen and at any `--res`.
+The bars count as the edge. While another window is active the game sees the
+cursor in the middle of its picture (no scrolling), and in fullscreen the
+cursor is confined to the window while the game is active. The game's own
+cursor is restored when the pointer comes back from another window. Fullscreen
+survives the game's own window changes at a mode change (Standard Game
+start, back to the menus).
+
+The game sees its window as it saw a real fullscreen mode: at 0,0 and exactly
+the mode's size (`GetWindowRect` and `GetClientRect`), and its own
+`MoveWindow` and `SetWindowPos` of it do not move or size it. Windowed, the
+window is yours: at a mode change it keeps its height and takes the new
+mode's shape (1280 x 1024 is 5:4), unless you have sized it yourself, when
+it stays as you left it.
+
+For scripted tests (`--keys`, see testing.md), all headless: the cursor is a
+virtual one, read back by the game as a real cursor is (screen, client,
+letterbox, game pixels). `size:W:H` resizes the window's client area,
+`wshot=FILE` writes the window as it would be drawn (bars and all, any filter),
+`wmove:X:Y` and `wclick:X:Y` take window pixels, each a number or a place
+(`L R C`, `T B C`, `PL PR PT PB` for the picture's edges, `BL BR BT BB` for the
+middle of a bar, with an offset: `wmove:R:C`, `wmove:PL+60:C`), `alt+enter` and
+`alt+f12` press the hotkeys, `setcursor` has the pointer come back into the
+window (the game's cursor must survive), and `--keys @FILE` reads the script
+from a file, a step to a line.
 
 `--args "..."` passes switches to the game itself; `--game`, `--cd` and
 `--exe` point at other folders; `--films DIR` is where the films are when
@@ -122,6 +177,6 @@ generated C unoptimized, much faster; the default is `/O1`. On a
 lands the build in `build-farm\`.
 
 Layout: `run_lift.py` (lift driver), `src/runtime/` (host, `softdd`
-DirectDraw, the deflate decoder), `tools/` (setup, the update unpacker, the
+DirectDraw, `present` for scaling, fullscreen and pacing, the deflate decoder), `tools/` (setup, the update unpacker, the
 conformance harness), `third_party/miniz` (MIT, see `NOTICE`), and the
 gitignored `game/`, `cd/`, `work/` and `src/recomp/gen/`.
