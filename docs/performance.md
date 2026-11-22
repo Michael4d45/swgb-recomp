@@ -201,7 +201,8 @@ gdi32.lib`; "OK" when the pictures match the old scaler's).
 ## Not done, or left
 
 - **On the real screen:** the presenter's change-only drawing is tested
-  headless (bit-exact scaler, the scripted runs, `present_check.py`) but
+  headless (bit-exact scaler, the scripted runs, `present_check.py`: 109 of
+  109 cases on this build) but
   the real window's GDI cost and look are the user's to check:
   `tools/present_check_real.ps1`, or a game at 2560x1440 fullscreen.
 - The presenter still runs on the game thread; a GPU path (Direct3D 11) or a
