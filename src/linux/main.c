@@ -47,6 +47,8 @@ int  swgb_test_run;
 static int g_log_files;
 static unsigned g_watchdog_s;
 
+static int swgb_show_host_cursor(void) { return 1; }
+
 /* ---- what the lift calls into ---------------------------------------------- */
 void recomp_not_lifted(uint32_t va) {
     fprintf(stderr, "\n[not-lifted] sub_%08X  (called from 0x%08X)\n", va, g_cur_func);
@@ -463,6 +465,10 @@ int main(int argc, char** argv) {
     }
     printf("  audio: %s\n", sound ? "on" : "muted (a test run; --sound to hear it)");
     if (scale && !hle_screen_scale(scale)) fprintf(stderr, "[host] no scaling \"%s\": sharp, smooth, crt, nearest or integer\n", scale);
+    /* Genie draws its own cursor into the primary; on this host that sprite
+     * is not visible yet, so show the Win32/SDL cursor the guest SetCursor'd
+     * (or the system arrow) for playtesting. */
+    hle_screen_cursor_hook = swgb_show_host_cursor;
     if (hle_screen_open("Star Wars Galactic Battlegrounds", fullscreen, headless) != 0) return 1;
     hle_on_exit = on_exit_close;
     if (g_record) spawn(record_thread);

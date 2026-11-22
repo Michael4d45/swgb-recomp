@@ -14,13 +14,15 @@ is the steps.
   - SteamStub unwrapped with Steamless under mono; catalog + lift
     (`errors 0`); `./build-linux.sh` produces `build-linux/swgbrecomp`.
   - Dry run: `0 imports not implemented yet`.
-  - Headless `--shot` reaches the main-menu hangar at 800×600. GDI menu
-    labels are missing (palette text — step 6.2). DirectPlay Create needs
-    a stub object plus VERSION APIs that report 4.06.03.0516, or the game
-    MessageBox-exits on "requires DirectPlay 6.1a".
+  - Headless `--shot` reaches the main menu with GDI labels (needs
+    pcrecomp `swgb-linux-palette` or newer: 8bpp TextOut + surface
+    palette). DirectPlay Create + VERSION 4.06.03.0516 required or boot
+    MessageBox-exits. Host shows the SDL cursor for playtesting.
+  - `tools/linux_menu_shots.sh` captures boot + Single Player hover PNGs.
   - `src/linux/eh.c` supplies `recomp_eh_push`/`pop` (win32hle has no
     guest EH yet).
-- pcrecomp: checked against `main` at **`a67767b`**.
+- pcrecomp: base **`a67767b`**, plus local branch `swgb-linux-palette`
+  for 8bpp GDI text (build with `PCRECOMP=~/star/pcrecomp`).
 - Arch notes: no `lib32-sdl2` in repos — use AUR `lib32-sdl2-compat` and
   `lib32-sdl2_ttf`. Ubuntu packages in §1 still apply on Debian/Ubuntu.
 
