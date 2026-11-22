@@ -22,6 +22,7 @@ command line to run. Rebuild after a change with the same command.
 | `swgb_gen.lib` | `A:\Games\star\shared\swgb_gen.lib`, linked by every worktree (`SWGB_GEN_LIB`) | Frozen: replaced only by the integrator, between merges. |
 | `work\Battlegrounds.exe` | the main checkout's, passed with `--exe` | Read-only. |
 | Game data | `A:\Games\star\games\<track>`: hard links to the main checkout's `game\` | Hard links share the bytes: never edit, patch or delete a game file there. What the game writes (player profiles, `SaveGame`, `Scenario`) is a real copy. `-FreshGame` resets it. |
+| The game's options (Screen Size, speeds, volumes) | HKCU, keys under `LucasArts Entertainment Company LLC` | With `--multi`, the host gives each run a private copy per `--game` folder (seeded from the real keys on first use), so a run never changes the user's options or another worktree's. |
 | Build output | `A:\Games\star\builds\<track>` | Your own. |
 | The game's one-copy check | a named mutex | Always run with `--multi`, or your run ends another agent's (or the user's) game. |
 | The screen, mouse and keyboard | the user's | `--headless` only. Never run a window, or the original game fullscreen (it takes over the main monitor and mouse), without asking the user first. |

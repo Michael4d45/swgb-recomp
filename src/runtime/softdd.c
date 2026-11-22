@@ -382,9 +382,25 @@ static void maybe_present(Surf* s) {
  * mode change. Windowed, it gets a caption and a client area of the mode
  * times --scale. */
 static void fit_window(DD* d) {
-    static int placed;
-    if (softdd_headless || !d->hwnd || !d->w || placed) return;
+    static int placed, pw, ph;
+    if (softdd_headless || !d->hwnd || !d->w) return;
+    if (placed) {
+        /* A new mode (1280x1024 is 5:4, the menus 4:3): keep the height and
+         * take the new shape, unless the player has sized the window since. */
+        RECT c, wr;
+        if (d->w == pw && d->h == ph) return;
+        GetClientRect(d->hwnd, &c);
+        if (abs(c.right * ph - c.bottom * pw) <= ph) {
+            int nw = c.bottom * d->w / d->h;
+            GetWindowRect(d->hwnd, &wr);
+            SetWindowPos(d->hwnd, NULL, 0, 0, (wr.right - wr.left) - c.right + nw, wr.bottom - wr.top,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        pw = d->w; ph = d->h;
+        return;
+    }
     placed = 1;   /* once: after that the window is the player's to size */
+    pw = d->w; ph = d->h;
     RECT wa;
     SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0);
     /* --scale N: N times the mode; otherwise 85% of the screen height, at 4:3 */

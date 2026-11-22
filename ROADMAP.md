@@ -17,8 +17,33 @@ what needs research or a new subsystem.
   Size -> 1024 x 768, then a Standard Game: `SetDisplayMode(1024, 768, 8)`,
   a 1024x768 primary, and the map and HUD laid out for it (checked
   2026-11-21). The menus stay 800x600, as in the original.
-- **Work:** check 1280x1024 the same way; a scripted run per size in
-  `docs/testing.md`; screenshots against the original.
+- **Done (2026-11-21, headless):** all three sizes run a skirmish end to end
+  with `tools/res_check.py` (see `docs/testing.md`, which has the shots):
+  `SetDisplayMode` gets 800x600, 1024x768 or 1280x1024; each shot is the
+  size of the mode; the HUD is the game's art for that width; the command
+  center selects with a click at game pixels; the cursor held on each map
+  edge scrolls (the view goes on into unexplored black, the minimap's box
+  stops at the diamond's tips); a click on the minimap moves the view; the
+  Menu button, Quit Current Game, the score screen and Main Menu work, and
+  the score screen and the menus are 800x600 again (`SetDisplayMode(800,
+  600, 8)` on the way back). The Screen Size is saved when the game exits
+  normally (the registry's `Screen Size`: 800, 1024 or 1280) and the next
+  run starts the skirmish at it, with no Options clicks.
+- **Fixed:** (1) The options live in HKCU, shared by every run, so a run that
+  chose 1280 changed the next agent's (or the user's) skirmish: with
+  `--multi` each `--game` folder now has a private copy (`host.c`,
+  `reg_isolate`). (2) Windowed, softdd placed the window once, at the
+  menus' 4:3, so 1280x1024 (5:4) would be stretched sideways; the window
+  now takes the new mode's shape at the same height unless the player has
+  sized it (`softdd.c`, `fit_window`). Hit-testing was already
+  proportional (`to_game`).
+- **Not checked:** a real window (headless only: no screen was used), so the
+  `fit_window` change and a real mouse through `to_game` at 1280x1024 are
+  untested on screen; the shots are not compared with the original. The
+  scripted cursor is in game pixels, so `to_game` is not exercised by
+  `--keys`. A drag box-select (`--keys` cannot drag), and a map larger
+  than the starting area, were not tried. The skirmish map and
+  civilization are random per run.
 - **Risk:** low.
 
 ### 2. Presentation: scaling, fullscreen, pacing
