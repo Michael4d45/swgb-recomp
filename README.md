@@ -58,6 +58,7 @@ Not yet played to a finish.
 | Single Player / skirmish | **runs**: New Player dialog (a name typed into its edit control), Single Player, Standard Game, Start Game, and the map: buildings, units, selection, the minimap |
 | Campaign | not tried yet |
 | Sound | DirectSound and the mixer are the real ones; test runs are muted |
+| Films | **play**: Indeo 5 decoded by FFmpeg (on `PATH`), with sound, skippable; tested with the Saga's Clone Campaigns logo and intro ([docs/movies.md](docs/movies.md)) |
 | Headless mode | `--headless --record out.mp4`: a private desktop (pcrecomp `native32_headless`), nothing on the user's screens, frames piped to ffmpeg; muted |
 | Conformance harness | **5/5** milestones: boot, `genie.dat` inflated, 800x600x8 with 100 frames, the main menu, the Exit button ([docs/testing.md](docs/testing.md)) |
 | Setup.cmd | tested from a fresh clone (2026-11-12): catalog, lift, the full build and the shortcut; the conformance harness 5/5 on that build |
@@ -78,6 +79,7 @@ Real output of `swgbrecomp.exe --run --headless`, recompiled code throughout:
 - [docs/lifting.md](docs/lifting.md): lifting `Battlegrounds.exe`, every wall so far and its fix
 - [docs/exceptions.md](docs/exceptions.md): the game's C++ and SEH exception frames in the lift
 - [docs/framerate.md](docs/framerate.md): how often the game draws and simulates, `--fps N`
+- [docs/movies.md](docs/movies.md): the films, decoded by FFmpeg into softdd's frames
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Contributors

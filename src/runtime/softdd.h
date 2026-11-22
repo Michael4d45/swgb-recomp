@@ -23,6 +23,9 @@ void softdd_shot(const char* path);
 void softdd_tick(void);
 #define SOFTDD_TIMER 0x5D01
 
+/* Present the front buffer now (a film's new frame, composed in). */
+void softdd_refresh(void);
+
 /* Close the recording, so the mp4 is complete. */
 void softdd_finish(void);
 
