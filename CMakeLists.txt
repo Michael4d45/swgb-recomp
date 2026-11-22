@@ -75,8 +75,16 @@ target_link_options(swgb PRIVATE /BASE:0x60000000 /FIXED:NO /DYNAMICBASE:NO
 # /O1, not /O2: 3.9M lines of generated C. /O2 stalled the farm on Shogo's
 # lift; /O1 keeps most of the speed at a fraction of the compile time.
 set(GEN_OPT "/O1" CACHE STRING "optimization for the generated C")
+# The few generated files the game spends its time in, at GEN_HOT_OPT instead
+# (docs/performance.md: tools/profile_report.py --hot picks them; a re-lift
+# moves functions between files, so pick them again after one).
+set(GEN_HOT_FILES "" CACHE STRING "generated files (names, ;-separated) compiled with GEN_HOT_OPT")
+set(GEN_HOT_OPT "/O2" CACHE STRING "optimization for GEN_HOT_FILES")
 if(GEN_SOURCES)
   set_source_files_properties(${GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "/w;${GEN_OPT}")
+  foreach(f IN LISTS GEN_HOT_FILES)
+    set_source_files_properties("${GEN_DIR}/${f}" PROPERTIES COMPILE_OPTIONS "/w;${GEN_HOT_OPT}")
+  endforeach()
 endif()
 set_source_files_properties(src/runtime/host.c src/runtime/softdd.c src/runtime/present.c src/runtime/scaler.c src/runtime/framerate.c src/runtime/profile.c src/runtime/resolve.c src/runtime/inflate.c src/runtime/widescreen.c src/runtime/movie.c PROPERTIES COMPILE_OPTIONS "/W3")
 set_source_files_properties(third_party/miniz/miniz.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
