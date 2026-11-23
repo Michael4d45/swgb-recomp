@@ -222,11 +222,16 @@ what needs research or a new subsystem.
   from Saved Game and played 15 minutes more; OOM-9's missions 1-5 played in
   a row and won, with their briefings, triggers, score screens and Scenario
   Menu; two older saves (one a campaign's) loaded and played.
+- **A victory by combat (merged main, three runs):** waves of Simon the Killer
+  Ewok (`simonsays`) aimed by a live controller at the enemy's colour on the
+  minimap (`--keys-live`, `soak.py --mode fight`) took the base apart in one to
+  three and a half minutes at Fast speed. The game declared each victory itself (`won1.mp3`, the score
+  screen crowning the player). No fault and no unresolved call. `--keys` gained
+  drags (`ldown`/`lup`: box select) and `ctrl+`/`shift+`.
 - **pcrecomp (for its maintainers):** a vtable run in a data section should
   outrank a decoded body, and switch index tables should be data
   (docs/lifting.md).
-- **Left:** a victory won by fighting (an idle player is rushed first: it
-  needs a scripted defence or a human); missions 6 and later, and the other
+- **Left:** missions 6 and later, and the other
   campaigns past mission 1; the in-game Load; the 1024 and 1280 HUDs under
   the monkey (its clicks are 800x600); the pcrecomp fixes above.
 - **Risk:** medium: each miss is cheap to fix once seen, but only play

@@ -724,6 +724,8 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     meta['exit'] = rc
     meta['outcome'] = EXIT.get(rc, 'exit %d' % rc)
     meta.update(analyse(log, s.text()))
+    if what.get('ended_by') and meta['endings']:   # the fight's controller ended it after the game over
+        meta['outcome'] = 'game over: %s' % meta['endings'][-1][1]
     for f in sorted(os.listdir(out)):
         if f.endswith('.bmp') and shutil.which('ffmpeg'):
             png = os.path.join(out, f[:-4] + '.png')
@@ -802,7 +804,8 @@ def main():
             threads.append(th)
         time.sleep(1)
     json.dump(sorted(results, key=lambda m: m['name']), open(os.path.join(args.out, 'summary.json'), 'w'), indent=1)
-    bad = [m for m in results if m['exit'] not in (0, 4) or m['events']]
+    bad = [m for m in results if (m['exit'] not in (0, 4) and not m['outcome'].startswith('game over'))
+           or m['events']]
     hours = sum(m['seconds'] for m in results) / 3600
     print('%d run(s), %.2f game-hours, %d with a problem; %s' % (len(results), hours, len(bad), args.out))
     for m in results:

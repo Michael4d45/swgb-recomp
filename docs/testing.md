@@ -62,10 +62,11 @@ lands.
 ## Long games: `tools/soak.py`
 
 ```
-py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed|defeat|allied|victory|chain|load]
+py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed|defeat|allied|victory|chain|load|fight]
                      [--runs N] [--minutes M] [--jobs J] [--seed S] [--run EXE] [--game DIR]
                      [--speed fast|normal] [--no-save] [--out DIR]
                      [--after M] [--allies N] [--first K] [--last K] [--row R]
+                     [--ewoks N] [--dwell S] [--wave-every S] [--extra "HOST OPTIONS"]
 ```
 
 Headless and `--multi`, each run in a game folder of its own (job k > 0 gets
@@ -84,6 +85,7 @@ track's build (`A:\Games\star\builds\coverage`) and game folder; pass
 | `victory` | A varied skirmish played for `--minutes` with the save, then won with the chat cheat `skywalker` (Enter, the word, Enter), the score screen's six tabs, Main Menu, Single Player -> Saved Game -> that save -> OK, and `--after` more minutes of the loaded game. |
 | `chain` | OOM-9's missions `--first`..`--last` in a row (1-5), each: its box on the campaign screen, the briefing, the monkey for `--minutes`, `skywalker`, the score screen, Scenario Menu. A mission's box appears once the one before is won, in that game folder's player profile. |
 | `load` | Single Player -> Saved Game -> the `--row`th save (the list is alphabetical) -> OK, then the monkey. |
+| `fight` | A victory won by combat, declared by the game. Me and `--allies` computers (team 1) against one (team 2), a Large Savannah map, Easiest (one setting for every computer), Reveal Map: All Visible. Waves of Simon the Killer Ewok (`simonsays` typed 3 s apart; the game stops at nine alive), each box-selected around the command center and made a control group (`ctrl+N`). Then a live controller (`--keys-live`): every `--dwell` seconds a shot, the densest cluster of the enemy's colour on the minimap (player `allies + 2`: magenta with 4 allies, yellow with 2), each group sent there with a right-click on the minimap, a new wave every `--wave-every` seconds. At the victory (or defeat) music it shoots the score screen and its tabs, then ends the run. |
 
 The setup screen's Team buttons step to the next team on each click. A click
 right after a drop-down closes, or a second click with the cursor still on
@@ -127,6 +129,7 @@ with `py -3 tools\seeds_from_logs.py --merge` (docs/lifting.md).
 | trace | with it, `SWGB_TRACE` and `--firsthit` | 1 skirmish, 1 monkey, 30 min | 1.1 h | both ran the full time. |
 
 | endings | with it | below | 4.4 h | every run went its planned length or to its end; no events. |
+| fight | merged main + `--keys` drags, modifiers, `--keys-live` | below | 4.0 h | 3 victories by combat; no events. |
 
 **Games to the end** (2026-11-22, the fixed host):
 
@@ -165,8 +168,20 @@ nothing (an `(int)` comparison, fixed in `host.c` and `coverage.c`). The
 other: a 30-minute skirmish makes about 3 billion indirect calls and 2 million
 frames.
 
-Not yet covered: a victory won by fighting (the idle player dies first; the
-victory above is the cheat's, through the same game-over path), missions 6
+**A victory by combat** (2026-11-22, the merged build's lift, host `coverage-win*`):
+
+| Run | What happened |
+|---|---|
+| `fight`, 4 allies, enemy magenta (twice) and 2 allies, enemy yellow | the first wave of nine Ewoks set off at 4:20 (time since launch), straight at the enemy's base on the minimap; its colour fell from 73-92 pixels as the buildings fell, and the game played `won1.mp3` at 5:09, 6:25 and 7:39: 51 s, 2:04 and 3:18 of fighting (Fast speed). The score screen crowns me (Military 205 in the first); the enemy, alone on team 2, ends with Military 0. No `skywalker`. |
+| `fight` with a blind sweep (4 runs, 47-60 min) | waves sent around the ring of start positions never met the enemy: two were on Shoreline (half the ring in the sea), and with only `forceexplore` the fog hid the enemy's base from the minimap. Hence the aiming, and All Visible. Long, clean runs all the same. |
+
+[The Ewoks in the enemy's ruins](screenshots/fight.png) and [the score screen](screenshots/fight-score.png) are the first run.
+
+Hardest allies against an Easiest enemy is not possible: the game has one
+difficulty for every computer, so it is Easiest for all. The
+Ewoks win the game alone.
+
+Not yet covered: missions 6
 and later and the other five campaigns past mission 1, the in-game Load
 (the main menu's Saved Game is covered), and multiplayer. In a campaign the
 monkey can scroll the view into unexplored black and stay there (`H` has no
