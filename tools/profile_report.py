@@ -5,7 +5,9 @@
 
 The host (src/runtime/profile.c) writes raw host addresses; this names them
 with DbgHelp: the host executable's PDB (lifted functions are sub_<VA>, so
-the guest address is in the name) and the system DLLs' exports.
+the guest address is in the name) and the system DLLs' exports. A profile
+from the Linux host (src/linux/profile.c, the same file) is named with nm:
+the ELF executable's symbols and the shared libraries' dynamic ones.
 
 Tables:
   self       the function EIP was in (where the CPU actually is)
@@ -29,10 +31,19 @@ time (helpers counted to their caller), hottest first: candidates for /O2.
 """
 import argparse
 import collections
+import bisect
 import ctypes
-import ctypes.wintypes as wt
 import os
+import subprocess
 import sys
+
+if os.name == "nt":
+    import ctypes.wintypes as wt
+else:   # only for the class definitions below; the Linux path uses ElfSymbols
+    class wt:
+        ULONG = DWORD = ctypes.c_uint32
+        HANDLE = ctypes.c_void_p
+        BOOL = ctypes.c_int
 
 
 class SymbolInfo(ctypes.Structure):
@@ -106,6 +117,59 @@ class Symbols:
         return r
 
 
+class ElfSymbols:
+    """Address -> (module, function) for a profile from the Linux host: nm's symbols for each
+    module listed in the file (the executable is not position-independent, so its symbols are
+    its addresses; a shared library's are offsets from where it was mapped). recomp_types.h's
+    helpers are not told apart from the host's own here (no line information is read)."""
+
+    def __init__(self, modules):
+        self.modules = sorted(modules)
+        self.syms = {}
+        self.cache = {}
+
+    def _table(self, path, base):
+        if path not in self.syms:
+            rows = []
+            for flags in (["--defined-only"], ["-D", "--defined-only"]):
+                try:
+                    out = subprocess.run(["nm", "-n"] + flags + [path], capture_output=True, text=True).stdout
+                except OSError:
+                    out = ""
+                for l in out.splitlines():
+                    p = l.split()
+                    if len(p) >= 3 and p[1].lower() in "tw":
+                        rows.append((int(p[0], 16), p[2]))
+                if rows:
+                    break
+            rows.sort()
+            absolute = bool(rows) and rows[0][0] >= base   # an executable linked at its address
+            self.syms[path] = ([a if absolute else a + base for a, _ in rows], [n for _, n in rows])
+        return self.syms[path]
+
+    def module(self, a):
+        for base, size, path in self.modules:
+            if base <= a < base + size:
+                return base, path
+        return None, None
+
+    def name(self, a):
+        r = self.cache.get(a)
+        if r:
+            return r
+        base, path = self.module(a)
+        if path is None:
+            r = ("?", "?+%X" % a)
+        else:
+            mod = os.path.basename(path)
+            addrs, names = self._table(path, base)
+            i = bisect.bisect_right(addrs, a) - 1
+            fn = names[i] if i >= 0 else "%s+%X" % (mod, a - base)
+            r = (mod, fn)
+        self.cache[a] = r
+        return r
+
+
 def load(path):
     head, modules, samples = {}, [], []
     with open(path) as f:
@@ -150,8 +214,13 @@ def main():
     a = ap.parse_args()
 
     head, modules, samples = load(a.file)
-    exe = next((os.path.basename(p).lower() for b, s, p in modules if p.lower().endswith(".exe")), "swgbrecomp.exe")
-    sym = Symbols(modules)
+    exe = next((os.path.basename(p).lower() for b, s, p in modules if p.lower().endswith(".exe")), None)
+    if exe:
+        sym = Symbols(modules)
+    else:   # the Linux host: its executable is the module named swgbrecomp (or swgbrecomp_cc)
+        exe = next((os.path.basename(p).lower() for b, s, p in modules if os.path.basename(p).startswith("swgbrecomp")),
+                   "swgbrecomp")
+        sym = ElfSymbols(modules)
 
     wall = head.get("wall_s", 0)
     print("%s: %.1f s, %d samples (%d while the game thread ran), %d lost" % (

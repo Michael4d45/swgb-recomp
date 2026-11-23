@@ -50,6 +50,7 @@ MP_JOIN = (602, 402)             # ... Join
 MP_ROW0 = (600, 238)             # ... the first game in the list
 SETUP_READY = (88, 517)          # the multiplayer setup screen: I'm Ready!
 SETUP_START = (118, 568)         # ... Start Game (the host's)
+GAME_DEFAULT = r'A:\Games\star\games\multiplayer'
 B_DELAY = 5                      # B starts this many seconds after A
 GAME_FROM = 160                  # by then both are in the game (A's clock)
 
@@ -138,7 +139,7 @@ def main():
                     r'--cc: ...\multiplayer-cc\swgbrecomp_cc.exe)')
     ap.add_argument('--exe', default=None, help=r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe '
                     r'(--cc: battlegrounds_x1.exe there)')
-    ap.add_argument('--game', default=r'A:\Games\star\games\multiplayer')
+    ap.add_argument('--game', default=GAME_DEFAULT)
     ap.add_argument('--out', default=None)
     ap.add_argument('--port', type=int, default=2300)
     ap.add_argument('--extra', default='', help='more host switches for both runs')
@@ -146,10 +147,20 @@ def main():
     global MAIN_MULTI, MP_CREATE
     if args.cc:
         MAIN_MULTI, MP_CREATE = MAIN_MULTI_CC, MP_CREATE_CC
-    args.run = args.run or (r'A:\Games\star\builds\multiplayer-cc\swgbrecomp_cc.exe' if args.cc
-                            else r'A:\Games\star\builds\multiplayer\swgbrecomp.exe')
-    args.exe = args.exe or (r'A:\Games\star\swgb-recomp\work\battlegrounds_x1.exe' if args.cc
-                            else r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
+    if os.name == 'nt':
+        args.run = args.run or (r'A:\Games\star\builds\multiplayer-cc\swgbrecomp_cc.exe' if args.cc
+                                else r'A:\Games\star\builds\multiplayer\swgbrecomp.exe')
+        args.exe = args.exe or (r'A:\Games\star\swgb-recomp\work\battlegrounds_x1.exe' if args.cc
+                                else r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
+    else:   # Linux and macOS: this checkout's build and lift, a game folder under work/
+        root = os.path.dirname(HERE)
+        build = os.path.join(root, 'build-macos' if sys.platform == 'darwin' else 'build-linux')
+        args.run = args.run or os.path.join(build, 'swgbrecomp_cc' if args.cc else 'swgbrecomp')
+        args.exe = args.exe or os.path.join(root, 'work', 'battlegrounds_x1.exe' if args.cc else 'Battlegrounds.exe')
+        if args.game == GAME_DEFAULT:
+            args.game = os.path.join(root, 'work', 'games', 'multiplayer')
+        if not os.path.isdir(args.game):
+            soak.ensure_game(os.path.join(root, 'game'), args.game)
     out = os.path.abspath(args.out or os.path.join(os.getcwd(), 'mp-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
     game_b = args.game.rstrip('\\/') + '-mp2'
     soak.ensure_game(args.game, game_b)

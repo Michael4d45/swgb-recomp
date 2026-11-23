@@ -160,7 +160,7 @@ def pictures(text, script):
 
 
 def game_mode(text):
-    modes = re.findall(r"SetDisplayMode\((\d+), (\d+), \d+\)", text)
+    modes = re.findall(r"SetDisplayMode\((\d+)(?:, |x)(\d+)(?:, |x)\d+\)", text)
     return [(int(x), int(y)) for x, y in modes]
 
 

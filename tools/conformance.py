@@ -8,6 +8,7 @@ work\\Battlegrounds.exe) every milestone is SKIP and the exit code is 0.
 
     py -3 tools/conformance.py [path\\to\\swgbrecomp.exe] [--game DIR] [--exe Battlegrounds.exe]
     py -3 tools/conformance.py --cc [path\\to\\swgbrecomp_cc.exe] [--game DIR] [--exe battlegrounds_x1.exe]
+    python3 tools/conformance.py [build-linux/swgbrecomp] ...      (Linux; build-macos/ on a Mac)
 
 --cc checks Clone Campaigns: build\\swgbrecomp_cc.exe, work\\battlegrounds_x1.exe,
 data\\genie_x1.dat and its own entry (run_lift.py --build cc).
@@ -33,10 +34,14 @@ BUILDS = {
     'base': ('swgbrecomp.exe', 'Battlegrounds.exe', 0x00632881, 'genie'),
     'cc': ('swgbrecomp_cc.exe', 'battlegrounds_x1.exe', 0x00636601, 'genie_x1'),
 }
+# The Linux and macOS host (src/linux) has no .exe and builds in build-linux/ or build-macos/.
+if os.name != 'nt':
+    BUILDS = {k: (h[:-4], g, e, n) for k, (h, g, e, n) in BUILDS.items()}
+BUILD_DIR = 'build' if os.name == 'nt' else 'build-macos' if sys.platform == 'darwin' else 'build-linux'
 CHECKS = [
     ('boot', r'entering 0x00632881'),
     ('genie', r'open data\\genie\.dat -> ok'),
-    ('directdraw', r'(?s)SetDisplayMode\(800, 600, 8\).*frame 100 presented'),
+    ('directdraw', r'(?s)SetDisplayMode\(800(?:, |x)600(?:, |x)8\).*frame 100 presented'),   # softdd's or win32hle's line
     ('menu', r'CreateWindowExA "InputDisabledWindow"'),
     ('exit', r'ExitProcess\(0\)'),
 ]
@@ -51,7 +56,7 @@ def main():
     ap.add_argument('--exe')
     a = ap.parse_args()
     host, guest, entry, genie = BUILDS['cc' if a.cc else 'base']
-    a.run = a.run or os.path.join(ROOT, 'build', host)
+    a.run = a.run or os.path.join(ROOT, BUILD_DIR, host)
     a.exe = a.exe or os.path.join(ROOT, 'work', guest)
     CHECKS[0] = ('boot', 'entering 0x%08X' % entry)
     CHECKS[1] = ('genie', r'open data\\%s\.dat -> ok' % genie)

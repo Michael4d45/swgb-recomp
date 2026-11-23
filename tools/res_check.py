@@ -35,9 +35,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("size", type=int, choices=sorted(SIZES))
     ap.add_argument("--out", default="res_shots")
-    ap.add_argument("--game", default=r"A:\Games\star\games\resolutions")
-    ap.add_argument("--exe", default=r"A:\Games\star\swgb-recomp\work\Battlegrounds.exe")
-    ap.add_argument("--run", default=r"A:\Games\star\builds\resolutions\swgbrecomp.exe")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.name == "nt":
+        ap.add_argument("--game", default=r"A:\Games\star\games\resolutions")
+        ap.add_argument("--exe", default=r"A:\Games\star\swgb-recomp\work\Battlegrounds.exe")
+        ap.add_argument("--run", default=r"A:\Games\star\builds\resolutions\swgbrecomp.exe")
+    else:   # Linux and macOS: this checkout's game folder, lift and build
+        ap.add_argument("--game", default=os.path.join(root, "game"))
+        ap.add_argument("--exe", default=os.path.join(root, "work", "Battlegrounds.exe"))
+        ap.add_argument("--run", default=os.path.join(root, "build-macos" if sys.platform == "darwin" else "build-linux", "swgbrecomp"))
     ap.add_argument("--no-options", action="store_true",
                     help="keep the Screen Size already stored (checks that it persists)")
     ap.add_argument("--watchdog", type=int, default=240)
@@ -57,23 +63,23 @@ def main():
     t = s[-1][0] + 8
     s += [(t, "move:600:168"), (t + 1, "click:600:168"), (t + 9, "move:118:568"), (t + 10, "click:118:568")]
     t += 47   # the map, loaded
-    s.append((t, f"shot={out}\\a_start.bmp"))
+    s.append((t, f"shot={out}{os.sep}a_start.bmp"))
     t += 2
-    s += [(t, f"move:{cx}:{cy}"), (t + 1, f"click:{cx}:{cy}"), (t + 4, f"shot={out}\\b_selected.bmp")]
+    s += [(t, f"move:{cx}:{cy}"), (t + 1, f"click:{cx}:{cy}"), (t + 4, f"shot={out}{os.sep}b_selected.bmp")]
     t += 6
     for name, (ex, ey) in (("c_left", (0, h // 2)), ("d_right", (w - 1, h // 2)),
                            ("e_top", (w // 2, 0)), ("f_bottom", (w // 2, h - 1))):
-        s += [(t, f"move:{ex}:{ey}"), (t + 9, f"shot={out}\\{name}.bmp")]
+        s += [(t, f"move:{ex}:{ey}"), (t + 9, f"shot={out}{os.sep}{name}.bmp")]
         t += 10
     s += [(t, f"move:{w // 2}:{h // 2}"), (t + 1, f"move:{mx - mr // 2}:{my}"), (t + 2, f"click:{mx - mr // 2}:{my}"),
-          (t + 5, f"shot={out}\\g_minimap.bmp")]
+          (t + 5, f"shot={out}{os.sep}g_minimap.bmp")]
     t += 7
     bx, by = MENU[a.size]
     qx, qy, yx, yy = w // 2, h // 2 - 122, w // 2 - 95, h // 2 + 28   # Quit Current Game, then Yes
-    s += [(t, f"move:{bx}:{by}"), (t + 1, f"click:{bx}:{by}"), (t + 4, f"shot={out}\\h_menu.bmp"),
+    s += [(t, f"move:{bx}:{by}"), (t + 1, f"click:{bx}:{by}"), (t + 4, f"shot={out}{os.sep}h_menu.bmp"),
           (t + 5, f"move:{qx}:{qy}"), (t + 6, f"click:{qx}:{qy}"),
-          (t + 9, f"move:{yx}:{yy}"), (t + 10, f"click:{yx}:{yy}"), (t + 18, f"shot={out}\\i_score.bmp"),
-          (t + 19, "move:709:514"), (t + 20, "click:709:514"), (t + 28, f"shot={out}\\j_menus.bmp")]
+          (t + 9, f"move:{yx}:{yy}"), (t + 10, f"click:{yx}:{yy}"), (t + 18, f"shot={out}{os.sep}i_score.bmp"),
+          (t + 19, "move:709:514"), (t + 20, "click:709:514"), (t + 28, f"shot={out}{os.sep}j_menus.bmp")]
     keys = ",".join(f"{at}:{what}" for at, what in s)
     log = os.path.join(out, "run.log")
     cmd = [a.run, "--run", "--multi", "--headless", "--exe", a.exe, "--game", a.game,
@@ -81,7 +87,7 @@ def main():
     with open(log, "w") as f:
         subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
     text = open(log, errors="replace").read()
-    modes = re.findall(r"SetDisplayMode\((\d+), (\d+), (\d+)\)", text)
+    modes = re.findall(r"SetDisplayMode\((\d+)(?:, |x)(\d+)(?:, |x)(\d+)\)", text)
     print("SetDisplayMode calls:", ", ".join(f"{x}x{y}x{b}" for x, y, b in modes) or "none")
     for m in re.findall(r"\[shot\] .*", text):
         print(m)

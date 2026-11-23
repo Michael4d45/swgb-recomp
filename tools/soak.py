@@ -322,6 +322,18 @@ def monkey(s, rnd, t0, t1, out):
         s.at(ts, 'shot=%s' % os.path.join(out, 'shot_%04d.bmp' % ts))
 
 
+def kill_tree(proc):
+    """End this run's process tree, by its PID (Linux: its process group, started as its own)."""
+    if os.name == 'nt':
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True)
+    else:
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
 def ensure_game(template, dst):
     """A game folder of its own: hard links to the template (as worktree_env.ps1), copies of
     what the game writes."""
@@ -351,7 +363,7 @@ def analyse(log, keys_text):
                            'keys_before': before})
     m = re.search(r'\[watchdog\] (\d+) s', text)
     last_key = keyed[-1][1] if keyed else ''
-    modes = re.findall(r'SetDisplayMode\((\d+), (\d+)', text)
+    modes = re.findall(r'SetDisplayMode\((\d+)(?:, |x)(\d+)', text)
     frames = re.findall(r'(\d+) frames', text)
     # --firsthit (a SWGB_TRACE build): the first entry to each lifted function, timed by the
     # [keys] step before it (stdout and stderr share the log, in order).
@@ -714,7 +726,7 @@ def fight_control(args, out, log, live, proc, t_launch, what):
             say('shot=' + os.path.join(out, 'score_tab%d.bmp' % (i + 1)))
         time.sleep(4)
         what['ended_by'] = 'the game over, then this tool'
-        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True)
+        kill_tree(proc)
 
 
 ENDGAME = {'fight': plan_fight, 'load': plan_load, 'defeat': plan_defeat, 'allied': plan_allied, 'victory': plan_victory, 'chain': plan_chain}
@@ -747,7 +759,7 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
             'game': game, 'cmd': cmd, 'started': datetime.datetime.now().isoformat(timespec='seconds')}
     t0 = time.time()
     with open(log, 'w', encoding='utf-8', errors='replace') as f:
-        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=out)
+        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=out, start_new_session=os.name != 'nt')
         meta['pid'] = p.pid
         if mode == 'fight':
             fight_control(args, out, log, live, p, t0, what)
@@ -807,11 +819,19 @@ def main():
         clone_campaigns()
         if args.mode in ENDGAME:
             sys.exit('--cc: --mode %s plays the base game\'s OOM-9 campaign; skirmish, monkey or campaign' % args.mode)
-    args.run = args.run or (r'A:\Games\star\builds\clone-campaigns\swgbrecomp_cc.exe' if args.cc
-                            else r'A:\Games\star\builds\coverage\swgbrecomp.exe')
-    args.exe = args.exe or (os.path.join(ROOT, 'work', 'battlegrounds_x1.exe') if args.cc
-                            else r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
-    args.game = args.game or (r'A:\Games\star\games\clone-campaigns' if args.cc else r'A:\Games\star\games\coverage')
+    if os.name == 'nt':
+        args.run = args.run or (r'A:\Games\star\builds\clone-campaigns\swgbrecomp_cc.exe' if args.cc
+                                else r'A:\Games\star\builds\coverage\swgbrecomp.exe')
+        args.exe = args.exe or (os.path.join(ROOT, 'work', 'battlegrounds_x1.exe') if args.cc
+                                else r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
+        args.game = args.game or (r'A:\Games\star\games\clone-campaigns' if args.cc else r'A:\Games\star\games\coverage')
+    else:   # Linux and macOS: this checkout's build, lift and a game folder under work/
+        build = os.path.join(ROOT, 'build-macos' if sys.platform == 'darwin' else 'build-linux')
+        args.run = args.run or os.path.join(build, 'swgbrecomp_cc' if args.cc else 'swgbrecomp')
+        args.exe = args.exe or os.path.join(ROOT, 'work', 'battlegrounds_x1.exe' if args.cc else 'Battlegrounds.exe')
+        args.game = args.game or os.path.join(ROOT, 'work', 'games', 'soak-cc' if args.cc else 'soak')
+        if not os.path.isdir(args.game):
+            ensure_game(os.path.join(ROOT, 'game'), args.game)
     for c in [c for c in args.civs.split(',') if c] + ([args.my_civ] if args.my_civ else []):
         if c not in CIVS:
             sys.exit('no civilization %r: %s' % (c, ', '.join(CIVS)))

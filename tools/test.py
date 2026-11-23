@@ -37,6 +37,7 @@ made from the game's files. A missing baseline is recorded by the first run;
 --update-baselines records them all again (after an intended change).
 """
 import argparse
+import signal
 import concurrent.futures
 import datetime
 import fnmatch
@@ -58,8 +59,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-STAR = os.environ.get('SWGB_STAR', r'A:\Games\star')
-MAIN = os.path.join(STAR, 'swgb-recomp')
+# Windows: the shared folders of the integration farm (A:\Games\star). Linux and macOS
+# (the win32hle host, src/linux): this checkout is the main one, its build-linux/ (or
+# build-macos/) the build, and the game folders, baselines and results go under work/.
+WIN = os.name == 'nt'
+EXE = '.exe' if WIN else ''
+STAR = os.environ.get('SWGB_STAR', r'A:\Games\star' if WIN else os.path.join(ROOT, 'work'))
+MAIN = os.path.join(STAR, 'swgb-recomp') if WIN else ROOT
+BUILD = os.path.join(STAR, 'builds', 'integration') if WIN else \
+    os.path.join(ROOT, 'build-macos' if sys.platform == 'darwin' else 'build-linux')
 LEVELS = ['unit', 'smoke', 'functional', 'soak', 'real']
 ALIASES = {'l0': 'unit', 'l1': 'smoke', 'l2': 'functional', 'l3': 'soak', 'l4': 'real',
            'nightly': 'soak', 'merge': 'functional', 'gate': 'functional'}
@@ -77,11 +85,11 @@ MAIN_SINGLE, MAIN_EXIT, MAIN_OPTIONS = (345, 250), (40, 565), (40, 490)
 SETUP_START = (118, 568)
 OPTIONS_RADIO = {800: (453, 383), 1024: (453, 413), 1280: (453, 443)}
 GAMES = {
-    'base': {'title': 'Galactic Battlegrounds', 'host': 'swgbrecomp.exe', 'exe': 'Battlegrounds.exe',
+    'base': {'title': 'Galactic Battlegrounds', 'host': 'swgbrecomp' + EXE, 'exe': 'Battlegrounds.exe',
              'entry': 0x00632881, 'genie': 'genie', 'sp_standard': (600, 168), 'sp_saved': (603, 286),
              'civs': ['Galactic Empire', 'Gungans', 'Rebel Alliance', 'Royal Naboo', 'Trade Federation', 'Wookiees'],
              'gen': 'gen', 'stats': 'lift_stats.json'},
-    'cc': {'title': 'Clone Campaigns', 'host': 'swgbrecomp_cc.exe', 'exe': 'battlegrounds_x1.exe',
+    'cc': {'title': 'Clone Campaigns', 'host': 'swgbrecomp_cc' + EXE, 'exe': 'battlegrounds_x1.exe',
            'entry': 0x00636601, 'genie': 'genie_x1', 'sp_standard': (603, 228), 'sp_saved': (603, 344),
            'civs': ['Confederacy', 'Galactic Empire', 'Gungans', 'Rebel Alliance', 'Republic', 'Royal Naboo',
                     'Trade Federation', 'Wookiees'],
@@ -180,6 +188,8 @@ class Ctx:
         self.pool(kind).put(folder)
 
     def popen(self, cmd, **kw):
+        if not WIN:
+            kw['start_new_session'] = True       # its own process group: kill_tree ends it and its children
         p = subprocess.Popen(cmd, **kw)
         with self.lock:
             self.procs.add(p)
@@ -200,7 +210,13 @@ class Ctx:
 
 def kill_tree(p):
     if p.poll() is None:
-        subprocess.run(['taskkill', '/T', '/F', '/PID', str(p.pid)], capture_output=True)
+        if WIN:
+            subprocess.run(['taskkill', '/T', '/F', '/PID', str(p.pid)], capture_output=True)
+        else:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
 
 
 def ensure_game(template, dst, kind, profiles=None):
@@ -247,7 +263,7 @@ def run(ctx, r, cmd, timeout, log_name, cwd=None, env=None):
     log = os.path.join(r.dir, log_name)
     t0 = time.time()
     with open(log, 'w', encoding='utf-8', errors='replace') as f:
-        f.write('# ' + subprocess.list2cmdline(cmd) + '\n')
+        f.write('# ' + (subprocess.list2cmdline(cmd) if WIN else ' '.join(map(str, cmd))) + '\n')
         f.flush()
         p = ctx.popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=cwd or r.dir, env=env)
         try:
@@ -394,9 +410,10 @@ def msvc_env(ctx):
 
 
 def find_pcrecomp(a):
+    rt = os.path.join('runtime', 'native32', 'native32.h') if WIN else os.path.join('runtime', 'win32hle', 'win32hle.h')
     for p in [a.pcrecomp, os.environ.get('PCRECOMP'), os.path.join(os.path.dirname(ROOT), 'pcrecomp'),
               os.path.join(STAR, 'pcrecomp')]:
-        if p and os.path.exists(os.path.join(p, 'runtime', 'native32', 'native32.h')):
+        if p and os.path.exists(os.path.join(p, rt)):
             return os.path.abspath(p)
     return None
 
@@ -430,10 +447,60 @@ UNITS = {
 }
 
 
+# Linux and macOS: the units of the code the win32hle host (src/linux) shares, built 32-bit
+# with clang (or gcc) as build-linux.sh builds the host. The rest test the Windows host's
+# own presenter, cache and players (native32, GDI, Direct3D), which the win32hle host
+# does not use: pcrecomp's runtime/win32hle has its own selftests for those parts.
+HLE = ['-DSWGB_WIN32HLE', '-DRECOMP_FLAT_MEMORY', '-DRECOMP_LOCAL_REGS']
+UNITS_POSIX = {
+    'keys': ([], []),
+    'inflate': (HLE + ['-w'], []),
+    'coverage': (HLE, []),
+}
+
+
+def posix_cc():
+    cc = os.environ.get('CC') or shutil.which('clang') or shutil.which('gcc') or 'cc'
+    return [cc] + ([] if sys.platform == 'darwin' else ['-m32'])
+
+
+def unit_posix(ctx, r, name, srcs, args, what):
+    if name not in UNITS_POSIX:
+        return r.skip('the Windows host\'s own (native32, GDI, Direct3D): not in the win32hle host')
+    flags, libs = UNITS_POSIX[name]
+    pc = find_pcrecomp(ctx.a)
+    if not pc:
+        return r.fail('no pcrecomp checkout (--pcrecomp, PCRECOMP, ../pcrecomp): its headers are needed')
+    os.makedirs(r.dir, exist_ok=True)
+    exe = os.path.join(r.dir, name + '_test')
+    incs = ['-I' + os.path.join(ROOT, 'src', 'runtime'), '-I' + os.path.join(ROOT, 'third_party', 'miniz'),
+            '-I' + os.path.join(pc, 'runtime', 'win32hle'), '-I' + os.path.join(pc, 'runtime', 'recomp32')]
+    cmd = posix_cc() + ['-O1', '-Wall', '-Wno-unused-parameter', '-o', exe] + flags + incs + \
+        [os.path.join(ROOT, s) for s in srcs] + libs
+    rc, out = run(ctx, r, cmd, 300, 'build.log')
+    if rc:
+        for l in [l for l in out.splitlines() if 'error' in l][:8]:
+            r.log(l.strip())
+        return r.fail('the build failed (%s)' % os.path.join(os.path.basename(r.dir), 'build.log'))
+    rc, out = run(ctx, r, [exe] + args, 300, 'run.log')
+    for l in out.splitlines():
+        if l.startswith('FAIL') or 'FAILED' in l:
+            r.log(l.rstrip())
+    if rc or not re.search(r'^OK\s*$', out, re.M):
+        r.fail('%s: exit %d' % (name, rc))
+    else:
+        r.log('OK: ' + what)
+
+
 def unit_check(name):
     srcs, flags, libs, args, what = UNITS[name]
 
     def fn(ctx, r):
+        if not WIN:
+            missing = [s for s in srcs if not os.path.exists(os.path.join(ROOT, s))]
+            if missing:
+                return r.skip('not in this checkout: %s' % ', '.join(missing))
+            return unit_posix(ctx, r, name, srcs, args, what)
         missing = [s for s in srcs if not os.path.exists(os.path.join(ROOT, s))]
         if missing:
             return r.skip('not in this checkout: %s' % ', '.join(missing))
@@ -552,7 +619,7 @@ def skirmish_fn(kind):
         rc, text = run_host(ctx, r, kind, steps, end)
         expect_exit(r, rc)
         events(r, text)
-        modes = re.findall(r'SetDisplayMode\((\d+), (\d+)', text)
+        modes = re.findall(r'SetDisplayMode\((\d+)(?:, |x)(\d+)', text)
         if not modes or modes[0] != ('800', '600'):
             r.fail('the first SetDisplayMode is %s, not 800x600' % ('x'.join(modes[0]) if modes else 'none'))
         menu, setup, mp, sel = (png_of(os.path.join(r.dir, n + '.bmp')) for n in ('menu', 'setup', 'map', 'selected'))
@@ -602,7 +669,7 @@ def present_fn(group):
 
 
 for _g, _m in PRESENT_GROUPS.items():
-    CHECKS.append(Check('present/' + _g, 'functional', present_fn(_g), 'base', _m))
+    CHECKS.append(Check('present/' + _g, 'functional', present_fn(_g), 'base', _m, needs=('win',)))
 
 
 def res_fn(size):
@@ -655,7 +722,7 @@ def widescreen_fn(kind):
         rc, text = run_host(ctx, r, kind, s, 118, extra=['--res', '1920x1080'])
         expect_exit(r, rc)
         events(r, text)
-        modes = ['%sx%s' % m for m in re.findall(r'SetDisplayMode\((\d+), (\d+)', text)]
+        modes = ['%sx%s' % m for m in re.findall(r'SetDisplayMode\((\d+)(?:, |x)(\d+)', text)]
         r.log('SetDisplayMode: ' + ', '.join(modes))
         if '1920x1080' not in modes:
             r.fail('no SetDisplayMode(1920, 1080)')
@@ -981,7 +1048,7 @@ for _n, _k, _e, _m in SOAKS:
 
 
 # ==== L4: the real screen ========================================================================
-@check('real/present', 'real', game='base', minutes=6)
+@check('real/present', 'real', game='base', minutes=6, needs=('win',))
 def real_present(ctx, r):
     """present_check_real.ps1: the real window, mouse and screen (takes them over for ~5 minutes)"""
     if not ctx.a.real_screen:
@@ -1025,6 +1092,8 @@ def run_check(ctx, c):
     try:
         if ctx.cancelled:
             r.skip('cancelled')
+        elif 'win' in c.needs and not WIN:
+            r.skip('the Windows host\'s presenter (GDI/Direct3D, the real screen): win32hle has its own (screen.c)')
         elif kind and not ctx.has(kind) and kind == 'cc' and ctx.a.cc is True:
             r.fail('--cc, and no Clone Campaigns host or game data: %s, %s' % (ctx.host(kind), ctx.exe(kind)))
         elif kind and not ctx.has(kind):
@@ -1054,7 +1123,13 @@ def take_lock(a):
     lock = os.path.join(a.games, '%s.lock' % a.prefix)
     try:
         pid = int(open(lock).read().split()[0])
-        alive = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'], capture_output=True, text=True).stdout
+        if WIN:
+            alive = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'], capture_output=True, text=True).stdout
+        else:
+            try:
+                alive = '%d ' % pid + open('/proc/%d/cmdline' % pid, 'rb').read().replace(b'\0', b' ').decode(errors='replace')
+            except OSError:
+                alive = ''
         if pid != os.getpid() and str(pid) in alive and 'python' in alive.lower():
             print('another test.py run (PID %d) is using %s: wait for it, or pass --prefix NAME'
                   % (pid, os.path.join(a.games, a.prefix + '-*')))
@@ -1145,8 +1220,8 @@ def main():
     ap.add_argument('--level', default='smoke', help='unit, smoke, functional, soak or real (L0-L4)')
     ap.add_argument('--just', action='store_true', help='only this level\'s checks, not the ones below it')
     ap.add_argument('--with-lower', action='store_true', help='--level real: the lower levels too')
-    ap.add_argument('--build', default=os.path.join(STAR, 'builds', 'integration'),
-                    help='the folder with swgbrecomp.exe (and swgbrecomp_cc.exe)')
+    ap.add_argument('--build', default=BUILD,
+                    help='the folder with swgbrecomp.exe (and swgbrecomp_cc.exe); Linux: build-linux/')
     ap.add_argument('--build-cc', default=None, help='the folder with swgbrecomp_cc.exe, when not --build')
     cc = ap.add_mutually_exclusive_group()
     cc.add_argument('--cc', dest='cc', action='store_true', default=None, help='Clone Campaigns too (a missing host fails)')
@@ -1239,7 +1314,7 @@ def main():
     order = {c.name: k for k, c in enumerate(checks)}
     results.sort(key=lambda r: order.get(r.name, 1 << 30))
     meta = {'level': a.level, 'started': datetime.datetime.fromtimestamp(t0).isoformat(timespec='seconds'),
-            'seconds': round(time.time() - t0), 'jobs': a.jobs, 'build': a.build, 'host': os.environ.get('COMPUTERNAME', ''),
+            'seconds': round(time.time() - t0), 'jobs': a.jobs, 'build': a.build, 'host': os.environ.get('COMPUTERNAME') or ('' if WIN else os.uname().nodename),
             'commit': git('rev-parse', '--short', 'HEAD'), 'branch': git('rev-parse', '--abbrev-ref', 'HEAD'),
             'dirty': bool(git('status', '--porcelain', '--untracked-files=no')),
             'hosts': {k: sha256(ctx.host(k)) for k in GAMES}, 'results': a.results}
