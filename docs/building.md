@@ -130,6 +130,9 @@ from a file, a step to a line. `ldown:X:Y` and `lup:X:Y` press the left button
 and release it, with any `move:` steps between them sent as a drag (the
 game's box select). `ctrl+KEY` and `shift+KEY` hold the modifier around the
 key, so the game's `GetKeyState` sees it (`ctrl+1` makes a control group).
+`--keys-live FILE` runs steps appended to FILE while the game runs (`0:what`,
+one a line), as they are read: a controller can look at a shot and answer it
+(`tools/soak.py --mode fight`).
 
 `--args "..."` passes switches to the game itself; `--game`, `--cd` and
 `--exe` point at other folders; `--films DIR` is where the films are when

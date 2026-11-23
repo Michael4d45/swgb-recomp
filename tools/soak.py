@@ -62,6 +62,7 @@ DD_OTHERS = ((770, 211), (690, 236), 21)        # 1..7 computer players
 DD_LOCATION = ((770, 124), (680, 149), 21)      # Forced Deployment .. Shoreline (16 shown)
 DD_SIZE = ((770, 153), (690, 178), 21)          # Tiny, Small, Medium, Normal, Large, Giant
 DD_DIFFICULTY = ((770, 182), (690, 207), 21)    # Easiest .. Hardest
+DD_REVEAL = ((770, 297), (690, 322), 21)        # Normal, Explored, All Visible
 CIV_ROW0, CIV_ROW_STEP = 169, 24                # computer player rows; the arrow at x 249
 CIV_ITEMS = 7                                   # 6 civilizations and Random, x 290, from row + 25
 LOCATIONS = ['Forced Deployment', 'Forest', 'Fortress', 'Ice Lake', 'Islands', 'LandMass', 'Large Sea',
@@ -197,7 +198,7 @@ def chat(s, t, words):
 SHOT_DIR = ['.']                     # setup_fixed's shot of the setup screen: run_one sets it
 
 
-def setup_fixed(s, t, others, size, diff, teams=None, loc=None):
+def setup_fixed(s, t, others, size, diff, teams=None, loc=None, reveal=None):
     """Standard Game with a fixed setup. teams: team clicks per row, me first (0 = no team)."""
     s.click(t, MAIN_SINGLE)
     s.click(t + 15, SP_STANDARD)
@@ -207,6 +208,8 @@ def setup_fixed(s, t, others, size, diff, teams=None, loc=None):
         t = pick(DD_LOCATION, loc, s, t)
     t = pick(DD_SIZE, size, s, t)
     t = pick(DD_DIFFICULTY, diff, s, t)
+    if reveal is not None:
+        t = pick(DD_REVEAL, reveal, s, t)
     # A click just after a drop-down closes, or a second one on a button the cursor has
     # not left, did not count (a 6-allies game started with me and the 7th on no team).
     t += 2
@@ -517,57 +520,169 @@ def sweep_points(radius=0.8, n=8):
     return pts
 
 
+# The players' colours on the minimap (exact palette entries), by player number.
+PLAYER_RGB = {1: (0, 0, 255), 2: (255, 0, 0), 3: (0, 255, 0), 4: (255, 255, 0), 5: (0, 255, 255),
+              6: (255, 0, 255), 7: (185, 185, 185), 8: (255, 130, 1)}
+ARGS = [None]                        # run_one's args, for wave()
+
+
+def wave(s, t, group, out):
+    """simonsays x --ewoks, H, a box select around the command center, Ctrl+group."""
+    for e in range(ARGS[0].ewoks):
+        t = chat(s, t + 3, 'simonsays')
+    s.at(t + 1, 'h')
+    s.at(t + 3, 'shot=%s' % os.path.join(out, 'wave%d.bmp' % group))
+    s.at(t + 5, 'ldown:5:25')
+    s.at(t + 5.6, 'move:400:220')
+    s.at(t + 6.2, 'move:795:420')
+    s.at(t + 6.8, 'lup:795:420')
+    s.at(t + 8, 'ctrl+%d' % group)
+    s.at(t + 9, 'shot=%s' % os.path.join(out, 'wave%d_selected.bmp' % group))
+    return t + 11
+
+
 def plan_fight(s, rnd, out, args, game, seed):
     """A victory won by fighting, the game's own check (won1/won2.mp3); no `skywalker`.
 
-    Me and --allies computers (team 1) against one (team 2), a Large Savannah map (land
-    all over: Shoreline left half the sweep in the sea), Easiest (one setting for every
-    computer). `forceexplore` shows the map in the shots. Each --wave-every seconds a
-    wave: `simonsays` typed 3 s apart (Simon the Killer Ewok, beside the command center;
-    the game stops at nine living ones, so a wave tops the pack up), H, a box select of
-    everything around the command center, Ctrl+N (the wave's control group). Between
-    waves, every --dwell seconds, the next point of a sweep around the ring where the
-    players start: each group in turn, its number, then a right-click there on the
-    minimap. Idle there, they fight what they see, buildings too. The view follows by
-    left-clicks on the minimap, never where the score screen's buttons are (y 500-528)."""
+    Me and --allies computers (team 1) against one (team 2, player allies + 2: with 4
+    allies, magenta on the minimap), a Large Savannah map (land all over: on Shoreline
+    half a blind sweep was in the sea), Easiest (one setting for every computer), Reveal
+    Map: All Visible. Then waves of Simon the Killer Ewok (`simonsays`
+    typed 3 s apart, beside the command center; the game stops at nine alive, so a wave
+    tops the pack up), each boxed up around the command center and made a control group
+    (Ctrl+N). This script has the setup and the first wave; the rest is live
+    (`--keys-live`, fight_control): every --dwell seconds a shot, the densest cluster of
+    the enemy's colour on the minimap, and each group sent there by a right-click on the
+    minimap; a new wave every --wave-every seconds; until the game plays its victory (or
+    defeat) music. A blind sweep around the ring of start positions found nothing in
+    40 minutes."""
     n = args.allies
+    # Reveal Map: All Visible, no fog: the enemy's buildings are on the minimap from the start
+    # (`forceexplore` shows the terrain, but the fog still hides what nobody of ours sees).
     t, what = setup_fixed(s, 20, others=n + 1, size=4, diff=0, teams=[1] * (n + 1) + [2],
-                          loc=LOCATIONS.index('Savannah'))
+                          loc=LOCATIONS.index('Savannah'), reveal=2)
     start = t + 80
     s.at(start, 'shot=%s' % os.path.join(out, 'shot_start.bmp'))
     t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
-    t = chat(s, t + 1, 'forceexplore')
+    t = wave(s, t, 1, out)
     end = start + args.minutes * 60
+    return end, dict(what, goal='victory by fighting', enemy_player=n + 2, ewoks=args.ewoks, dwell=args.dwell,
+                     wave_every=args.wave_every, live_from=round(t + 2))
+
+
+def enemy_on_minimap(bmp, rgb):
+    """The densest 12x12 cluster of the enemy's colour on the minimap, and how
+    many such pixels there are in all; (None, 0) if none."""
+    from PIL import Image
+    im = Image.open(bmp).convert('RGB')
+    # The minimap's box: only one player draws in that exact colour, so no diamond test (a
+    # tight one cut off a base at the diamond's edge and aimed at a lone scout instead).
+    bins = {}
+    for y in range(456, 588):
+        for x in range(448, 724):
+            if im.getpixel((x, y)) == rgb:
+                bins.setdefault((x // 12, y // 12), []).append((x, y))
+    if not bins:
+        return None, 0
+    best = max(bins.values(), key=len)
+    total = sum(len(v) for v in bins.values())
+    return (sum(p[0] for p in best) // len(best), sum(p[1] for p in best) // len(best)), total
+
+
+GAME_OVER = re.compile(r'stream\\(won\d|lost)\.mp3', re.I)
+
+
+def fight_control(args, out, log, live, proc, t_launch, what):
+    """The live half of --mode fight (see plan_fight)."""
+    def say(*steps):
+        with open(live, 'a', newline='\n') as f:
+            for st in steps:
+                f.write('0:%s\n' % st)
+
+    def ended():
+        try:
+            return GAME_OVER.search(open(log, encoding='utf-8', errors='replace').read())
+        except OSError:
+            return None
+
+    rgb = PLAYER_RGB[what['enemy_player']]
     pts = sweep_points()
-    groups, k, next_wave = 0, 0, t
-    while t < end - 10:
-        if t >= next_wave and groups < 9:
-            for e in range(args.ewoks):
-                t = chat(s, t + 3, 'simonsays')
-            s.at(t + 1, 'h')
-            s.at(t + 3, 'shot=%s' % os.path.join(out, 'wave%d.bmp' % (groups + 1)))
-            s.at(t + 5, 'ldown:5:25')
-            s.at(t + 5.6, 'move:400:220')
-            s.at(t + 6.2, 'move:795:420')
-            s.at(t + 6.8, 'lup:795:420')
+    while time.time() - t_launch < what['live_from'] and proc.poll() is None:
+        time.sleep(1)
+    groups, last_wave, k, aims = 1, time.time(), 0, []
+    while proc.poll() is None and not ended():
+        shot = os.path.join(out, 'live_%04d.bmp' % k)
+        say('move:400:300')                         # the cursor off the minimap: it hid what was under it
+        time.sleep(0.5)
+        say('shot=' + shot)
+        for _ in range(40):
+            if os.path.exists(shot):
+                break
+            time.sleep(0.25)
+        time.sleep(0.5)
+        target, seen = None, 0
+        if os.path.exists(shot):
+            try:
+                from PIL import Image
+                Image.open(shot).crop((440, 450, 730, 585)).save(os.path.join(out, 'minimap_%04d.png' % k))
+                target, seen = enemy_on_minimap(shot, rgb)
+            except Exception as e:                  # noqa: BLE001 -- a half-written shot: sweep this time
+                print('  fight: %s: %s' % (shot, e))
+            try:
+                os.remove(shot)
+            except OSError:
+                pass
+        if target is None:
+            target = pts[k % len(pts)]
+        aims.append([round(time.time() - t_launch), target[0], target[1], seen])
+        if time.time() - last_wave > args.wave_every and groups < 9:
             groups += 1
-            s.at(t + 8, 'ctrl+%d' % groups)
-            s.at(t + 9, 'shot=%s' % os.path.join(out, 'wave%d_selected.bmp' % groups))
-            t += 11
-            next_wave = t + args.wave_every
-        p = pts[k % len(pts)]
+            for e in range(args.ewoks):
+                say('enter')
+                time.sleep(0.6)
+                for ch in 'simonsays':
+                    say(ch)
+                    time.sleep(0.3)
+                say('enter')
+                time.sleep(2.5)
+            for st, pause in (('h', 2), ('ldown:5:25', 0.6), ('move:400:220', 0.6), ('move:795:420', 0.6),
+                              ('lup:795:420', 1.2), ('ctrl+%d' % groups, 1)):
+                say(st)
+                time.sleep(pause)
+            say('shot=' + os.path.join(out, 'wave%d_selected.bmp' % groups))
+            last_wave = time.time()
         for g in range(1, groups + 1):
-            s.at(t, '%d' % g)
-            s.click(t + 0.6, p, 'rclick')
-            t += 1.5
-        if not 495 <= p[1] <= 535:
-            s.click(t + args.dwell * 0.6, p)          # the view, to the fight
-            s.at(t + args.dwell * 0.6 + 2, 'shot=%s' % os.path.join(out, 'fight_%04d.bmp' % int(t)))
-        t += args.dwell
+            say('%d' % g)
+            time.sleep(0.6)
+            say('rclick:%d:%d' % target)
+            time.sleep(0.9)
+        if not 495 <= target[1] <= 535:              # the score screen's buttons: never left-click there
+            time.sleep(args.dwell * 0.5)
+            if ended():
+                break
+            say('click:%d:%d' % target)
+            time.sleep(2)
+            say('shot=' + os.path.join(out, 'fight_%04d.bmp' % round(time.time() - t_launch)))
+            time.sleep(args.dwell * 0.5)
+        else:
+            time.sleep(args.dwell)
         k += 1
-    s.at(end - 2, 'shot=%s' % os.path.join(out, 'shot_end.bmp'))
-    return end, dict(what, goal='victory by fighting', ewoks=args.ewoks, dwell=args.dwell,
-                     wave_every=args.wave_every, waves=groups, sweep=pts)
+    what['aims'] = aims
+    what['waves'] = groups
+    if ended() and proc.poll() is None:
+        # The game is over: its own message, then the score screen. Shoot both, the score
+        # screen's tabs, and end the run (this run's process tree only, by its PID).
+        say('shot=' + os.path.join(out, 'game_over.bmp'))
+        time.sleep(25)
+        say('shot=' + os.path.join(out, 'score.bmp'))
+        for i, xy in enumerate(SCORE_TABS[1:]):
+            time.sleep(2)
+            say('click:%d:%d' % xy)
+            time.sleep(2)
+            say('shot=' + os.path.join(out, 'score_tab%d.bmp' % (i + 1)))
+        time.sleep(4)
+        what['ended_by'] = 'the game over, then this tool'
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True)
 
 
 ENDGAME = {'fight': plan_fight, 'load': plan_load, 'defeat': plan_defeat, 'allied': plan_allied, 'victory': plan_victory, 'chain': plan_chain}
@@ -580,6 +695,7 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     os.makedirs(out, exist_ok=True)
     s = Script()
     SHOT_DIR[0] = out
+    ARGS[0] = args
     if mode in ENDGAME:
         end, what = ENDGAME[mode](s, rnd, out, args, game, rnd_seed)
     else:
@@ -590,6 +706,10 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     log = os.path.join(out, 'run.log')
     cmd = [args.run, '--run', '--multi', '--headless', '--files', '--exe', args.exe, '--game', game,
            '--watchdog', str(int(end + 5)), '--keys', '@' + keys] + args.extra.split()
+    live = os.path.join(out, 'live.txt')
+    if mode == 'fight':
+        open(live, 'w').close()
+        cmd += ['--keys-live', live]
     meta = {'name': name, 'mode': mode, 'seed': rnd_seed, 'setup': what, 'minutes': args.minutes,
             'planned_seconds': round(end),
             'game': game, 'cmd': cmd, 'started': datetime.datetime.now().isoformat(timespec='seconds')}
@@ -597,6 +717,8 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     with open(log, 'w', encoding='utf-8', errors='replace') as f:
         p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=out)
         meta['pid'] = p.pid
+        if mode == 'fight':
+            fight_control(args, out, log, live, p, t0, what)
         rc = p.wait()
     meta['seconds'] = round(time.time() - t0)
     meta['exit'] = rc

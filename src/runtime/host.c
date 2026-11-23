@@ -465,54 +465,63 @@ static char* keys_text(const char* spec) {
     return b;
 }
 
+/* One step of a --keys script ("SECONDS:what"), or of --keys-live (where the seconds are
+ * ignored: a live step runs when it is read). 0: nothing to do. */
+static int key_parse(char* tok, step_t* out, int strict) {
+    step_t st = { 0 };
+    char* c = strchr(tok, ':');
+    if (!c) return 0;
+    if (!strncmp(tok, "on:", 3)) {
+        lstrcpynA(st.on, tok + 3, sizeof st.on);
+        *out = st;
+        return 1;
+    }
+    st.at = (DWORD)(atof(tok) * 1000);
+    char* what = c + 1;
+    if (!strncmp(what, "wshot=", 6)) {   /* the window as drawn: letterbox bars and all */
+        GetFullPathNameA(what + 6, MAX_PATH, st.shot, NULL);
+        st.wshot = 1;
+    } else if (!strncmp(what, "shot=", 5)) {
+        GetFullPathNameA(what + 5, MAX_PATH, st.shot, NULL);
+    } else if (!strncmp(what, "size:", 5)) {   /* the window's client area: W:H */
+        st.size = 1;
+        sscanf(what + 5, "%d:%d", &st.x, &st.y);
+    } else if (!strncmp(what, "wclick:", 7) || !strncmp(what, "wmove:", 6)) {   /* window pixels, mapped like the mouse */
+        st.win = 1;
+        st.click = what[1] == 'c';
+        st.move = 1;
+        /* X:Y, each a number or a place in the window: L R C (edges, centre), PL PR PT PB (the picture's
+         * edges), BL BR BT BB (the middle of a bar), then +N or -N: wmove:R:C, wmove:L+40:T-3 */
+        if (sscanf(strchr(what, ':') + 1, "%23[^:]:%23s", st.xs, st.ys) != 2) { fprintf(stderr, "--keys: %s\n", what); if (strict) exit(1); return 0; }
+    } else if (!strcmp(what, "setcursor")) {   /* the pointer comes back into the window (WM_SETCURSOR) */
+        st.setcursor = 1;
+    } else if (!strncmp(what, "click:", 6) || !strncmp(what, "rclick:", 7) || !strncmp(what, "move:", 5) ||
+               !strncmp(what, "ldown:", 6) || !strncmp(what, "lup:", 4)) {
+        /* ldown and lup hold the left button across the moves between them: a drag
+         * (the game's box select). */
+        st.click = what[0] == 'c' ? 1 : what[0] == 'r' ? 2 : !strncmp(what, "ldown:", 6) ? 3 : what[1] == 'u' ? 4 : 0;
+        st.move = 1;
+        sscanf(strchr(what, ':') + 1, "%d:%d", &st.x, &st.y);
+    } else if (!strncmp(what, "alt+", 4) && (st.vk = key_by_name(what + 4))) {
+        st.alt = 1;   /* Alt+Enter, Alt+F12: the presenter's hotkeys */
+    } else if (!strncmp(what, "ctrl+", 5) && (st.vk = key_by_name(what + 5))) {
+        st.alt = 2;   /* Ctrl+1: the game's control groups */
+    } else if (!strncmp(what, "shift+", 6) && (st.vk = key_by_name(what + 6))) {
+        st.alt = 3;
+    } else if (!(st.vk = key_by_name(what))) {
+        fprintf(stderr, "--keys: unknown key \"%s\"\n", what);
+        if (strict) exit(1);
+        return 0;
+    }
+    *out = st;
+    return 1;
+}
+
 static void parse_keys(const char* spec) {
     char* buf = keys_text(spec);
     for (char* tok = strtok(buf, ","); tok && g_nsteps < MAX_STEPS; tok = strtok(NULL, ",")) {
-        step_t st = { 0 };
-        char* c = strchr(tok, ':');
-        if (!c) continue;
-        if (!strncmp(tok, "on:", 3)) {
-            lstrcpynA(st.on, tok + 3, sizeof st.on);
-            g_steps[g_nsteps++] = st;
-            continue;
-        }
-        st.at = (DWORD)(atof(tok) * 1000);
-        char* what = c + 1;
-        if (!strncmp(what, "wshot=", 6)) {   /* the window as drawn: letterbox bars and all */
-            GetFullPathNameA(what + 6, MAX_PATH, st.shot, NULL);
-            st.wshot = 1;
-        } else if (!strncmp(what, "shot=", 5)) {
-            GetFullPathNameA(what + 5, MAX_PATH, st.shot, NULL);
-        } else if (!strncmp(what, "size:", 5)) {   /* the window's client area: W:H */
-            st.size = 1;
-            sscanf(what + 5, "%d:%d", &st.x, &st.y);
-        } else if (!strncmp(what, "wclick:", 7) || !strncmp(what, "wmove:", 6)) {   /* window pixels, mapped like the mouse */
-            st.win = 1;
-            st.click = what[1] == 'c';
-            st.move = 1;
-            /* X:Y, each a number or a place in the window: L R C (edges, centre), PL PR PT PB (the picture's
-             * edges), BL BR BT BB (the middle of a bar), then +N or -N: wmove:R:C, wmove:L+40:T-3 */
-            if (sscanf(strchr(what, ':') + 1, "%23[^:]:%23s", st.xs, st.ys) != 2) { fprintf(stderr, "--keys: %s\n", what); exit(1); }
-        } else if (!strcmp(what, "setcursor")) {   /* the pointer comes back into the window (WM_SETCURSOR) */
-            st.setcursor = 1;
-        } else if (!strncmp(what, "click:", 6) || !strncmp(what, "rclick:", 7) || !strncmp(what, "move:", 5) ||
-                   !strncmp(what, "ldown:", 6) || !strncmp(what, "lup:", 4)) {
-            /* ldown and lup hold the left button across the moves between them: a drag
-             * (the game's box select). */
-            st.click = what[0] == 'c' ? 1 : what[0] == 'r' ? 2 : !strncmp(what, "ldown:", 6) ? 3 : what[1] == 'u' ? 4 : 0;
-            st.move = 1;
-            sscanf(strchr(what, ':') + 1, "%d:%d", &st.x, &st.y);
-        } else if (!strncmp(what, "alt+", 4) && (st.vk = key_by_name(what + 4))) {
-            st.alt = 1;   /* Alt+Enter, Alt+F12: the presenter's hotkeys */
-        } else if (!strncmp(what, "ctrl+", 5) && (st.vk = key_by_name(what + 5))) {
-            st.alt = 2;   /* Ctrl+1: the game's control groups */
-        } else if (!strncmp(what, "shift+", 6) && (st.vk = key_by_name(what + 6))) {
-            st.alt = 3;
-        } else if (!(st.vk = key_by_name(what))) {
-            fprintf(stderr, "--keys: unknown key \"%s\"\n", what);
-            exit(1);
-        }
-        g_steps[g_nsteps++] = st;
+        step_t st;
+        if (key_parse(tok, &st, 1)) g_steps[g_nsteps++] = st;
     }
     g_scripted = 1;
 }
@@ -572,6 +581,102 @@ static int place(const char* t, int axis, const RECT* cl, const RECT* pic) {
     return base + (*q ? atoi(q) : 0);
 }
 
+/* One --keys step, now: a shot, a size, the cursor, a click or a key. */
+static void key_run(step_t* st) {
+    if (st->shot[0]) { if (st->wshot) present_wshot_request(st->shot); else softdd_shot(st->shot); return; }
+    HWND w = g_game_wnd;
+    if (st->size) {
+        if (w) PostMessageA(w, WM_SWGB_SIZE, (WPARAM)st->x, (LPARAM)st->y);
+        printf("[keys] %.1fs size %dx%d\n", st->at / 1000.0, st->x, st->y);
+        return;
+    }
+    if (st->setcursor) {   /* the pointer left the window and is back: what is the cursor now? */
+        HCURSOR before = NULL, after = NULL;
+        if (w) { g_cursor_probe = (HCURSOR)(intptr_t)-1; PostMessageA(w, WM_SWGB_CURSOR, 0, 0); Sleep(300); before = g_cursor_probe; }
+        if (w) { PostMessageA(w, WM_SWGB_CURSOR, 1, 0); Sleep(100); }   /* the pointer was elsewhere: the arrow */
+        if (w) PostMessageA(w, WM_SETCURSOR, (WPARAM)w, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));   /* and is back */
+        Sleep(300);
+        if (w) { g_cursor_probe = (HCURSOR)(intptr_t)-1; PostMessageA(w, WM_SWGB_CURSOR, 0, 0); Sleep(300); after = g_cursor_probe; }
+        printf("[cursor] re-entry: the game's cursor %p, after WM_SETCURSOR %p (the arrow is %p): %s\n",
+               (void*)before, (void*)after, (void*)LoadCursorA(NULL, IDC_ARROW), before == after ? "kept" : "CHANGED");
+        return;
+    }
+    int cx = st->x, cy = st->y;   /* the client pixel the script means */
+    if (st->move) {
+        DD* d = softdd_dd();
+        if (st->win && w) {
+            RECT cl, pic;
+            GetClientRect(w, &cl);
+            if (d && d->w) present_layout(present_filter, cl.right, cl.bottom, d->w, d->h, &pic); else pic = cl;
+            cx = place(st->xs, 0, &cl, &pic);
+            cy = place(st->ys, 1, &cl, &pic);
+        } else if (w && d && d->w) {   /* game pixels: the client pixel that maps to them */
+            POINT p = { st->x, st->y };
+            present_to_client(w, d->w, d->h, &p);
+            cx = p.x, cy = p.y;
+        }
+        if (w) {
+            POINT c = vcur_set_client(w, cx, cy);   /* held inside the screen, or the clip */
+            cx = c.x, cy = c.y;
+            if (d && d->w) { POINT g = c; present_to_game(w, d->w, d->h, &g); g_cur_x = g.x, g_cur_y = g.y; st->x = g.x, st->y = g.y; }
+        } else g_cur_x = st->x, g_cur_y = st->y;
+        if (st->win) printf("[keys] window %d,%d -> game %d,%d\n", cx, cy, st->x, st->y);
+        int dragging = (int)(g_vk_until[VK_LBUTTON] - GetTickCount()) > 0 && st->click != 1 && st->click != 2;
+        if (w) PostMessageA(w, WM_MOUSEMOVE, dragging ? MK_LBUTTON : 0, MAKELPARAM(cx, cy));
+        if (st->click == 3) {   /* ldown: held until lup */
+            Sleep(100);
+            g_vk_until[VK_LBUTTON] = GetTickCount() + 3600000;
+            if (w) PostMessageA(w, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cx, cy));
+        } else if (st->click == 4) {
+            Sleep(100);
+            if (w) PostMessageA(w, WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
+            g_vk_until[VK_LBUTTON] = GetTickCount();
+        } else if (st->click) {
+            Sleep(100);
+            int r = st->click == 2;
+            g_vk_until[r ? VK_RBUTTON : VK_LBUTTON] = GetTickCount() + 150;
+            if (w) PostMessageA(w, r ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, r ? MK_RBUTTON : MK_LBUTTON, MAKELPARAM(cx, cy));
+            Sleep(150);
+            if (w) PostMessageA(w, r ? WM_RBUTTONUP : WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
+        }
+        printf("[keys] %.1fs %s %d,%d\n", st->at / 1000.0, st->click == 2 ? "rclick" : st->click == 3 ? "ldown" :
+               st->click == 4 ? "lup" : st->click ? "click" : "move", st->x, st->y);
+    } else {
+        UINT sc = MapVirtualKeyA(st->vk, 0);
+        if (st->alt == 1) {   /* Alt+key: a system key, to the window itself */
+            if (w) PostMessageA(w, WM_SYSKEYDOWN, st->vk, 1 | (sc << 16) | (1 << 29));
+            Sleep(150);
+            if (w) PostMessageA(w, WM_SYSKEYUP, st->vk, 1 | (sc << 16) | (1 << 29) | 0xC0000000u);
+            printf("[keys] %.1fs alt+key %02X\n", st->at / 1000.0, st->vk);
+            return;
+        }
+        {   /* keys go where the game's focus is: a text field is a real edit control */
+            GUITHREADINFO gi = { sizeof gi };
+            if (w && GetGUIThreadInfo(GetWindowThreadProcessId(w, NULL), &gi) && gi.hwndFocus) w = gi.hwndFocus;
+        }
+        /* Ctrl+key, Shift+key: the modifier is down, as GetKeyState reports it, around the key. */
+        int mod = st->alt == 2 ? VK_CONTROL : st->alt == 3 ? VK_SHIFT : 0;
+        UINT msc = mod ? MapVirtualKeyA(mod, 0) : 0;
+        if (mod) {
+            g_vk_until[mod] = GetTickCount() + 600;
+            if (w) PostMessageA(w, WM_KEYDOWN, mod, 1 | (msc << 16));
+            Sleep(50);
+        }
+        g_vk_until[st->vk & 0xFF] = GetTickCount() + 150;
+        /* WM_KEYDOWN only: the game's loop calls TranslateMessage, which
+         * makes the WM_CHAR (posting one too typed every letter twice). */
+        if (w) PostMessageA(w, WM_KEYDOWN, st->vk, 1 | (sc << 16));
+        Sleep(150);
+        if (w) PostMessageA(w, WM_KEYUP, st->vk, 1 | (sc << 16) | 0xC0000000u);
+        if (mod) {
+            Sleep(50);
+            if (w) PostMessageA(w, WM_KEYUP, mod, 1 | (msc << 16) | 0xC0000000u);
+            g_vk_until[mod] = GetTickCount();
+        }
+        printf("[keys] %.1fs %skey %02X\n", st->at / 1000.0, mod == VK_CONTROL ? "ctrl+" : mod ? "shift+" : "", st->vk);
+    }
+}
+
 static DWORD WINAPI keys_thread(LPVOID unused) {
     (void)unused;
     DWORD t0 = GetTickCount();
@@ -591,100 +696,43 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
             }
         DWORD at = t0 + st->at, now = GetTickCount();
         if ((int)(at - now) > 0) Sleep(at - now);
-        if (st->shot[0]) { if (st->wshot) present_wshot_request(st->shot); else softdd_shot(st->shot); continue; }
-        HWND w = g_game_wnd;
-        if (st->size) {
-            if (w) PostMessageA(w, WM_SWGB_SIZE, (WPARAM)st->x, (LPARAM)st->y);
-            printf("[keys] %.1fs size %dx%d\n", st->at / 1000.0, st->x, st->y);
-            continue;
-        }
-        if (st->setcursor) {   /* the pointer left the window and is back: what is the cursor now? */
-            HCURSOR before = NULL, after = NULL;
-            if (w) { g_cursor_probe = (HCURSOR)(intptr_t)-1; PostMessageA(w, WM_SWGB_CURSOR, 0, 0); Sleep(300); before = g_cursor_probe; }
-            if (w) { PostMessageA(w, WM_SWGB_CURSOR, 1, 0); Sleep(100); }   /* the pointer was elsewhere: the arrow */
-            if (w) PostMessageA(w, WM_SETCURSOR, (WPARAM)w, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));   /* and is back */
-            Sleep(300);
-            if (w) { g_cursor_probe = (HCURSOR)(intptr_t)-1; PostMessageA(w, WM_SWGB_CURSOR, 0, 0); Sleep(300); after = g_cursor_probe; }
-            printf("[cursor] re-entry: the game's cursor %p, after WM_SETCURSOR %p (the arrow is %p): %s\n",
-                   (void*)before, (void*)after, (void*)LoadCursorA(NULL, IDC_ARROW), before == after ? "kept" : "CHANGED");
-            continue;
-        }
-        int cx = st->x, cy = st->y;   /* the client pixel the script means */
-        if (st->move) {
-            DD* d = softdd_dd();
-            if (st->win && w) {
-                RECT cl, pic;
-                GetClientRect(w, &cl);
-                if (d && d->w) present_layout(present_filter, cl.right, cl.bottom, d->w, d->h, &pic); else pic = cl;
-                cx = place(st->xs, 0, &cl, &pic);
-                cy = place(st->ys, 1, &cl, &pic);
-            } else if (w && d && d->w) {   /* game pixels: the client pixel that maps to them */
-                POINT p = { st->x, st->y };
-                present_to_client(w, d->w, d->h, &p);
-                cx = p.x, cy = p.y;
-            }
-            if (w) {
-                POINT c = vcur_set_client(w, cx, cy);   /* held inside the screen, or the clip */
-                cx = c.x, cy = c.y;
-                if (d && d->w) { POINT g = c; present_to_game(w, d->w, d->h, &g); g_cur_x = g.x, g_cur_y = g.y; st->x = g.x, st->y = g.y; }
-            } else g_cur_x = st->x, g_cur_y = st->y;
-            if (st->win) printf("[keys] window %d,%d -> game %d,%d\n", cx, cy, st->x, st->y);
-            int dragging = (int)(g_vk_until[VK_LBUTTON] - GetTickCount()) > 0 && st->click != 1 && st->click != 2;
-            if (w) PostMessageA(w, WM_MOUSEMOVE, dragging ? MK_LBUTTON : 0, MAKELPARAM(cx, cy));
-            if (st->click == 3) {   /* ldown: held until lup */
-                Sleep(100);
-                g_vk_until[VK_LBUTTON] = GetTickCount() + 3600000;
-                if (w) PostMessageA(w, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cx, cy));
-            } else if (st->click == 4) {
-                Sleep(100);
-                if (w) PostMessageA(w, WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
-                g_vk_until[VK_LBUTTON] = GetTickCount();
-            } else if (st->click) {
-                Sleep(100);
-                int r = st->click == 2;
-                g_vk_until[r ? VK_RBUTTON : VK_LBUTTON] = GetTickCount() + 150;
-                if (w) PostMessageA(w, r ? WM_RBUTTONDOWN : WM_LBUTTONDOWN, r ? MK_RBUTTON : MK_LBUTTON, MAKELPARAM(cx, cy));
-                Sleep(150);
-                if (w) PostMessageA(w, r ? WM_RBUTTONUP : WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
-            }
-            printf("[keys] %.1fs %s %d,%d\n", st->at / 1000.0, st->click == 2 ? "rclick" : st->click == 3 ? "ldown" :
-                   st->click == 4 ? "lup" : st->click ? "click" : "move", st->x, st->y);
-        } else {
-            UINT sc = MapVirtualKeyA(st->vk, 0);
-            if (st->alt == 1) {   /* Alt+key: a system key, to the window itself */
-                if (w) PostMessageA(w, WM_SYSKEYDOWN, st->vk, 1 | (sc << 16) | (1 << 29));
-                Sleep(150);
-                if (w) PostMessageA(w, WM_SYSKEYUP, st->vk, 1 | (sc << 16) | (1 << 29) | 0xC0000000u);
-                printf("[keys] %.1fs alt+key %02X\n", st->at / 1000.0, st->vk);
-                continue;
-            }
-            {   /* keys go where the game's focus is: a text field is a real edit control */
-                GUITHREADINFO gi = { sizeof gi };
-                if (w && GetGUIThreadInfo(GetWindowThreadProcessId(w, NULL), &gi) && gi.hwndFocus) w = gi.hwndFocus;
-            }
-            /* Ctrl+key, Shift+key: the modifier is down, as GetKeyState reports it, around the key. */
-            int mod = st->alt == 2 ? VK_CONTROL : st->alt == 3 ? VK_SHIFT : 0;
-            UINT msc = mod ? MapVirtualKeyA(mod, 0) : 0;
-            if (mod) {
-                g_vk_until[mod] = GetTickCount() + 600;
-                if (w) PostMessageA(w, WM_KEYDOWN, mod, 1 | (msc << 16));
-                Sleep(50);
-            }
-            g_vk_until[st->vk & 0xFF] = GetTickCount() + 150;
-            /* WM_KEYDOWN only: the game's loop calls TranslateMessage, which
-             * makes the WM_CHAR (posting one too typed every letter twice). */
-            if (w) PostMessageA(w, WM_KEYDOWN, st->vk, 1 | (sc << 16));
-            Sleep(150);
-            if (w) PostMessageA(w, WM_KEYUP, st->vk, 1 | (sc << 16) | 0xC0000000u);
-            if (mod) {
-                Sleep(50);
-                if (w) PostMessageA(w, WM_KEYUP, mod, 1 | (msc << 16) | 0xC0000000u);
-                g_vk_until[mod] = GetTickCount();
-            }
-            printf("[keys] %.1fs %skey %02X\n", st->at / 1000.0, mod == VK_CONTROL ? "ctrl+" : mod ? "shift+" : "", st->vk);
-        }
+        key_run(st);
     }
     return 0;
+}
+
+/* --keys-live FILE: steps appended to FILE while the game runs ("0:what", a line or a comma
+ * apart) run as they are read, so a controller can look at a shot and answer it
+ * (tools/soak.py --mode fight aims at the enemy it finds on the minimap). */
+static char g_live_file[MAX_PATH];
+static DWORD g_keys_t0;
+
+static DWORD WINAPI keys_live_thread(LPVOID unused) {
+    (void)unused;
+    long pos = 0;
+    char line[512];
+    size_t n = 0;
+    for (;;) {
+        FILE* f = fopen(g_live_file, "rb");
+        if (f) {
+            int c;
+            fseek(f, pos, SEEK_SET);
+            while ((c = fgetc(f)) != EOF) {
+                pos++;
+                if (c == '\n' || c == '\r' || c == ',') {
+                    step_t st;
+                    line[n] = 0;
+                    if (n && key_parse(line, &st, 0) && !st.on[0]) {
+                        st.at = GetTickCount() - g_keys_t0;
+                        key_run(&st);
+                    }
+                    n = 0;
+                } else if (n < sizeof line - 1) line[n++] = (char)c;
+            }
+            fclose(f);
+        }
+        Sleep(200);
+    }
 }
 
 static int held(int vk) { return (int)(g_vk_until[vk & 0xFF] - GetTickCount()) > 0; }
@@ -1018,13 +1066,14 @@ int main(int argc, char** argv) {
         }
         else if (!strcmp(argv[i], "--args") && i + 1 < argc) _snprintf(guest_args, sizeof guest_args - 1, " %s", argv[++i]);
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc) parse_keys(argv[++i]);
+        else if (!strcmp(argv[i], "--keys-live") && i + 1 < argc) { GetFullPathNameA(argv[++i], MAX_PATH, g_live_file, NULL); g_scripted = 1; }
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else if (!strcmp(argv[i], "--res") && i + 1 < argc) { if (!widescreen_parse(argv[++i])) return 1; }
         else {
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
-                   "                  [--shot S file.bmp] [--keys SCRIPT] [--watchdog S] [--files] [--multi]\n"
+                   "                  [--shot S file.bmp] [--keys SCRIPT] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E] [--films DIR]\n"
                    "                  [--res WxH|desktop] [--fps N] [--fps-log]\n"
                    "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
@@ -1075,7 +1124,9 @@ int main(int argc, char** argv) {
     profile_start();
     if (g_shots) CloseHandle(CreateThread(NULL, 0, shot_thread, NULL, 0, NULL));
     g_file_seen = CreateEventA(NULL, FALSE, FALSE, NULL);
+    g_keys_t0 = GetTickCount();
     if (g_nsteps) CloseHandle(CreateThread(NULL, 0, keys_thread, NULL, 0, NULL));
+    if (g_live_file[0]) CloseHandle(CreateThread(NULL, 0, keys_live_thread, NULL, 0, NULL));
     printf("  entering 0x%08X\n\n", swgb_entry_va);
     native32_call_guest(swgb_entry_va, 0, NULL);
     printf("\nentry returned eax=%08X\n", g_eax);
