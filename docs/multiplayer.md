@@ -290,6 +290,7 @@ Shots every five minutes and at the end, `summary.json` in `--out`.
 | `--minutes 5 --activity busy` | 5 min | PASS: 36 checkpoints (72 records) both logs share, none differ; about 3,150 messages each way |
 | `--minutes 25 --activity busy --seed 7` | 25 min (46.9 min of game time at Normal, turn 6,210) | PASS: 155 checkpoints (310 records), none differ; 13,350 messages (216 KB) each way; no fault, drop or out-of-sync message. B trained workers up to its population limit ("You need to build more shelters"). |
 | `--cc --minutes 5 --activity busy --seed 3` | 5 min, Clone Campaigns | PASS: 36 checkpoints, none differ |
+| `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (37.9 min of game time) | PASS: 125 checkpoints (250 records), none differ; 10,800 messages each way; no fault, drop or out-of-sync message |
 | A this build, B the same source linked a minute earlier | the join | refused as another build; B shows "Unable to join game." |
 
 ## What's left

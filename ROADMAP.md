@@ -282,7 +282,7 @@ what needs research or a new subsystem.
   host process, UDP discovery on port 2300. Two recomps find the game, join,
   meet in the setup screen, start and play. The game's own sync checkpoints are
   logged (`[sync]`) and compared by `tools/mp_pair.py`.
-  Results: 25 minutes of the base game and 5 of Clone Campaigns, every
+  Results: 25 minutes of the base game and 20 of Clone Campaigns, every
   checkpoint the same on both sides; a different build is refused at the join.
 - **Left:** two real machines (a firewall Allow rule on the host's exe); chat, more players,
   drops mid-game, saved multiplayer games; answering the startup version check
