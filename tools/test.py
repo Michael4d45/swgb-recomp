@@ -528,7 +528,7 @@ def conformance_fn(kind):
 
 
 for _k in GAMES:
-    CHECKS.append(Check('conformance/' + _k, 'smoke', conformance_fn(_k), _k, 0.6))
+    CHECKS.append(Check('conformance/' + _k, 'smoke', conformance_fn(_k), _k, 0.4))
 
 
 def skirmish_steps(kind, out, t_menu=18):
@@ -574,11 +574,11 @@ def skirmish_fn(kind):
 
 
 for _k in GAMES:
-    CHECKS.append(Check('skirmish/' + _k, 'smoke', skirmish_fn(_k), _k, 2.0))
+    CHECKS.append(Check('skirmish/' + _k, 'smoke', skirmish_fn(_k), _k, 1.9))
 
 
 # ==== L2: functional =============================================================================
-PRESENT_GROUPS = {'A': 7, 'B': 4, 'C': 3, 'D': 3, 'E': 4}     # minutes, about
+PRESENT_GROUPS = {'A': 6, 'B': 3.4, 'C': 2.7, 'D': 3.7, 'E': 4.3}     # minutes, measured
 
 
 def present_fn(group):
@@ -635,7 +635,7 @@ def res_fn(size):
 
 
 for _s in (800, 1024, 1280):
-    CHECKS.append(Check('res/%d' % _s, 'functional', res_fn(_s), 'base', 3.5))
+    CHECKS.append(Check('res/%d' % _s, 'functional', res_fn(_s), 'base', 4.0))
 
 
 def widescreen_fn(kind):
@@ -688,7 +688,7 @@ def widescreen_fn(kind):
 
 
 for _k in GAMES:
-    CHECKS.append(Check('widescreen/' + _k, 'functional', widescreen_fn(_k), _k, 2.5))
+    CHECKS.append(Check('widescreen/' + _k, 'functional', widescreen_fn(_k), _k, 2.0))
 
 
 def films_fn(kind):
@@ -733,7 +733,7 @@ def films_fn(kind):
 
 
 for _k in GAMES:
-    CHECKS.append(Check('films/' + _k, 'functional', films_fn(_k), _k, 2.0))
+    CHECKS.append(Check('films/' + _k, 'functional', films_fn(_k), _k, 1.9))
 
 
 def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):
@@ -851,7 +851,7 @@ CIV_SETS = {
 }
 for _k, _sets in CIV_SETS.items():
     for _i, (_me, _them, _load) in enumerate(_sets):
-        CHECKS.append(Check('civs/%s-%d' % (_k, _i + 1), 'functional', civs_fn(_k, _me, _them, _load), _k, 6.5 if _load else 4.5))
+        CHECKS.append(Check('civs/%s-%d' % (_k, _i + 1), 'functional', civs_fn(_k, _me, _them, _load), _k, 8.4 if _load else 5.0))
 
 
 def perf_fn(kind):
@@ -908,7 +908,7 @@ def perf_fn(kind):
 
 
 for _k in GAMES:
-    CHECKS.append(Check('perf/' + _k, 'functional', perf_fn(_k), _k, 5.0))
+    CHECKS.append(Check('perf/' + _k, 'functional', perf_fn(_k), _k, 4.8))
 
 
 # ==== L3: soak ===================================================================================
@@ -934,7 +934,8 @@ SOAKS = [
 
 def soak_fn(name, kind, extra, minutes):
     def fn(ctx, r):
-        m = max(2, minutes * ctx.a.soak_scale)
+        # a fight's first wave sets off about 4 minutes in and wins 1-3 minutes later
+        m = max(12 if name == 'fight' else 3, minutes * ctx.a.soak_scale)
         cmd = [sys.executable, os.path.join(HERE, 'soak.py')] + (['--cc'] if kind == 'cc' else []) + extra + \
               ['--minutes', '%g' % m, '--run', ctx.host(kind), '--exe', ctx.exe(kind), '--game', r.game,
                '--out', r.dir, '--seed', str(ctx.a.seed)]
@@ -974,7 +975,8 @@ def soak_fn(name, kind, extra, minutes):
 
 
 for _n, _k, _e, _m in SOAKS:
-    CHECKS.append(Check('soak/%s-%s' % (_k, _n), 'soak', soak_fn(_n, _k, _e, _m), _k, _m * 1.3 + 5))
+    CHECKS.append(Check('soak/%s-%s' % (_k, _n), 'soak', soak_fn(_n, _k, _e, _m), _k,
+                        (_m + 6) * 3 if _n == 'chain' else _m + 10 + (12 if _n == 'victory-load' else 0)))
 
 
 # ==== L4: the real screen ========================================================================
@@ -1022,6 +1024,8 @@ def run_check(ctx, c):
     try:
         if ctx.cancelled:
             r.skip('cancelled')
+        elif kind and not ctx.has(kind) and kind == 'cc' and ctx.a.cc is True:
+            r.fail('--cc, and no Clone Campaigns host or game data: %s, %s' % (ctx.host(kind), ctx.exe(kind)))
         elif kind and not ctx.has(kind):
             r.skip('no %s host or game data: %s, %s' % (GAMES[kind]['title'], ctx.host(kind), ctx.exe(kind)))
         elif 'cc' in c.needs and not ctx.has('cc') and ctx.a.cc is not True:
