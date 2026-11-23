@@ -109,7 +109,29 @@ RUN_SEEDS = [
 # the base game's plus 0x3000 (each checked against x1's tables). 0x00427920
 # is the base game's 0x00427090, found by its bytes with addresses and branch
 # offsets masked (one match).
-CC_SEEDS = [0x00427920] + [va + 0x3000 for va in RUN_SEEDS[1:]]
+#
+# The rest, from `tools/code_ptr_seeds.py --exe work/battlegrounds_x1.exe
+# --catalog work/functions_x1.json` (all 12 of its seeds): vtable slots
+# 0x004C3EF0 (`int3; mov al, 1; ret 4`, the base game's 0x004C39B0) and
+# 0x00571380 (behind a switch's index and jump tables decoded as a false
+# sub_00571372, as the base game's 0x005648A0 was), and zlib's allocators and
+# friends that the base game's 0x00625E80.. are (the other six of those, and
+# the base game's 0x005648A0 and 0x005C6D90, are x1 catalog entries).
+CC_SEEDS = [
+    0x00427920,
+    # THIS_COD: the base game's table targets + 0x3000
+    0x00649465, 0x00651E80, 0x00651EA0, 0x00651EA5, 0x00651F40, 0x00651F51, 0x00651F80,
+    0x00652020, 0x006520C0, 0x00652160, 0x006523E0, 0x00652400, 0x00652420, 0x00652460,
+    0x0065246B, 0x00652480, 0x006524C0, 0x00652500, 0x00652540, 0x00652580, 0x00652596,
+    0x006525C0, 0x006525D6, 0x00652640, 0x00652660, 0x00652680, 0x006526A0, 0x00653080,
+    0x00653111, 0x00653117, 0x0065311B, 0x00653124, 0x0065312B, 0x00653136, 0x00653140,
+    0x00653149, 0x00653155, 0x0065315B, 0x00653162, 0x00653168, 0x0065316E, 0x00653172,
+    0x0065317B,
+    # code_ptr_seeds.py
+    0x004C3EF0, 0x00571380,
+    0x00629BF0, 0x00629DD0, 0x00629DE0, 0x00629DF0, 0x00629E20, 0x00629E40, 0x00629E60,
+    0x00629E80, 0x00629EA0, 0x00629EB0,
+]
 
 DATA_IN_CODE = []
 
@@ -303,7 +325,7 @@ def lift_module(path, catalog, args, out, extra_roots, build):
     resume = set().union(*(r for r, _ in frames.values())) if frames else set()
     # A seed that is a handler's continuation would run as a call and "return"
     # into _except_handler3: code_ptr_seeds.py files those as `seh`, never seeds.
-    bad = resume & set(RUN_SEEDS)
+    bad = resume & set(build['run_seeds'])
     if bad:
         sys.exit('seeds that are exception-handler continuations: %s'
                  % ', '.join('0x%08X' % a for a in sorted(bad)))

@@ -37,6 +37,7 @@
 #include <string.h>
 
 #include "native32.h"
+#include "guest_addrs.h"
 #include "recomp_trace.h"
 #include "profile.h"
 
@@ -70,7 +71,7 @@ static CRITICAL_SECTION g_cs;
 static volatile LONG g_done;
 
 /* ---- reading the guest ------------------------------------------------------- */
-#define GAME      0x006A0FD4u
+#define GAME      G_GAME
 #define GAME_MODE 0x1DC
 static uint32_t peek(uint32_t a) {
     __try { return a >= 0x10000 ? MEM32(a) : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
