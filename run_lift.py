@@ -7,10 +7,16 @@ The driver is Crazy Taxi's, plus MSVC exception frames: every function that
 installs a C++ try or a __try gets a landing pad (pcrecomp tools/lift/eh32.py,
 docs/exceptions.md).
 
+`--build cc` lifts the Clone Campaigns expansion instead: Steam's
+battlegrounds_x1.exe, unwrapped (tools/steamstub_swgb.py), from
+work/functions_x1.json into src/recomp/gen_cc/ (docs/lifting.md).
+
     py -3 run_lift.py --all
     py -3 run_lift.py --roots 0x00632881
+    py -3 run_lift.py --build cc --all
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -30,16 +36,7 @@ from lift32 import Lifter                                  # noqa: E402
 import eh32                                                # noqa: E402
 from pe_analyze import analyze_pe, build_iat_map           # noqa: E402
 
-OUT = os.path.join(_HERE, 'src', 'recomp', 'gen')
-STATS = os.path.join(_HERE, 'work', 'lift_stats.json')
-
-# (file, catalog, PE timestamp of the one build supported, what it is).
-# A different build lifts, but the patches and seeds are at this build's
-# addresses: it would crash in the game, so it is refused (README).
-MODULES = [
-    (os.path.join(_HERE, 'work', 'Battlegrounds.exe'), os.path.join(_HERE, 'work', 'functions.json'),
-     0x3C03FD69, 'Battlegrounds.exe v1.1, from LucasArts BGUpdate1_1.exe (2001-11-28)'),
-]
+_WORK = os.path.join(_HERE, 'work')
 
 # Entries the catalog does not find: 0x00427090 (called through a pointer
 # from 0x00424425), and the THIS_COD blitter's jump-table targets (tables at
@@ -106,6 +103,36 @@ RUN_SEEDS = [
     0x0065017B,
 ]
 
+# Clone Campaigns, battlegrounds_x1.exe. Its THIS_COD is the base game's byte
+# for byte but for absolute addresses, moved by +0x3000 (code) and +0x2000
+# (data): the jump tables are at 0x0064F300-0x00651780, and their targets are
+# the base game's plus 0x3000 (each checked against x1's tables). 0x00427920
+# is the base game's 0x00427090, found by its bytes with addresses and branch
+# offsets masked (one match).
+#
+# The rest, from `tools/code_ptr_seeds.py --exe work/battlegrounds_x1.exe
+# --catalog work/functions_x1.json` (all 12 of its seeds): vtable slots
+# 0x004C3EF0 (`int3; mov al, 1; ret 4`, the base game's 0x004C39B0) and
+# 0x00571380 (behind a switch's index and jump tables decoded as a false
+# sub_00571372, as the base game's 0x005648A0 was), and zlib's allocators and
+# friends that the base game's 0x00625E80.. are (the other six of those, and
+# the base game's 0x005648A0 and 0x005C6D90, are x1 catalog entries).
+CC_SEEDS = [
+    0x00427920,
+    # THIS_COD: the base game's table targets + 0x3000
+    0x00649465, 0x00651E80, 0x00651EA0, 0x00651EA5, 0x00651F40, 0x00651F51, 0x00651F80,
+    0x00652020, 0x006520C0, 0x00652160, 0x006523E0, 0x00652400, 0x00652420, 0x00652460,
+    0x0065246B, 0x00652480, 0x006524C0, 0x00652500, 0x00652540, 0x00652580, 0x00652596,
+    0x006525C0, 0x006525D6, 0x00652640, 0x00652660, 0x00652680, 0x006526A0, 0x00653080,
+    0x00653111, 0x00653117, 0x0065311B, 0x00653124, 0x0065312B, 0x00653136, 0x00653140,
+    0x00653149, 0x00653155, 0x0065315B, 0x00653162, 0x00653168, 0x0065316E, 0x00653172,
+    0x0065317B,
+    # code_ptr_seeds.py
+    0x004C3EF0, 0x00571380,
+    0x00629BF0, 0x00629DD0, 0x00629DE0, 0x00629DF0, 0x00629E20, 0x00629E40, 0x00629E60,
+    0x00629E80, 0x00629EA0, 0x00629EB0,
+]
+
 DATA_IN_CODE = []
 
 
@@ -119,7 +146,36 @@ PATCHES = {}
 HLE = {
     0x0062343B: 'swgb_inflate',   # the deflate decoder, a stack-copying coroutine (inflate.c)
 }
-PATCH_DECLS = ''.join('void %s(void);\n' % f for f in HLE.values())
+CC_HLE = {
+    0x006271AB: 'swgb_inflate',   # the same decoder, byte for byte but for its addresses
+}
+
+# What --build picks: its modules (file, catalog, PE timestamp of the one
+# build supported, what it is, a digest of its code or None), where its lift
+# goes, and its own addresses. A different build lifts, but the patches and
+# seeds are at this build's addresses: it would crash in the game, so it is
+# refused (README).
+BUILDS = {
+    'base': {
+        'modules': [(os.path.join(_WORK, 'Battlegrounds.exe'), os.path.join(_WORK, 'functions.json'),
+                     0x3C03FD69, 'Battlegrounds.exe v1.1, from LucasArts BGUpdate1_1.exe (2001-11-28)', None)],
+        'out': os.path.join(_HERE, 'src', 'recomp', 'gen'),
+        'stats': os.path.join(_WORK, 'lift_stats.json'),
+        'seeds': os.path.join(_WORK, 'run_seeds.json'),
+        'run_seeds': RUN_SEEDS, 'hle': HLE, 'name': 'Battlegrounds.exe',
+    },
+    # Steam's battlegrounds_cc.exe has the same timestamp: it is this build
+    # with a community widescreen mod applied, other code, refused by digest.
+    'cc': {
+        'modules': [(os.path.join(_WORK, 'battlegrounds_x1.exe'), os.path.join(_WORK, 'functions_x1.json'),
+                     0x3CF57142, "battlegrounds_x1.exe, Clone Campaigns (2002-05-29), Steam's, unwrapped",
+                     '66c989ce5835d122')],
+        'out': os.path.join(_HERE, 'src', 'recomp', 'gen_cc'),
+        'stats': os.path.join(_WORK, 'lift_stats_cc.json'),
+        'seeds': os.path.join(_WORK, 'run_seeds_cc.json'),
+        'run_seeds': CC_SEEDS, 'hle': CC_HLE, 'name': 'battlegrounds_x1.exe',
+    },
+}
 
 
 def apply_patches(body, patches):
@@ -157,6 +213,26 @@ def exe_stamp(path):
     return int.from_bytes(head[nt + 8:nt + 12], 'little')
 
 
+def exe_sections(path):
+    """{name: raw bytes, up to the virtual size} of a PE's sections."""
+    raw = open(path, 'rb').read()
+    nt = int.from_bytes(raw[0x3C:0x40], 'little')
+    n = int.from_bytes(raw[nt + 6:nt + 8], 'little')
+    sh = nt + 24 + int.from_bytes(raw[nt + 20:nt + 22], 'little')
+    out = {}
+    for k in range(n):
+        h = raw[sh + 40 * k:sh + 40 * k + 40]
+        vsize, rsize, roff = (int.from_bytes(h[o:o + 4], 'little') for o in (8, 16, 20))
+        out[h[:8].rstrip(b'\0').decode('latin-1')] = raw[roff:roff + min(vsize, rsize)]
+    return out
+
+
+def code_digest(path):
+    """The first 16 hex digits of SHA-256 over .text and THIS_COD: the code itself."""
+    sec = exe_sections(path)
+    return hashlib.sha256(sec.get('.text', b'') + sec.get('THIS_COD', b'')).hexdigest()[:16]
+
+
 class Out:
     """The generated tree: chunks numbered across both modules."""
 
@@ -177,7 +253,7 @@ class Out:
             self.chunk = []
 
 
-def lift_module(path, catalog, args, out, extra_roots):
+def lift_module(path, catalog, args, out, extra_roots, build):
     """Lift one module into `out`. Returns (entry VA, stats)."""
     info = analyze_pe(path)
     iat = build_iat_map(info)
@@ -213,7 +289,7 @@ def lift_module(path, catalog, args, out, extra_roots):
 
     # Bound each injected entry by the next known one: an entry landing
     # mid-code handed `ce` makes the extent walk descend the whole section.
-    want = {a for a in set(RUN_SEEDS) | load_seeds(args.seeds) if cs <= a < ce and a not in byaddr}
+    want = {a for a in set(build['run_seeds']) | load_seeds(args.seeds) if cs <= a < ce and a not in byaddr}
     known = sorted(set(byaddr) | want)
     nxt = {a: (known[i + 1] if i + 1 < len(known) else ce) for i, a in enumerate(known)}
     for a in want:
@@ -249,7 +325,7 @@ def lift_module(path, catalog, args, out, extra_roots):
     resume = set().union(*(r for r, _ in frames.values())) if frames else set()
     # A seed that is a handler's continuation would run as a call and "return"
     # into _except_handler3: code_ptr_seeds.py files those as `seh`, never seeds.
-    bad = resume & set(RUN_SEEDS)
+    bad = resume & set(build['run_seeds'])
     if bad:
         sys.exit('seeds that are exception-handler continuations: %s'
                  % ', '.join('0x%08X' % a for a in sorted(bad)))
@@ -280,8 +356,8 @@ def lift_module(path, catalog, args, out, extra_roots):
             if leaders is not None:
                 leaders.add(addr)
             resume, off = frames.get(addr, (None, None))
-            if addr in HLE:
-                out.add('void %s(void) { %s(); }\n' % (name, HLE[addr]), addr, name)
+            if addr in build['hle']:
+                out.add('void %s(void) { %s(); }\n' % (name, build['hle'][addr]), addr, name)
                 return
             if not insns:
                 raise ValueError('no instructions at 0x%08X' % addr)
@@ -324,15 +400,20 @@ def lift_module(path, catalog, args, out, extra_roots):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--out', default=OUT)
+    ap.add_argument('--build', choices=sorted(BUILDS), default='base',
+                    help='base: Battlegrounds.exe v1.1; cc: Clone Campaigns, battlegrounds_x1.exe')
+    ap.add_argument('--out', default=None, help="the generated tree (default: the build's own)")
     ap.add_argument('--roots', default='', help='comma-separated extra root VAs')
     ap.add_argument('--max', type=int, default=3000, help='closure size cap')
     ap.add_argument('--all', action='store_true', help='lift every function')
     ap.add_argument('--split', type=int, default=400, help='functions per .c file')
-    ap.add_argument('--seeds', default=os.path.join(_HERE, 'work', 'run_seeds.json'),
-                    help='seed_from_log.py JSON of unresolved targets from runs')
+    ap.add_argument('--seeds', default=None,
+                    help="seed_from_log.py JSON of unresolved targets from runs (default: the build's own)")
     args = ap.parse_args()
-    for path, catalog, stamp, what in MODULES:
+    build = BUILDS[args.build]
+    args.out = args.out or build['out']
+    args.seeds = args.seeds or build['seeds']
+    for path, catalog, stamp, what, digest in build['modules']:
         if not os.path.exists(path):
             sys.exit('no %s -- README, Step by step' % path)
         if not os.path.exists(catalog):
@@ -340,6 +421,12 @@ def main():
         if exe_stamp(path) != stamp:
             sys.exit('%s is not the build this project supports: its PE timestamp is 0x%08X, '
                      'expected 0x%08X: %s (README).' % (path, exe_stamp(path), stamp, what))
+        if '.bind' in exe_sections(path):
+            sys.exit('%s is SteamStub-wrapped (it has a .bind section): unwrap it with '
+                     'tools/steamstub_swgb.py first (docs/lifting.md)' % path)
+        if digest and code_digest(path) != digest:
+            sys.exit('%s has the right timestamp but other code (digest %s, expected %s): a patched '
+                     'copy? Lift %s (docs/lifting.md).' % (path, code_digest(path), digest, what))
 
     os.makedirs(args.out, exist_ok=True)
     for fn in os.listdir(args.out):                 # a smaller lift must not leave stale chunks
@@ -349,24 +436,25 @@ def main():
     out = Out(args.out, args.split)
     roots = [int(x, 0) for x in args.roots.split(',') if x.strip()]
     entries_va, stats = [], {'lifted': 0, 'stubs': 0, 'errors': 0, 'no_terminator': 0}
-    for path, catalog, _, _ in MODULES:
-        entry, s = lift_module(path, catalog, args, out, roots)
+    for path, catalog, _, _, _ in build['modules']:
+        entry, s = lift_module(path, catalog, args, out, roots, build)
         entries_va.append(entry)
         for k in stats:
             stats[k] += s[k]
     out.flush()
 
+    patch_decls = ''.join('void %s(void);\n' % f for f in build['hle'].values())
     with open(os.path.join(args.out, 'recomp_funcs.h'), 'w', newline='\n') as f:
-        f.write('/* Battlegrounds.exe - AUTO-GENERATED by run_lift.py */\n#pragma once\n'
+        f.write('/* %s - AUTO-GENERATED by run_lift.py */\n#pragma once\n'
                 '#include <stdint.h>\n\n'
                 'void recomp_not_lifted(uint32_t va);\n'
-                '#define RECOMP_NOT_LIFTED(va) recomp_not_lifted(va)\n\n' + PATCH_DECLS + '\n')
+                '#define RECOMP_NOT_LIFTED(va) recomp_not_lifted(va)\n\n' % build['name'] + patch_decls + '\n')
         for a, n in out.entries:
             f.write('void %s(void);\n' % n)
     with open(os.path.join(args.out, 'recomp_dispatch.c'), 'w', newline='\n') as f:
-        f.write('/* Battlegrounds.exe - AUTO-GENERATED by run_lift.py */\n'
+        f.write('/* %s - AUTO-GENERATED by run_lift.py */\n'
                 '#include "recomp_types.h"\n#include "recomp_funcs.h"\n\n'
-                'const recomp_dispatch_entry_t recomp_dispatch_table[] = {\n')
+                'const recomp_dispatch_entry_t recomp_dispatch_table[] = {\n' % build['name'])
         for a, n in sorted(out.entries):
             f.write('    { 0x%08Xu, %s },\n' % (a, n))
         f.write('};\nconst uint32_t recomp_dispatch_count = %d;\n'
@@ -384,7 +472,7 @@ def main():
     lines = sum(sum(1 for _ in open(os.path.join(args.out, fn), encoding='utf-8', errors='replace'))
                 for fn in os.listdir(args.out))
     stats.update({'files': out.idx, 'lines': lines})
-    json.dump(stats, open(STATS, 'w'), indent=1)
+    json.dump(stats, open(build['stats'], 'w'), indent=1)
     print('=' * 60)
     print('  lifted %(lifted)d   not-lifted stubs %(stubs)d   errors %(errors)d   '
           'no terminator %(no_terminator)d' % stats)

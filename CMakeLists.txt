@@ -104,3 +104,6 @@ endif()
 
 # The output name keeps Windows' compatibility database off the host.
 set_target_properties(swgb PROPERTIES OUTPUT_NAME swgbrecomp)
+
+# Clone Campaigns' host, swgbrecomp_cc.exe: only when its lift is there.
+include(cmake/clone_campaigns.cmake)

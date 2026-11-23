@@ -38,6 +38,7 @@
 #include <string.h>
 
 #include "native32.h"
+#include "guest_addrs.h"
 #include "softdd.h"
 #include "softdd_int.h"
 #include "framerate.h"
@@ -50,13 +51,13 @@ static double g_fps;             /* --fps N; 0: the display's refresh (present.c
 static int    g_pace = 1;        /* --fps off: 0, the game's own rate and its spin */
 
 /* ---- the engine's state, read from guest memory ----------------------------- */
-#define GAME          0x006A0FD4u   /* the game object */
+#define GAME          G_GAME        /* the game object */
 #define GAME_MODE     0x1DC         /* 4: in game */
 #define GAME_SCREEN   0x17B4        /* the game screen, while one exists */
 #define GAME_WORLD    0x420
-#define SCREEN_VTABLE 0x0065CE24u   /* set by its constructor, sub_004F1820 */
-#define SCREEN_GATE   0x1258        /* ms between passes; from [[game+0x24]+0x888] */
-#define SCREEN_LAST   0x125C        /* timeGetTime of the last pass */
+#define SCREEN_VTABLE G_SCREEN_VTABLE   /* set by its constructor */
+#define SCREEN_GATE   G_SCREEN_GATE /* ms between passes; from [[game+0x24]+0x888] */
+#define SCREEN_LAST   G_SCREEN_LAST /* timeGetTime of the last pass */
 #define WORLD_TIME    0x10          /* game ms */
 #define WORLD_SPEED   0x24          /* float: 1.5 is Normal */
 

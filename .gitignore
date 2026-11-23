@@ -44,6 +44,7 @@ original/
 # Generated from the binary, never committed: the lifted C, the catalog and
 # every other analysis of Battlegrounds.exe.
 src/recomp/gen/
+src/recomp/gen_cc/
 work/
 analysis/
 scratch/

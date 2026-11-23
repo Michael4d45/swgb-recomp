@@ -22,8 +22,13 @@
   agents work: $Root\swgb-recomp\work\Battlegrounds.exe,
   $Root\swgb-recomp\src\recomp\gen, $Root\shared\swgb_gen.lib.
 
-  A track that re-lifts (Clone Campaigns) builds its own swgb_gen instead:
+  A track that re-lifts the base game builds its own swgb_gen instead:
   pass -OwnGen, and point it at its own gen directory.
+
+  -CloneCampaigns: the base host links the shared library as usual, and the
+  expansion's host (swgbrecomp_cc.exe) compiles the worktree's own
+  src\recomp\gen_cc (run_lift.py --build cc --all; a full build of the
+  lifted C, 25+ minutes) and runs the worktree's work\battlegrounds_x1.exe.
 
 .EXAMPLE
   powershell -File tools\worktree_env.ps1 -Name widescreen -Build
@@ -33,6 +38,7 @@ param(
     [string] $Root = 'A:\Games\star',
     [switch] $Build,
     [switch] $OwnGen,
+    [switch] $CloneCampaigns,
     [switch] $FreshGame
 )
 $ErrorActionPreference = 'Stop'
@@ -94,6 +100,9 @@ if ($Build) {
 }
 
 $run = "`"$buildDir\swgbrecomp.exe`" --run --multi --exe `"$exe`" --game `"$gameDir`""
+if ($CloneCampaigns) {
+    $run = "`"$buildDir\swgbrecomp_cc.exe`" --run --multi --exe `"$wt\work\battlegrounds_x1.exe`" --game `"$gameDir`""
+}
 Write-Host ""
 Write-Host "run (headless):  $run --headless --watchdog 60"
-Write-Host "rebuild:         powershell -File tools\worktree_env.ps1 -Name $Name -Build"
+Write-Host "rebuild:         powershell -File tools\worktree_env.ps1 -Name $Name -Build$(if ($CloneCampaigns) { ' -CloneCampaigns' })"

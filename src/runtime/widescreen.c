@@ -29,6 +29,7 @@
 #include <string.h>
 
 #include "native32.h"
+#include "guest_addrs.h"
 #include "widescreen.h"
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
@@ -38,12 +39,12 @@ static int g_base_w, g_base_h;
 static uint32_t g_screen;   /* the game screen laid out at WxH */
 static int g_map_h = 774;   /* the map view's height in the base layout */
 
-void sub_005ED2D0(void);
-void sub_004F5210(void);
-void sub_004FEDB0(void);
-void sub_005D5D00(void);
-void sub_004F6A70(void);
-void sub_004F46B0(void);
+void G_SET_SCREEN_SIZE(void);
+void G_SCREEN_SIZE(void);
+void G_SCREEN_DRAW(void);
+void G_INFO_DRAW(void);
+void G_SCREEN_PAINT(void);
+void G_SCREEN_DELETE(void);
 
 static FILE* g_trace;
 static int g_trace_on;
@@ -76,7 +77,7 @@ static void hook_set_screen_size(void) {
     }
     if (!g_trace && getenv("SWGB_RES_TRACE")) g_trace = fopen(getenv("SWGB_RES_TRACE"), "w");
     if (g_trace) { fprintf(g_trace, "---- set_screen_size %d %d\n", (int)ARG(0), (int)ARG(1)); fflush(g_trace); g_trace_on = 1; }
-    sub_005ED2D0();
+    G_SET_SCREEN_SIZE();
 }
 
 /* SWGB_RES_TRACE=FILE: every new (target, caller) pair of indirect calls
@@ -177,21 +178,21 @@ static void hook_game_screen_size(void) {
     int W = widescreen_w, H = widescreen_h;
     if ((int)ARG(0) != W || (int)ARG(1) != H) {
         if (screen == g_screen) g_screen = 0;   /* another size: the game's own layout */
-        sub_004F5210();
+        G_SCREEN_SIZE();
         return;
     }
     ARG(0) = (uint32_t)g_base_w;
     ARG(1) = (uint32_t)g_base_h;
     uint32_t esp = g_esp;
-    sub_004F5210();
+    G_SCREEN_SIZE();
     uint32_t ret = g_eax, esp_after = g_esp;
     g_esp = esp;   /* below the caller's arguments: room for our own calls */
     g_esp -= 64;
 
     int dx = (W - g_base_w) / 2, dy = H - g_base_h;
     uint32_t a[4] = { 0, 0, (uint32_t)W, (uint32_t)H };
-    guest_thiscall(0x004B5660u, screen, 4, a);   /* TPanel::set_rect, not the screen's own */
-    if (!MEM32(screen + 0x10A4)) {   /* its own early way out: no interface yet */
+    guest_thiscall(G_PANEL_SET_RECT, screen, 4, a);   /* TPanel::set_rect, not the screen's own */
+    if (!MEM32(screen + G_SCREEN_IFACE)) {   /* its own early way out: no interface yet */
         g_esp = esp_after;
         g_eax = ret;
         return;
@@ -265,13 +266,13 @@ static uint32_t shifted_slp(uint32_t shape, int dx, int dy) {
 static void fill(uint32_t area, int x1, int y1, int x2, int y2, int color) {
     if (x2 < x1 || y2 < y1) return;
     uint32_t a[5] = { (uint32_t)x1, (uint32_t)y1, (uint32_t)x2, (uint32_t)y2, (uint32_t)color };
-    guest_thiscall(0x004736C0u, area, 5, a);
+    guest_thiscall(G_AREA_FILL, area, 5, a);
 }
 
 /* The screen's art shapes, moved for as long as the screen paints: its own
  * draw and its panels' (the unit-info and minimap panels put the piece of
  * the background under them back before they draw). */
-static const uint32_t g_art_at[] = { 0x100C, 0x108C, 0x10A0 };
+static const uint32_t g_art_at[] = { G_SCREEN_ART0, G_SCREEN_ART1, G_SCREEN_ART2 };
 static uint32_t g_art_shape[3], g_art_slp[3];
 static int g_art_depth;
 
@@ -321,31 +322,31 @@ static void base_size_off(void) {
     }
 /* The resource counters (vtable 0x00664E58 + 0x3C): their spacing by their
  * parent's width. */
-AT_BASE_SIZE(hook_resources_draw, sub_005D4930)
+AT_BASE_SIZE(hook_resources_draw, G_RESOURCES_DRAW)
 /* The game's vtable 0x00665A20 + 0x14: (re)loads the interface art
  * (sub_004FC220: 1600x1200, 1280x1024, 1024x768 or 800x600 by the screen's
  * size). */
-AT_BASE_SIZE(hook_game_interface, sub_005E2C50)
+AT_BASE_SIZE(hook_game_interface, G_GAME_INTERFACE)
 
 /* vtable 0x0065CE24 + 0x60, sub_004F6A70: the screen paints itself and its
  * panels. */
 static void hook_game_screen_paint(void) {
     uint32_t screen = g_ecx;
-    if (!laid_out(screen)) { sub_004F6A70(); return; }
+    if (!laid_out(screen)) { G_SCREEN_PAINT(); return; }
     art_shift(screen);
-    sub_004F6A70();
+    G_SCREEN_PAINT();
     art_restore();
 }
 
 static void hook_game_screen_draw(void) {
     uint32_t screen = g_ecx;
     int W = widescreen_w, H = widescreen_h;
-    if (!laid_out(screen)) { sub_004FEDB0(); return; }
+    if (!laid_out(screen)) { G_SCREEN_DRAW(); return; }
     int dx = (W - g_base_w) / 2;
     art_shift(screen);
     base_size_on();   /* the overlays' 1280 places */
     uint32_t esp = g_esp;
-    sub_004FEDB0();
+    G_SCREEN_DRAW();
     uint32_t esp_after = g_esp;
     base_size_off();
     art_restore();
@@ -357,11 +358,11 @@ static void hook_game_screen_draw(void) {
         static const char name[] = "widescreen";
         uint32_t lk[2] = { (uint32_t)(uintptr_t)name, 1 };
         g_esp = esp - 64;
-        guest_thiscall(0x00471FD0u, area, 2, lk);
+        guest_thiscall(G_AREA_LOCK, area, 2, lk);
         if (g_eax && AREA_BITS(area)) {
             fill(area, 0, top, dx - 1, H - 1, 0);
             fill(area, dx + g_base_w, top, W - 1, H - 1, 0);
-            guest_thiscall(0x00472080u, area, 1, lk);
+            guest_thiscall(G_AREA_UNLOCK, area, 1, lk);
         }
         g_esp = esp_after;
     }
@@ -373,9 +374,9 @@ static void hook_game_screen_draw(void) {
  * base width. */
 static void hook_info_draw(void) {
     uint32_t area = MEM32(g_ecx + 0x20);
-    if (!g_screen || !area || (int)MEM32(area + 0x18) != widescreen_w || MEM32(g_ecx + 0x40) != g_screen) { sub_005D5D00(); return; }
+    if (!g_screen || !area || (int)MEM32(area + 0x18) != widescreen_w || MEM32(g_ecx + 0x40) != g_screen) { G_INFO_DRAW(); return; }
     MEM32(area + 0x18) = (uint32_t)g_base_w;
-    sub_005D5D00();
+    G_INFO_DRAW();
     MEM32(area + 0x18) = (uint32_t)widescreen_w;
 }
 
@@ -405,27 +406,27 @@ void widescreen_LoadStringA(void) {
 /* vtable 0x0065CE24 + 0x00: the game screen's destructor. */
 static void hook_game_screen_delete(void) {
     if (g_ecx == g_screen) g_screen = 0;
-    sub_004F46B0();
+    G_SCREEN_DELETE();
 }
 
 static recomp_func_t hooked(uint32_t va) {
     if (!widescreen_w) return NULL;
     switch (va) {
-    case 0x005ED2D0u: return hook_set_screen_size;
-    case 0x004F5210u: return hook_game_screen_size;
-    case 0x004FEDB0u: return hook_game_screen_draw;
-    case 0x005D5D00u: return hook_info_draw;
-    case 0x004F6A70u: return hook_game_screen_paint;
-    case 0x005D4930u: return hook_resources_draw;
-    case 0x005E2C50u: return hook_game_interface;
-    case 0x004F46B0u: return hook_game_screen_delete;
+    case G_SET_SCREEN_SIZE_VA: return hook_set_screen_size;
+    case G_SCREEN_SIZE_VA: return hook_game_screen_size;
+    case G_SCREEN_DRAW_VA: return hook_game_screen_draw;
+    case G_INFO_DRAW_VA: return hook_info_draw;
+    case G_SCREEN_PAINT_VA: return hook_game_screen_paint;
+    case G_RESOURCES_DRAW_VA: return hook_resources_draw;
+    case G_GAME_INTERFACE_VA: return hook_game_interface;
+    case G_SCREEN_DELETE_VA: return hook_game_screen_delete;
     }
     return NULL;
 }
 
 recomp_func_t widescreen_lookup(uint32_t va) {
     recomp_func_t f = hooked(va);
-    if (g_trace_on && va < 0x0062E000u)   /* game code: the CRT keeps x87 values live across calls */
+    if (g_trace_on && va < G_CODE_END)   /* game code: the CRT keeps x87 values live across calls */
         return trace_icall(va, f ? f : recomp_lookup(va));
     return f;
 }

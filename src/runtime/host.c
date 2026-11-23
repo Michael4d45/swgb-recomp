@@ -46,6 +46,21 @@ extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 #define IMAGE_BASE 0x00400000u
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
 
+/* swgbrecomp_cc.exe (cmake/clone_campaigns.cmake) is the Clone Campaigns
+ * expansion: its own exe, the name it finds itself by, its registry key and
+ * what is on its disc (it looks for that on every CD-ROM drive itself). */
+#ifdef SWGB_CC
+#define GUEST_EXE "battlegrounds_x1.exe"
+#define GAME_KEY "Software\\LucasArts Entertainment Company LLC\\Star Wars Galactic Battlegrounds: Clone Campaigns\\1.0"
+#define CD_PROBE "gamedata\\game\\battlegrounds_x1.exe"
+#define CD_NAME "the Clone Campaigns disc"
+#else
+#define GUEST_EXE "Battlegrounds.exe"
+#define GAME_KEY "Software\\LucasArts Entertainment Company LLC\\Star Wars Galactic Battlegrounds\\1.0"
+#define CD_PROBE "Game\\Avi"
+#define CD_NAME "disc 2"
+#endif
+
 static DWORD g_watchdog_s;
 static int   g_headless;
 static int   g_hide;   /* --headless without a private desktop: keep windows off the screen */
@@ -197,18 +212,17 @@ static void shim_ExitProcess(void) {
 static char g_cd = 0;
 
 static void cd_pick(const char* want) {
-    char env[8], root[] = "?:\\", probe[16];
+    char env[8], root[] = "?:\\", probe[48];
     if (want && *want) g_cd = (char)(want[0] & ~0x20);
     else if (GetEnvironmentVariableA("CD_DRIVE", env, sizeof env)) g_cd = (char)(env[0] & ~0x20);
     for (char c = 'D'; c <= 'Z' && !g_cd; c++) {
         root[0] = c;
-        _snprintf(probe, sizeof probe, "%sGame\\Avi", root);
+        _snprintf(probe, sizeof probe, "%s" CD_PROBE, root);
         if (GetDriveTypeA(root) == DRIVE_CDROM && GetFileAttributesA(probe) != INVALID_FILE_ATTRIBUTES) g_cd = c;
     }
-    if (!g_cd) { printf("  no play disc found: put disc 2 in the drive or mount its image (or set CD_DRIVE)\n"); return; }
+    if (!g_cd) { printf("  no play disc found: put " CD_NAME " in the drive or mount its image (or set CD_DRIVE)\n"); return; }
     root[0] = g_cd;
-    RegSetKeyValueA(HKEY_LOCAL_MACHINE, "Software\\LucasArts Entertainment Company LLC\\Star Wars Galactic Battlegrounds\\1.0",
-                    "CDPath", REG_SZ, root, sizeof root);
+    RegSetKeyValueA(HKEY_LOCAL_MACHINE, GAME_KEY, "CDPath", REG_SZ, root, sizeof root);
     printf("  play disc: %c:\n", g_cd);
 }
 
@@ -1012,7 +1026,7 @@ static DWORD WINAPI watchdog(LPVOID unused) {
 }
 
 int main(int argc, char** argv) {
-    const char* exe = "work\\Battlegrounds.exe";
+    const char* exe = "work\\" GUEST_EXE;
     const char* game = "game";
     const char* cd = NULL;
     char exe_full[MAX_PATH], game_full[MAX_PATH], guest_args[512] = "";
@@ -1074,7 +1088,7 @@ int main(int argc, char** argv) {
         else {
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
-                   "                  [--exe work\\Battlegrounds.exe] [--game game] [--cd E] [--films DIR]\n"
+                   "                  [--exe work\\" GUEST_EXE "] [--game game] [--cd E] [--films DIR]\n"
                    "                  [--res WxH|desktop] [--fps N] [--fps-log]\n"
                    "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
                    "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
@@ -1088,7 +1102,7 @@ int main(int argc, char** argv) {
     GetFullPathNameA(game, MAX_PATH, game_full, NULL);
     cd_pick(cd);
     if (g_multi && run) reg_isolate(game_full);
-    _snprintf(g_guest_exe, sizeof g_guest_exe - 1, "%s\\Battlegrounds.exe", game_full);
+    _snprintf(g_guest_exe, sizeof g_guest_exe - 1, "%s\\" GUEST_EXE, game_full);
     _snprintf(g_guest_cmdline, sizeof g_guest_cmdline - 1, "\"%s\"%s", g_guest_exe, guest_args);
 
     native32_init();
