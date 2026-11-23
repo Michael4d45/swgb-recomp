@@ -48,6 +48,19 @@ flat colour over the rest): the first L2 run found it.
 `--build` is the folder with both hosts (default `builds\integration`);
 `--build-cc` takes Clone Campaigns' from another folder.
 
+One run at a time owns the `testing-*` folders (`games\testing.lock`, its
+PID): a second run at once is refused unless it passes `--prefix NAME` (its
+own `NAME-*` folders). Two games in one folder share its saves, profile and
+registry hive; two runs that did made every edge case of `present_check` fail.
+
+**Flaky checks.** A game check (not a soak) that fails is run once more
+(`--retry N`, default 1). If it passes then, it is **FLAKY**: the run still
+passes, and the report keeps both tries. On main of 2026-11-22, present group
+A failed once in three runs on the same build: after Alt+Enter, eight
+fullscreen edge cases saw the game read the cursor at 400,300 (what the host
+reports while another window is active) although the view scrolled. The other
+two runs passed all 48 cases.
+
 **Results.** `A:\Games\star\test-results\<time>-<level>\`: `summary.json`
 (every check: status, time, lines, figures, shots), `report.md` and
 `report.html` (the shots inline), and a folder per check with its logs, keys

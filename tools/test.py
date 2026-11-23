@@ -167,7 +167,7 @@ class Ctx:
             if kind not in self.pools:
                 q = queue.Queue()
                 for k in range(self.a.jobs):
-                    q.put(os.path.join(self.a.games, 'testing-%s-%d' % (kind, k)))
+                    q.put(os.path.join(self.a.games, '%s-%s-%d' % (self.a.prefix, kind, k)))
                 self.pools[kind] = q
             return self.pools[kind]
 
@@ -1047,6 +1047,27 @@ def run_check(ctx, c):
     return r
 
 
+def take_lock(a):
+    """One run at a time in a set of game folders: two games in one folder share its saves,
+    profile and registry hive (two runs at once made present_check fail every edge)."""
+    os.makedirs(a.games, exist_ok=True)
+    lock = os.path.join(a.games, '%s.lock' % a.prefix)
+    try:
+        pid = int(open(lock).read().split()[0])
+        alive = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'], capture_output=True, text=True).stdout
+        if pid != os.getpid() and str(pid) in alive and 'python' in alive.lower():
+            print('another test.py run (PID %d) is using %s: wait for it, or pass --prefix NAME'
+                  % (pid, os.path.join(a.games, a.prefix + '-*')))
+            return False
+    except (OSError, ValueError, IndexError):
+        pass
+    with open(lock, 'w') as f:
+        f.write('%d %s\n' % (os.getpid(), datetime.datetime.now().isoformat(timespec='seconds')))
+    import atexit
+    atexit.register(lambda: os.path.exists(lock) and open(lock).read().startswith('%d ' % os.getpid()) and os.remove(lock))
+    return True
+
+
 def git(*args):
     try:
         return subprocess.run(['git', '-C', ROOT] + list(args), capture_output=True, text=True).stdout.strip()
@@ -1066,7 +1087,7 @@ def sha256(path):
 
 def report(ctx, results, meta):
     out = ctx.results
-    counts = {s: sum(1 for r in results if r.status == s) for s in ('PASS', 'FAIL', 'ERROR', 'SKIP')}
+    counts = {s: sum(1 for r in results if r.status == s) for s in ('PASS', 'FLAKY', 'FAIL', 'ERROR', 'SKIP')}
     meta['counts'] = counts
     meta['ok'] = not counts['FAIL'] and not counts['ERROR']
     json.dump(dict(meta, checks=[r.as_dict() for r in results]), open(os.path.join(out, 'summary.json'), 'w'), indent=1)
@@ -1075,7 +1096,8 @@ def report(ctx, results, meta):
           '%s, %s, %.1f min, %d jobs. Build `%s`. Commit `%s`%s.' % (
               meta['started'], meta['host'], meta['seconds'] / 60, meta['jobs'], meta['build'], meta['commit'],
               ' (with local changes)' if meta['dirty'] else ''), '',
-          '**%d passed, %d failed, %d errors, %d skipped.**' % (counts['PASS'], counts['FAIL'], counts['ERROR'], counts['SKIP']), '',
+          '**%d passed, %d flaky (failed, then passed), %d failed, %d errors, %d skipped.**' % (
+              counts['PASS'], counts['FLAKY'], counts['FAIL'], counts['ERROR'], counts['SKIP']), '',
           '| Check | Level | Result | Time | What |', '|---|---|---|---|---|']
     for r in results:
         md.append('| %s | %s | **%s** | %.0f s | %s |' % (r.name, r.check.level, r.status, r.seconds, r.check.doc.replace('|', '/')))
@@ -1105,14 +1127,14 @@ def report(ctx, results, meta):
 body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;margin:0 auto;max-width:1200px;padding:16px}
 table{border-collapse:collapse;width:100%%}td,th{border-bottom:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
 tr.pass b,section.pass h2 span{color:var(--pass)}tr.fail b,tr.error b,section.fail h2 span,section.error h2 span{color:var(--fail)}
-tr.skip b,section.skip h2 span{color:var(--skip)}pre{white-space:pre-wrap;color:var(--mut);font-size:12px}
+tr.skip b,section.skip h2 span,tr.flaky b,section.flaky h2 span{color:var(--skip)}pre{white-space:pre-wrap;color:var(--mut);font-size:12px}
 .shots{display:flex;flex-wrap:wrap;gap:8px}figure{margin:0;width:280px}img{width:100%%;border:1px solid var(--line)}
 figcaption{font-size:12px;color:var(--mut)}.m{font-family:monospace;font-size:12px;color:var(--mut)}a{color:inherit}
 </style></head><body><h1>%(title)s</h1><p>%(sub)s</p><table><tr><th>Check</th><th>Level</th><th>Result</th><th>Time</th><th>What</th></tr>%(rows)s</table>%(secs)s</body></html>'''
     open(os.path.join(out, 'report.html'), 'w', encoding='utf-8').write(page % {
         'level': e(meta['level']), 'title': 'Test run: %s &mdash; %s' % (e(meta['level']), 'PASS' if meta['ok'] else 'FAIL'),
-        'sub': e('%s, %.1f min. %d passed, %d failed, %d errors, %d skipped. Build %s, commit %s.' % (
-            meta['started'], meta['seconds'] / 60, counts['PASS'], counts['FAIL'], counts['ERROR'], counts['SKIP'],
+        'sub': e('%s, %.1f min. %d passed, %d flaky, %d failed, %d errors, %d skipped. Build %s, commit %s.' % (
+            meta['started'], meta['seconds'] / 60, counts['PASS'], counts['FLAKY'], counts['FAIL'], counts['ERROR'], counts['SKIP'],
             meta['build'], meta['commit'])),
         'rows': rows, 'secs': secs})
     return meta['ok']
@@ -1140,6 +1162,7 @@ def main():
     ap.add_argument('--exe-cc', default=os.path.join(MAIN, 'work', 'battlegrounds_x1.exe'))
     ap.add_argument('--game-template', default=os.path.join(MAIN, 'game'), help='the shared install the game folders link to')
     ap.add_argument('--games', default=os.path.join(STAR, 'games'), help='where the testing-* game folders go')
+    ap.add_argument('--prefix', default='testing', help=r'the game folders are GAMES\PREFIX-<base|cc>-<k>: a second run at once needs another')
     ap.add_argument('--cc-profiles', default=os.path.join(STAR, 'games', 'clone-campaigns'),
                     help='Clone Campaigns: the player.nf* (an 800x600 profile) its game folders start with')
     ap.add_argument('--pcrecomp', default=None)
@@ -1147,6 +1170,7 @@ def main():
     ap.add_argument('--civ-minutes', type=float, default=2.5, help='functional: minutes of each civilization skirmish')
     ap.add_argument('--perf-minutes', type=float, default=2.5, help='functional: minutes of the frame-rate skirmish')
     ap.add_argument('--seed', type=int, default=20261122, help='soak.py --seed')
+    ap.add_argument('--retry', type=int, default=1, help='run a failed game check again this many times (FLAKY if it passes)')
     ap.add_argument('--real-screen', action='store_true',
                     help='L4: the user said the screen, mouse and keyboard may be taken over now')
     a = ap.parse_args()
@@ -1166,6 +1190,8 @@ def main():
         print('%d checks, about %.0f game-minutes' % (len(checks), sum(c.minutes for c in checks if c.game)))
         return 0
     sys.stdout.reconfigure(line_buffering=True)
+    if any(c.game for c in checks) and not take_lock(a):
+        return 2
     os.makedirs(a.results, exist_ok=True)
     ctx = Ctx(a)
     print('test: %s, %d checks, %d games at once, build %s -> %s' % (a.level, len(checks), a.jobs, a.build, a.results))
@@ -1190,6 +1216,23 @@ def main():
         # a thread per game slot: each kind has --jobs folders, and at most --jobs games run at once
         with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
             list(ex.map(one, games))
+        # a game check that failed is run again (--retry): passing then, it is FLAKY, which
+        # does not fail the run but is listed (the first try's lines are kept in its report)
+        for attempt in range(a.retry):
+            again = [r for r in results if r.status == 'FAIL' and r.check.game and r.check.level != 'soak']
+            if not again or ctx.cancelled:
+                break
+            print('retrying %d failed check(s): %s' % (len(again), ', '.join(r.name for r in again)))
+            first = {r.name: r for r in again}
+            with lock:
+                for r in again:
+                    results.remove(r)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
+                retried = list(ex.map(one, [r.check for r in again]))
+            for r in retried:
+                if r.status == 'PASS':
+                    r.status = 'FLAKY'
+                r.lines = ['first try: %s' % first[r.name].status] + ['  ' + l for l in first[r.name].lines] +                           ['second try:'] + r.lines
     except KeyboardInterrupt:
         print('interrupted: ending the processes this run started')
         ctx.stop_all()
@@ -1202,8 +1245,8 @@ def main():
             'hosts': {k: sha256(ctx.host(k)) for k in GAMES}, 'results': a.results}
     ok = report(ctx, results, meta)
     c = meta['counts']
-    print('%s: %d passed, %d failed, %d errors, %d skipped in %.1f min; %s' % (
-        'PASS' if ok else 'FAIL', c['PASS'], c['FAIL'], c['ERROR'], c['SKIP'], meta['seconds'] / 60,
+    print('%s: %d passed, %d flaky, %d failed, %d errors, %d skipped in %.1f min; %s' % (
+        'PASS' if ok else 'FAIL', c['PASS'], c['FLAKY'], c['FAIL'], c['ERROR'], c['SKIP'], meta['seconds'] / 60,
         os.path.join(a.results, 'report.html')))
     return 0 if ok else 1
 
