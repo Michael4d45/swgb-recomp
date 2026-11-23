@@ -152,7 +152,7 @@ class Ctx:
         self.cancelled = False
 
     def host(self, kind):
-        return os.path.join(self.a.build, GAMES[kind]['host'])
+        return os.path.join(self.a.build_cc if kind == 'cc' and self.a.build_cc else self.a.build, GAMES[kind]['host'])
 
     def exe(self, kind):
         return self.a.exe if kind == 'base' else self.a.exe_cc
@@ -173,7 +173,7 @@ class Ctx:
 
     def acquire(self, kind):
         folder = self.pool(kind).get()
-        ensure_game(self.a.game_template, folder, kind)
+        ensure_game(self.a.game_template, folder, kind, self.a.cc_profiles if kind == 'cc' else None)
         return folder
 
     def release(self, kind, folder):
@@ -203,10 +203,18 @@ def kill_tree(p):
         subprocess.run(['taskkill', '/T', '/F', '/PID', str(p.pid)], capture_output=True)
 
 
-def ensure_game(template, dst, kind):
+def ensure_game(template, dst, kind, profiles=None):
     """A game folder of its own: hard links to the shared install (never written: the game
-    only reads them), real copies of what the game writes (SaveGame, Scenario, player.nf*)."""
+    only reads them), real copies of what the game writes (SaveGame, Scenario, player.nf*).
+    profiles: a folder whose player.nf* to use instead of the template's (Clone Campaigns:
+    the shared install's profile was saved by Steam's widescreen-mod exe at 2560x1440, and
+    the game's Options dialog switches to it, without --res)."""
+    marker = os.path.join(dst, 'swgb-testing.txt')
+    if os.path.exists(marker):
+        return
+    seed_profiles(dst, profiles)
     if os.path.isdir(os.path.join(dst, 'Data')):
+        open(marker, 'w').write('profiles: %s\n' % (profiles or template))
         return
     for dirpath, _, files in os.walk(template):
         rel = os.path.relpath(dirpath, template)
@@ -220,6 +228,16 @@ def ensure_game(template, dst, kind):
                 shutil.copy2(src, d)
             else:
                 os.link(src, d)
+    seed_profiles(dst, profiles)
+    open(marker, 'w').write('profiles: %s\n' % (profiles or template))
+
+
+def seed_profiles(dst, profiles):
+    if not profiles or not os.path.isdir(profiles) or not os.path.isdir(dst):
+        return
+    for f in os.listdir(profiles):
+        if f.lower().startswith('player.nf'):
+            shutil.copy2(os.path.join(profiles, f), os.path.join(dst, f))
 
 
 def run(ctx, r, cmd, timeout, log_name, cwd=None, env=None):
@@ -684,7 +702,8 @@ def films_fn(kind):
         os.makedirs(out, exist_ok=True)
         s = [(0, 'on:logo1'), (4, 'shot=%s' % os.path.join(out, 'logo.bmp')),
              (0, 'on:intro'), (30, 'shot=%s' % os.path.join(out, 'intro.bmp'))] if kind == 'base' else \
-            [(8, 'shot=%s' % os.path.join(out, 'logo.bmp')), (20, 'shot=%s' % os.path.join(out, 'intro.bmp'))]
+            [(0, 'on:xlogo1'), (6, 'shot=%s' % os.path.join(out, 'logo.bmp')),
+             (0, 'on:xintro'), (30, 'shot=%s' % os.path.join(out, 'intro.bmp'))]
         # on:NAME waits for the file (it takes no time): kept in order, unsorted
         keys = os.path.join(out, 'run_keys.txt')
         with open(keys, 'w', newline='\n') as f:
@@ -1101,6 +1120,7 @@ def main():
     ap.add_argument('--with-lower', action='store_true', help='--level real: the lower levels too')
     ap.add_argument('--build', default=os.path.join(STAR, 'builds', 'integration'),
                     help='the folder with swgbrecomp.exe (and swgbrecomp_cc.exe)')
+    ap.add_argument('--build-cc', default=None, help='the folder with swgbrecomp_cc.exe, when not --build')
     cc = ap.add_mutually_exclusive_group()
     cc.add_argument('--cc', dest='cc', action='store_true', default=None, help='Clone Campaigns too (a missing host fails)')
     cc.add_argument('--no-cc', dest='cc', action='store_false', help='the base game only')
@@ -1115,6 +1135,8 @@ def main():
     ap.add_argument('--exe-cc', default=os.path.join(MAIN, 'work', 'battlegrounds_x1.exe'))
     ap.add_argument('--game-template', default=os.path.join(MAIN, 'game'), help='the shared install the game folders link to')
     ap.add_argument('--games', default=os.path.join(STAR, 'games'), help='where the testing-* game folders go')
+    ap.add_argument('--cc-profiles', default=os.path.join(STAR, 'games', 'clone-campaigns'),
+                    help='Clone Campaigns: the player.nf* (an 800x600 profile) its game folders start with')
     ap.add_argument('--pcrecomp', default=None)
     ap.add_argument('--soak-scale', type=float, default=1.0, help='soak: each run\'s minutes times this')
     ap.add_argument('--civ-minutes', type=float, default=2.5, help='functional: minutes of each civilization skirmish')
