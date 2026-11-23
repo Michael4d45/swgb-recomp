@@ -934,8 +934,9 @@ SOAKS = [
 
 def soak_fn(name, kind, extra, minutes):
     def fn(ctx, r):
-        # a fight's first wave sets off about 4 minutes in and wins 1-3 minutes later
-        m = max(12 if name == 'fight' else 3, minutes * ctx.a.soak_scale)
+        # whatever --soak-scale says: a defeat comes about 11 minutes in; a fight's first wave
+        # sets off at about 4 and wins 1-8 minutes later (a 12-minute trial ran out at 0 enemy pixels)
+        m = max({'defeat': 15, 'fight': 20}.get(name, 3), minutes * ctx.a.soak_scale)
         cmd = [sys.executable, os.path.join(HERE, 'soak.py')] + (['--cc'] if kind == 'cc' else []) + extra + \
               ['--minutes', '%g' % m, '--run', ctx.host(kind), '--exe', ctx.exe(kind), '--game', r.game,
                '--out', r.dir, '--seed', str(ctx.a.seed)]
