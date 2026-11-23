@@ -3,6 +3,14 @@
 
     py -3 tools/soak.py [--mode skirmish|monkey|campaign] [--runs N] [--minutes M]
                         [--jobs J] [--seed S] [--run EXE] [--game DIR] [--out DIR]
+                        [--cc] [--civs A,B] [--my-civ C]
+
+--cc plays Clone Campaigns (swgbrecomp_cc.exe, battlegrounds_x1.exe): its
+Single Player menu (Standard Game and Saved Game a row lower, the campaigns
+are Episode II's: Confederacy and Galactic Republic) and its nine
+civilizations. --civs gives the computer players' civilizations in turn
+instead of drawn ones, --my-civ the player's (e.g. --civs
+Republic,Confederacy --my-civ Republic).
 
 Every run is `--headless --multi` (never a window, never the user's game):
 
@@ -97,6 +105,23 @@ SCORE_MENU = (710, 514)              # the score screen: Main Menu (Scenario Men
 OOM9_MISSIONS = [(150, 140), (372, 140), (135, 265), (368, 265), (90, 430)]
 WIN_CHEAT = 'skywalker'              # typed in the chat: instant victory
 COMMAND_CENTER = (400, 170)         # where the view starts: the command center
+FORCED_CIVS = []                    # --civs: the computers' civilizations, in turn
+MY_CIV = [None]                     # --my-civ
+MY_CIV_ROW = 94                     # the player's row on the setup screen
+
+
+def clone_campaigns():
+    """--cc: Clone Campaigns' screens. Its Single Player menu has Episode
+    I,IV,V,VI Campaigns (the base game's six, at SP_CAMPAIGNS), Episode II
+    Campaigns, Standard Game, Custom Campaign, Saved Game; its setup screen is
+    the base game's with nine civilizations; its Episode II campaign screen has
+    two; the mission screen and difficulty dialog are the base game's."""
+    global SP_STANDARD, SP_CAMPAIGNS, SP_SAVED, CIVS, CIV_ITEMS, CAMPAIGNS
+    SP_STANDARD, SP_CAMPAIGNS, SP_SAVED = (603, 228), (603, 170), (603, 344)
+    CIVS = ['Confederacy', 'Galactic Empire', 'Gungans', 'Rebel Alliance', 'Republic', 'Royal Naboo',
+            'Trade Federation', 'Wookiees', 'Random']
+    CIV_ITEMS = len(CIVS)
+    CAMPAIGNS = {'Confederacy': (225, 315), 'Galactic Republic': (555, 315)}
 MONKEY_KEYS = list('abcdefghijklmnopqrstuvwxyz0123456789') + \
     ['esc', 'enter', 'space', 'tab', 'up', 'down', 'left', 'right', 'home', 'end', 'bksp'] + \
     ['f1', 'f2', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f11']   # F3 pauses, F10 is the menu: kept off
@@ -143,8 +168,13 @@ def setup_skirmish(s, rnd, t):
     t = pick(DD_SIZE, size, s, t)
     t = pick(DD_DIFFICULTY, diff, s, t)
     civs = []
+    if MY_CIV[0]:                                   # the player's own row, above the computers'
+        k = CIVS.index(MY_CIV[0])
+        s.click(t, (249, MY_CIV_ROW))
+        s.click(t + 1.2, (290, MY_CIV_ROW + 25 + 21 * k))
+        t += 2.5
     for p in range(others):
-        k = rnd.randrange(CIV_ITEMS)
+        k = CIVS.index(FORCED_CIVS[p % len(FORCED_CIVS)]) if FORCED_CIVS else rnd.randrange(CIV_ITEMS)
         civs.append(CIVS[k])
         y = CIV_ROW0 + CIV_ROW_STEP * p
         s.click(t, (249, y))
@@ -153,6 +183,8 @@ def setup_skirmish(s, rnd, t):
     s.click(t + 1, SETUP_START)
     what = {'others': others, 'location': LOCATIONS[loc], 'size': SIZES[size],
             'difficulty': DIFFICULTIES[diff], 'civs': civs}
+    if MY_CIV[0]:
+        what['my_civ'] = MY_CIV[0]
     return t + 1, what
 
 
@@ -351,7 +383,7 @@ def analyse(log, keys_text):
 def plan_play(s, rnd, out, args, mode, rnd_seed):
     """skirmish, monkey, campaign: a setup, then the idle habits or the monkey. Returns (end, what)."""
     if mode == 'campaign':
-        t, what = setup_campaign(s, rnd, 20)
+        t, what = setup_campaign(s, rnd, 20, args.campaign or None)
         start = t + 100                  # the briefing (~35 s), then the mission loads
         # Its Objectives dialog: Escape closes it. Not its OK button: once the dialog is gone,
         # that spot is the minimap, and the view jumps into unexplored black.
@@ -557,15 +589,38 @@ def main():
                     help='the game speed (the game menu: Options); fast plays more game per hour')
     ap.add_argument('--no-save', dest='save', action='store_false',
                     help='skip the save at 40%% of the run (the game menu: Save)')
-    ap.add_argument('--run', default=r'A:\Games\star\builds\coverage\swgbrecomp.exe')
-    ap.add_argument('--exe', default=r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
-    ap.add_argument('--game', default=r'A:\Games\star\games\coverage',
-                    help='the game folder; job k > 0 uses a copy, DIR-soakK (hard links)')
+    ap.add_argument('--cc', action='store_true', help="Clone Campaigns: its host, exe, menus and civilizations")
+    ap.add_argument('--civs', default='', help='the computer players\' civilizations, in turn (comma-separated)')
+    ap.add_argument('--my-civ', default='', help="the player's civilization")
+    ap.add_argument('--campaign', default='', help='campaign mode: this campaign, not a drawn one')
+    ap.add_argument('--run', default=None,
+                    help=r'the host (A:\Games\star\builds\coverage\swgbrecomp.exe; --cc: ...\clone-campaigns\swgbrecomp_cc.exe)')
+    ap.add_argument('--exe', default=None,
+                    help=r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe (--cc: work\battlegrounds_x1.exe here)')
+    ap.add_argument('--game', default=None,
+                    help=r'the game folder (A:\Games\star\games\coverage; --cc: ...\clone-campaigns); '
+                         'job k > 0 uses a copy, DIR-soakK (hard links)')
     ap.add_argument('--extra', default='',
                     help='more host options, e.g. "--firsthit 0x401000 0x651000" with a SWGB_TRACE build')
     ap.add_argument('--out', default=os.path.join(ROOT, 'work', 'soak',
                                                   datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
     args = ap.parse_args()
+    if args.cc:
+        clone_campaigns()
+        if args.mode in ENDGAME:
+            sys.exit('--cc: --mode %s plays the base game\'s OOM-9 campaign; skirmish, monkey or campaign' % args.mode)
+    args.run = args.run or (r'A:\Games\star\builds\clone-campaigns\swgbrecomp_cc.exe' if args.cc
+                            else r'A:\Games\star\builds\coverage\swgbrecomp.exe')
+    args.exe = args.exe or (os.path.join(ROOT, 'work', 'battlegrounds_x1.exe') if args.cc
+                            else r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
+    args.game = args.game or (r'A:\Games\star\games\clone-campaigns' if args.cc else r'A:\Games\star\games\coverage')
+    for c in [c for c in args.civs.split(',') if c] + ([args.my_civ] if args.my_civ else []):
+        if c not in CIVS:
+            sys.exit('no civilization %r: %s' % (c, ', '.join(CIVS)))
+    if args.campaign and args.campaign not in CAMPAIGNS:
+        sys.exit('no campaign %r: %s' % (args.campaign, ', '.join(sorted(CAMPAIGNS))))
+    FORCED_CIVS[:] = [c for c in args.civs.split(',') if c]
+    MY_CIV[0] = args.my_civ or None
     sys.stdout.reconfigure(line_buffering=True)    # a run's line as it ends, into a redirected log too
     args.out = os.path.abspath(args.out)        # the game runs in its own folder
     seed = args.seed if args.seed is not None else random.randrange(1 << 20)
