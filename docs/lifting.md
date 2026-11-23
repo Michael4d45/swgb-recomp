@@ -290,7 +290,30 @@ The C++ and SEH frames are found in the catalog at lift time
 (`eh32.frame`), so nothing about them is per build: 13 functions with
 somewhere to continue and 19 resume points, the same as the base game.
 
-The lift: 21,057 functions (the base game: 20,801), 0 stubs, 0 lift errors,
+### Pointers the catalog dropped, in x1
+
+`tools/code_ptr_seeds.py --exe work/battlegrounds_x1.exe --catalog
+work/functions_x1.json --out work/code_ptr_seeds_cc.json` classifies x1's
+262 candidates: 234 noise, 14 `seh`, 2 labels, 2 vtable slots and 10
+pointers. All 12 seeds are real and are in `CC_SEEDS`:
+
+- `0x00571380`, a vtable slot (`0x00664E64`) behind a switch's index and
+  jump tables (`0x00571350`-`0x0057137F`) that disasm32 decoded as code: a
+  false `sub_00571372` running to `0x00571AFD` swallowed the real function,
+  as the base game's `sub_0056480C` swallowed `0x005648A0`. Unseeded, the
+  first call through that slot is an unresolved indirect call.
+- `0x004C3EF0` (`int3; mov al, 1; ret 4`, in three vtables), the base
+  game's `0x004C39B0`.
+- Ten of zlib's allocator and stream callbacks (`0x00629BF0`,
+  `0x00629DD0`-`0x00629EB0`), stored into a `z_stream` by code the catalog
+  does not reach, the base game's `0x00625E80`-`0x00626140`.
+
+The base game's other seeds have x1 counterparts that are already catalog
+entries (`0x005648A0` is `0x00566EF0`, `0x005C6D90` is `0x005CA950`, six of
+the zlib callbacks). `tools/x1_addrs.py` finds a base address in x1 (below);
+it found every one of these.
+
+The lift: 21,069 functions (the base game: 20,820), 0 stubs, 0 lift errors,
 182 with no terminator, 5.5M lines of C in 53 files. The catalog: 21,057
 entries, 95.3% of the code range.
 
@@ -299,14 +322,45 @@ entries, 95.3% of the code range.
 The lifted code and its dispatch table are linked into the host, so one
 host runs one program: `swgbrecomp_cc.exe` is a second target
 (`cmake/clone_campaigns.cmake`, built only when `src\recomp\gen_cc` has a
-lift in it), from the same runtime sources with `SWGB_CC` defined. That
-picks three things in `host.c`: the exe's name (the guest's own
+lift in it). It reads the base target's sources, definitions, libraries and
+link options, so every runtime file (softdd, the presenter, frame pacing,
+the indirect-call cache, the films, the coverage stop) is the same code in
+both, and it has the same 16 MB stack. `SWGB_CC` picks three things in
+`host.c`: the exe's name (the guest's own
 `GetModuleFileNameA` and its icons come from `battlegrounds_x1.exe` in the
 game folder), its registry key (`...Star Wars Galactic Battlegrounds: Clone
 Campaigns\1.0`, where `CDPath` goes), and what is on its disc. The
 expansion looks on every CD-ROM drive, C to Y, for
 `gamedata\game\battlegrounds_x1.exe` (`0x00424930`-`0x00424A2C`) and starts
 without it, as the base game does on Steam.
+
+The rest of what the runtime knows about the engine is in
+`src/runtime/guest_addrs.h`, per exe. Frame pacing and the profiler read
+the game object; `--res` hooks the game screen's virtual functions and
+calls a few of the engine's own. In x1 the functions moved, and two classes
+grew: the game screen by 0x18 bytes from about `+0x1084` (its frame gate
+`+0x1258/+0x125C` is `+0x1270/+0x1274`, its interface flag `+0x10A4` is
+`+0x10BC`, two of its art shapes moved), the game object not at all.
+
+| | base | x1 | how |
+|---|---|---|---|
+| game object pointer | `0x006A0FD4` | `0x006A3684` | 2,446 uses, one answer |
+| game screen vtable | `0x0065CE24` | `0x0065FE48` | the store in its constructor (`0x004F1820`, `0x004F2BA0`) |
+| its destructor, draw, handle_size, paint (`+0x00`, `+0x3C`, `+0x5C`, `+0x60`) | `0x004F46B0`, `0x004FEDB0`, `0x004F5210`, `0x004F6A70` | `0x004F5A30`, `0x00500230`, `0x004F6600`, `0x004F7E60` | the vtable's slots |
+| set_screen_size, interface (game vtable `+0x68`, `+0x14`) | `0x005ED2D0`, `0x005E2C50` | `0x005F1030`, `0x005E68B0` | the vtable's slots |
+| resources, unit-info draw (`+0x3C`) | `0x005D4930`, `0x005D5D00` | `0x005D84D0`, `0x005D98A0` | the vtables' slots |
+| TPanel::set_rect | `0x004B5660` | `0x004B5BB0` | the screen vtable's `+0x0C`; 59 vtables hold each |
+| draw area fill, lock, unlock | `0x004736C0`, `0x00471FD0`, `0x00472080` | `0x00474160`, `0x00472A70`, `0x00472B20` | 16, 6 and 4 call sites in the aligned functions |
+| game code ends (the CRT) | `0x0062E000` | `0x00631D70` | bytes |
+
+Struct offsets were checked by aligning every method of the class in both
+exes (every slot of the screen's and the game's vtables, and the functions
+that set the program info's sizes) and reading the displacement each
+aligned instruction uses. Matching a function by its first bytes alone is
+not enough: the first 256 bytes of the screen's draw match, and the fields
+it reads further on moved. A masked match of a short function can also be
+false: the screen's destructor matched `0x004185A0` at 40 bytes, and the
+vtable says `0x004F5A30`. `tools/x1_addrs.py` needs 64 bytes or more.
 
 ### Running it
 
@@ -325,20 +379,25 @@ with its hotkey. The menus are at the base game's places. On the way:
 - **The films.** It looks for `avi\xintro.avi` and `avi\xlogo1.avi` in the
   game folder, then `game\avi\` on the disc. Steam has them at the top of
   `Game`, so they are skipped (track 6 plays them).
-- **The stack.** Built `/Od`, selecting the command center overflowed the
-  host's 16 MB stack (`0xC00000FD` in `sub_00651E40`). The `THIS_COD`
-  sprite decoder is threaded code: `0x00651E40` reads a command byte and
-  jumps through a table to its handler (`0x00648006` copies a pixel), and
-  each handler jumps back through `[0x007A4044]`. Each jump is a host call
-  in the lift, so a sprite's commands nest, and `/Od` frames are large.
-  The recursion is bounded: with a 256 MB stack the same run plays on.
-  `swgbrecomp_cc.exe` links with that. The base game has the same
-  decoder (`0x0064EE40`, `0x00645006`), and its `/O1` build fits in 16 MB.
+- **The stack, at `/Od`.** A first build at `/Od` (the machine was short
+  of memory for an `/O1` one) overflowed the host's 16 MB stack when the
+  command center was selected (`0xC00000FD` in `sub_00651E40`). The
+  `THIS_COD` sprite decoder is threaded code: `0x00651E40` reads a command
+  byte and jumps through a table to its handler (`0x00648006` copies a
+  pixel), and each handler jumps back through `[0x007A4044]`. Each jump is
+  a host call in the lift, so a sprite's commands nest, and what each one
+  costs is the two functions' frames. At `/Od` they are `sub esp, 320h` and
+  `sub esp, 48h`, about 890 bytes a command with the saved registers and
+  return addresses; at `/O1`, `sub esp, 24h` and `sub esp, 1Ch` plus four
+  pushes each, about 100. The `/O1` build plays the same run on 16 MB, as
+  the base game's does with the same decoder (`0x0064EE40`, `0x00645006`).
+  Taking the nesting away (an indirect tail jump that returns to a
+  trampoline instead of calling) would be pcrecomp's lifter.
 - **A profile saved by the widescreen mod.** Steam's `player.nf1` was last
   saved by `battlegrounds_cc.exe` with its largest Screen Size, which that
   mod makes 2560x1440. The plain `battlegrounds_x1.exe` asks softdd for
   2560x1440 and lays the game out for 800x600 in its top left corner. With
   a fresh profile it is 800x600 throughout.
-- **The view scrolls left with the mouse resting at x = 30** (on the
-  command panel). The base game on the base host does the same, so it is
-  in the shared host's mouse handling, not the expansion.
+- **The view scrolled left with the mouse resting at x = 30** (on the
+  command panel), in the base game too: the headless cursor. Gone since
+  the presentation track's virtual cursor (checked again on 2026-11-22).

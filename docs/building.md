@@ -199,7 +199,7 @@ build.cmd
 build\swgbrecomp_cc.exe --run
 ```
 
-Expected: `Functions: 21057` (about two minutes), then `lifted 21057
+Expected: `Functions: 21057` (about two minutes), then `lifted 21069
 not-lifted stubs 0   errors 0` and 5.5M lines of C in `src\recomp\gen_cc\`.
 `build.cmd` builds `swgbrecomp_cc.exe` beside `swgbrecomp.exe` whenever
 `src\recomp\gen_cc` has a lift in it. Its default `--exe` is
@@ -207,6 +207,22 @@ not-lifted stubs 0   errors 0` and 5.5M lines of C in `src\recomp\gen_cc\`.
 `battlegrounds_cc.exe`: that one is the same build with a community
 widescreen mod in it, and `run_lift.py` refuses it ([lifting.md](lifting.md#clone-campaigns)).
 
-The generated C is as large as the base game's, and each compiler can take
-about 1 GB. On a machine short of memory (`C1002: compiler is out of heap
-space`), build with fewer jobs (`build.cmd -j 4`) or `-DGEN_OPT=/Od`.
+It is built as the base game is: `GEN_OPT` (`/O1`), and `GEN_HOT_OPT`
+(`/O2`) for `CC_GEN_HOT_FILES`, the seven files the base game's four hot
+ones became in x1. The full build took 25 minutes here: 11 for 52 files at
+`-j 6`, then 14 for `recomp_0039.c` alone, whose compiler peaks near 4 GB
+of commit (the base game's own large files are alike). Windows without a
+pagefile limits commit to the size of RAM whatever is free, so on a busy
+machine a few compilers at once fail with `C1002: compiler is out of heap
+space`: build with fewer jobs (`build.cmd -j 4`, then `-j 1` for what is
+left). Do not fall back to `/Od` to play: its frames are about eight times
+larger, and the sprite decoder's nesting then overflows the 16 MB stack
+([lifting.md](lifting.md#clone-campaigns)).
+
+To play it, as the base game but with its own host and exe, and the game
+folder for its films (`xlogo1.avi`, `xintro.avi` are at the top of Steam's
+`Game`):
+
+```
+build\swgbrecomp_cc.exe --run --sound --exe work\battlegrounds_x1.exe --game game --films game --res desktop --fullscreen
+```

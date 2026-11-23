@@ -109,28 +109,30 @@ what needs research or a new subsystem.
 - **Risk:** done; low for the rest.
 
 ### 4. Clone Campaigns
-- **Done (2026-11-21):** a second lift and host. Steam's
+- **Done (2026-11-21, 2026-11-22):** a second lift and host. Steam's
   `battlegrounds_x1.exe`, unwrapped (`tools/steamstub_swgb.py`), is the
   program; `battlegrounds_cc.exe` is the same build with a community
   widescreen mod in it (2560x1440, `wide1280*.drs`, a `uage.dll` loader at
-  the entry), so it is refused. `run_lift.py --build cc`: 21,057 functions,
-  0 lift errors, 5.5M lines in `src/recomp/gen_cc`; its seeds, the deflate
-  decoder's address and the `THIS_COD` jump tables found again (the base
-  game's + 0x3000 there). `swgbrecomp_cc.exe` (`cmake/clone_campaigns.cmake`,
-  `SWGB_CC` in `host.c`); conformance `--cc` 5/5; headless: its main menu,
-  the `_x1` data, the New Player dialog, a Standard Game, the command
-  center selected and a Worker trained. Details in `docs/lifting.md`.
-- **Next:** an `/O1` build (this one is `/Od`: the machine was short of
-  memory for 8 compilers), and see whether 16 MB of stack is enough there;
-  play a skirmish through, with the new civilizations (Confederacy,
-  Republic); the Episode II campaign; the intro films from the top of
-  `Game` (track 6); seeds from longer runs (`work/run_seeds_cc.json`).
-- **Shared, found here:** the view scrolls left while the mouse rests at
-  x = 30 (the command panel), in the base game too: the host's mouse
-  handling. A profile saved by the widescreen mod's exe makes the plain
-  one set 2560x1440 and draw 800x600 in its corner: a map of the
-  constants for track 3 is in `docs/lifting.md`.
-- **Risk:** low now. It is the same engine, and every host and softdd fix is
+  the entry), so it is refused. `run_lift.py --build cc`: 21,069 functions,
+  0 lift errors, `src/recomp/gen_cc`; its seeds found again (the `THIS_COD`
+  tables, the pointer-called one, `tools/code_ptr_seeds.py`'s 12).
+  `swgbrecomp_cc.exe` (`cmake/clone_campaigns.cmake`) is the base host's
+  sources, options and libraries with `SWGB_CC`: the engine's addresses and
+  the game screen's moved fields in `src/runtime/guest_addrs.h`
+  (`tools/x1_addrs.py`), so frame pacing, the profiler and `--res` work on
+  it. `/O1`, its hot files `/O2`, 16 MB stack: the `/Od` stack overflow was
+  `/Od`'s frames. Conformance `--cc` 5/5; `soak.py --cc`: two 28-minute
+  skirmishes with the Republic and the Confederacy (one to its end) and both
+  Episode II campaigns' first missions, 1.9 game-hours, no fault, no
+  unresolved call. The films play with `--films` at the game folder.
+- **Next:** the Episode II campaigns past mission 1; the base game's six
+  campaigns under the expansion's exe; `--res` at more sizes; a launcher
+  entry (the integrator).
+- **Shared, found here:** a profile saved by the widescreen mod's exe makes
+  the plain one set 2560x1440 and draw 800x600 in its corner: pick a Screen
+  Size in Options once. The sprite decoder's indirect tail jumps nest on
+  the host stack (pcrecomp's lifter could return to a trampoline instead).
+- **Risk:** low. It is the same engine, and every host and softdd fix is
   shared.
 
 ### 5. Higher frame rates

@@ -180,6 +180,37 @@ game (build line in the file): exit code 5 and the line the seed tool reads;
 `SWGB_ICALL_CONTINUE=1` reports once and carries on; eh32's hook still sees
 each address first.
 
+### Clone Campaigns (2026-11-22)
+
+`--cc` runs the expansion: `swgbrecomp_cc.exe`, `work\battlegrounds_x1.exe`
+and the `clone-campaigns` game folder by default, its Single Player menu
+(Standard Game and Saved Game a row lower than the base game's, Episode II
+Campaigns where Campaigns is), its nine civilizations and its two Episode
+II campaigns. `--civs A,B` gives the computers those civilizations in turn,
+`--my-civ` the player's, `--campaign` names the campaign. The endgame modes
+(`defeat` .. `load`) script the base game's OOM-9 campaign and are refused
+with `--cc`. The game folder needs a profile at 800x600: one saved by
+Steam's `battlegrounds_cc.exe` (the widescreen mod) is at 2560x1440.
+
+```
+py -3 tools\soak.py --cc --mode skirmish --minutes 28 --civs Confederacy,Republic --my-civ Republic
+py -3 tools\soak.py --cc --mode campaign --campaign "Galactic Republic" --minutes 25
+py -3 tools\seeds_from_logs.py --cc work\soak\...\run.log
+```
+
+On the `/O1` build with the code-pointer seeds, four at once:
+
+| Run | Setup | Game time | Result |
+|---|---|---|---|
+| skirmish | Republic against 6 computers (Confederacy, Republic in turn), Normal Fortress map, Moderate, Fast | 1846 s | ran the full time and the game to its end: the Achievements screen at 47:01 game time; saved at 40% |
+| skirmish | Confederacy against 6 (Republic, Confederacy), Giant Nova Lake, Moderate, Fast | 1846 s | ran the full time; saved |
+| campaign | Confederacy, mission 1 (Strategic Retreat), Easy, the monkey | 1671 s | ran the full time (41 minutes of game time); saved |
+| campaign | Galactic Republic, mission 1 (Alaris Prime), Easy, the monkey | 1671 s | ran the full time; saved |
+
+1.9 game-hours, every run ended by the watchdog (exit 4): no fault, no
+unresolved indirect call, no not-lifted stub, no eh32 miss, and nothing new
+for `seeds_from_logs.py --cc`.
+
 ## The game's three resolutions
 
 ```
