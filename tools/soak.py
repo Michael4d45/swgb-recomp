@@ -197,12 +197,14 @@ def chat(s, t, words):
 SHOT_DIR = ['.']                     # setup_fixed's shot of the setup screen: run_one sets it
 
 
-def setup_fixed(s, t, others, size, diff, teams=None):
+def setup_fixed(s, t, others, size, diff, teams=None, loc=None):
     """Standard Game with a fixed setup. teams: team clicks per row, me first (0 = no team)."""
     s.click(t, MAIN_SINGLE)
     s.click(t + 15, SP_STANDARD)
     t += 33
     t = pick(DD_OTHERS, others - 1, s, t)
+    if loc is not None:
+        t = pick(DD_LOCATION, loc, s, t)
     t = pick(DD_SIZE, size, s, t)
     t = pick(DD_DIFFICULTY, diff, s, t)
     # A click just after a drop-down closes, or a second one on a button the cursor has
@@ -217,7 +219,8 @@ def setup_fixed(s, t, others, size, diff, teams=None):
     s.at(t + 1, 'shot=%s' % os.path.join(SHOT_DIR[0], 'shot_setup.bmp'))
     t += 1
     s.click(t + 1, SETUP_START)
-    return t + 1, {'others': others, 'size': SIZES[size], 'difficulty': DIFFICULTIES[diff], 'teams': teams}
+    return t + 1, {'others': others, 'size': SIZES[size], 'difficulty': DIFFICULTIES[diff], 'teams': teams,
+                   'location': LOCATIONS[loc] if loc is not None else '(as left)'}
 
 
 def score_tour(s, t, out, tag):
@@ -499,7 +502,75 @@ def plan_load(s, rnd, out, args, game, seed):
     return end, {'load': names[args.row] if args.row < len(names) else None, 'row': args.row}
 
 
-ENDGAME = {'load': plan_load, 'defeat': plan_defeat, 'allied': plan_allied, 'victory': plan_victory, 'chain': plan_chain}
+def sweep_points(radius=0.8, n=8):
+    """Minimap points on the ring where the players start, clear of the minimap's own
+    buttons."""
+    import math
+    cx, cy, w = MINIMAP
+    pts = []
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        x, y = cx + radius * w * math.cos(a), cy + radius * w * 0.47 * math.sin(a)
+        if any(abs(x - bx) < 16 and abs(y - by) < 12 for bx, by in MINIMAP_BUTTONS):
+            x, y = cx + 0.4 * w * math.cos(a), cy + 0.4 * w * 0.47 * math.sin(a)
+        pts.append((int(x), int(y)))
+    return pts
+
+
+def plan_fight(s, rnd, out, args, game, seed):
+    """A victory won by fighting, the game's own check (won1/won2.mp3); no `skywalker`.
+
+    Me and --allies computers (team 1) against one (team 2), a Large Savannah map (land
+    all over: Shoreline left half the sweep in the sea), Easiest (one setting for every
+    computer). `forceexplore` shows the map in the shots. Each --wave-every seconds a
+    wave: `simonsays` typed 3 s apart (Simon the Killer Ewok, beside the command center;
+    the game stops at nine living ones, so a wave tops the pack up), H, a box select of
+    everything around the command center, Ctrl+N (the wave's control group). Between
+    waves, every --dwell seconds, the next point of a sweep around the ring where the
+    players start: each group in turn, its number, then a right-click there on the
+    minimap. Idle there, they fight what they see, buildings too. The view follows by
+    left-clicks on the minimap, never where the score screen's buttons are (y 500-528)."""
+    n = args.allies
+    t, what = setup_fixed(s, 20, others=n + 1, size=4, diff=0, teams=[1] * (n + 1) + [2],
+                          loc=LOCATIONS.index('Savannah'))
+    start = t + 80
+    s.at(start, 'shot=%s' % os.path.join(out, 'shot_start.bmp'))
+    t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
+    t = chat(s, t + 1, 'forceexplore')
+    end = start + args.minutes * 60
+    pts = sweep_points()
+    groups, k, next_wave = 0, 0, t
+    while t < end - 10:
+        if t >= next_wave and groups < 9:
+            for e in range(args.ewoks):
+                t = chat(s, t + 3, 'simonsays')
+            s.at(t + 1, 'h')
+            s.at(t + 3, 'shot=%s' % os.path.join(out, 'wave%d.bmp' % (groups + 1)))
+            s.at(t + 5, 'ldown:5:25')
+            s.at(t + 5.6, 'move:400:220')
+            s.at(t + 6.2, 'move:795:420')
+            s.at(t + 6.8, 'lup:795:420')
+            groups += 1
+            s.at(t + 8, 'ctrl+%d' % groups)
+            s.at(t + 9, 'shot=%s' % os.path.join(out, 'wave%d_selected.bmp' % groups))
+            t += 11
+            next_wave = t + args.wave_every
+        p = pts[k % len(pts)]
+        for g in range(1, groups + 1):
+            s.at(t, '%d' % g)
+            s.click(t + 0.6, p, 'rclick')
+            t += 1.5
+        if not 495 <= p[1] <= 535:
+            s.click(t + args.dwell * 0.6, p)          # the view, to the fight
+            s.at(t + args.dwell * 0.6 + 2, 'shot=%s' % os.path.join(out, 'fight_%04d.bmp' % int(t)))
+        t += args.dwell
+        k += 1
+    s.at(end - 2, 'shot=%s' % os.path.join(out, 'shot_end.bmp'))
+    return end, dict(what, goal='victory by fighting', ewoks=args.ewoks, dwell=args.dwell,
+                     wave_every=args.wave_every, waves=groups, sweep=pts)
+
+
+ENDGAME = {'fight': plan_fight, 'load': plan_load, 'defeat': plan_defeat, 'allied': plan_allied, 'victory': plan_victory, 'chain': plan_chain}
 
 
 def run_one(args, i, mode, rnd_seed, out_root, game):
@@ -544,7 +615,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--mode', default='skirmish', choices=['skirmish', 'monkey', 'campaign', 'mixed'] + sorted(ENDGAME))
     ap.add_argument('--after', type=float, default=10, help='victory: minutes played after loading the save')
-    ap.add_argument('--allies', type=int, default=6, help='allied: computer allies (1-6)')
+    ap.add_argument('--allies', type=int, default=6, help='allied, fight: computer allies (1-6)')
+    ap.add_argument('--ewoks', type=int, default=9, help='fight: simonsays typed per wave (9 alive at most)')
+    ap.add_argument('--wave-every', type=float, default=300, help='fight: seconds between waves (up to 9)')
+    ap.add_argument('--dwell', type=float, default=90, help='fight: seconds at each sweep point')
     ap.add_argument('--row', type=int, default=0, help='load: the save to load, by its row in the list')
     ap.add_argument('--first', type=int, default=1, help='chain: the first OOM-9 mission (1-5)')
     ap.add_argument('--last', type=int, default=3, help='chain: the last OOM-9 mission (1-5)')

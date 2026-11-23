@@ -495,12 +495,19 @@ static void parse_keys(const char* spec) {
             if (sscanf(strchr(what, ':') + 1, "%23[^:]:%23s", st.xs, st.ys) != 2) { fprintf(stderr, "--keys: %s\n", what); exit(1); }
         } else if (!strcmp(what, "setcursor")) {   /* the pointer comes back into the window (WM_SETCURSOR) */
             st.setcursor = 1;
-        } else if (!strncmp(what, "click:", 6) || !strncmp(what, "rclick:", 7) || !strncmp(what, "move:", 5)) {
-            st.click = what[0] == 'c' ? 1 : what[0] == 'r' ? 2 : 0;
+        } else if (!strncmp(what, "click:", 6) || !strncmp(what, "rclick:", 7) || !strncmp(what, "move:", 5) ||
+                   !strncmp(what, "ldown:", 6) || !strncmp(what, "lup:", 4)) {
+            /* ldown and lup hold the left button across the moves between them: a drag
+             * (the game's box select). */
+            st.click = what[0] == 'c' ? 1 : what[0] == 'r' ? 2 : !strncmp(what, "ldown:", 6) ? 3 : what[1] == 'u' ? 4 : 0;
             st.move = 1;
             sscanf(strchr(what, ':') + 1, "%d:%d", &st.x, &st.y);
         } else if (!strncmp(what, "alt+", 4) && (st.vk = key_by_name(what + 4))) {
             st.alt = 1;   /* Alt+Enter, Alt+F12: the presenter's hotkeys */
+        } else if (!strncmp(what, "ctrl+", 5) && (st.vk = key_by_name(what + 5))) {
+            st.alt = 2;   /* Ctrl+1: the game's control groups */
+        } else if (!strncmp(what, "shift+", 6) && (st.vk = key_by_name(what + 6))) {
+            st.alt = 3;
         } else if (!(st.vk = key_by_name(what))) {
             fprintf(stderr, "--keys: unknown key \"%s\"\n", what);
             exit(1);
@@ -622,8 +629,17 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
                 if (d && d->w) { POINT g = c; present_to_game(w, d->w, d->h, &g); g_cur_x = g.x, g_cur_y = g.y; st->x = g.x, st->y = g.y; }
             } else g_cur_x = st->x, g_cur_y = st->y;
             if (st->win) printf("[keys] window %d,%d -> game %d,%d\n", cx, cy, st->x, st->y);
-            if (w) PostMessageA(w, WM_MOUSEMOVE, 0, MAKELPARAM(cx, cy));
-            if (st->click) {
+            int dragging = (int)(g_vk_until[VK_LBUTTON] - GetTickCount()) > 0 && st->click != 1 && st->click != 2;
+            if (w) PostMessageA(w, WM_MOUSEMOVE, dragging ? MK_LBUTTON : 0, MAKELPARAM(cx, cy));
+            if (st->click == 3) {   /* ldown: held until lup */
+                Sleep(100);
+                g_vk_until[VK_LBUTTON] = GetTickCount() + 3600000;
+                if (w) PostMessageA(w, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cx, cy));
+            } else if (st->click == 4) {
+                Sleep(100);
+                if (w) PostMessageA(w, WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
+                g_vk_until[VK_LBUTTON] = GetTickCount();
+            } else if (st->click) {
                 Sleep(100);
                 int r = st->click == 2;
                 g_vk_until[r ? VK_RBUTTON : VK_LBUTTON] = GetTickCount() + 150;
@@ -631,10 +647,11 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
                 Sleep(150);
                 if (w) PostMessageA(w, r ? WM_RBUTTONUP : WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
             }
-            printf("[keys] %.1fs %s %d,%d\n", st->at / 1000.0, st->click == 2 ? "rclick" : st->click ? "click" : "move", st->x, st->y);
+            printf("[keys] %.1fs %s %d,%d\n", st->at / 1000.0, st->click == 2 ? "rclick" : st->click == 3 ? "ldown" :
+                   st->click == 4 ? "lup" : st->click ? "click" : "move", st->x, st->y);
         } else {
             UINT sc = MapVirtualKeyA(st->vk, 0);
-            if (st->alt) {   /* Alt+key: a system key, to the window itself */
+            if (st->alt == 1) {   /* Alt+key: a system key, to the window itself */
                 if (w) PostMessageA(w, WM_SYSKEYDOWN, st->vk, 1 | (sc << 16) | (1 << 29));
                 Sleep(150);
                 if (w) PostMessageA(w, WM_SYSKEYUP, st->vk, 1 | (sc << 16) | (1 << 29) | 0xC0000000u);
@@ -645,13 +662,26 @@ static DWORD WINAPI keys_thread(LPVOID unused) {
                 GUITHREADINFO gi = { sizeof gi };
                 if (w && GetGUIThreadInfo(GetWindowThreadProcessId(w, NULL), &gi) && gi.hwndFocus) w = gi.hwndFocus;
             }
+            /* Ctrl+key, Shift+key: the modifier is down, as GetKeyState reports it, around the key. */
+            int mod = st->alt == 2 ? VK_CONTROL : st->alt == 3 ? VK_SHIFT : 0;
+            UINT msc = mod ? MapVirtualKeyA(mod, 0) : 0;
+            if (mod) {
+                g_vk_until[mod] = GetTickCount() + 600;
+                if (w) PostMessageA(w, WM_KEYDOWN, mod, 1 | (msc << 16));
+                Sleep(50);
+            }
             g_vk_until[st->vk & 0xFF] = GetTickCount() + 150;
             /* WM_KEYDOWN only: the game's loop calls TranslateMessage, which
              * makes the WM_CHAR (posting one too typed every letter twice). */
             if (w) PostMessageA(w, WM_KEYDOWN, st->vk, 1 | (sc << 16));
             Sleep(150);
             if (w) PostMessageA(w, WM_KEYUP, st->vk, 1 | (sc << 16) | 0xC0000000u);
-            printf("[keys] %.1fs key %02X\n", st->at / 1000.0, st->vk);
+            if (mod) {
+                Sleep(50);
+                if (w) PostMessageA(w, WM_KEYUP, mod, 1 | (msc << 16) | 0xC0000000u);
+                g_vk_until[mod] = GetTickCount();
+            }
+            printf("[keys] %.1fs %skey %02X\n", st->at / 1000.0, mod == VK_CONTROL ? "ctrl+" : mod ? "shift+" : "", st->vk);
         }
     }
     return 0;

@@ -126,7 +126,10 @@ letterbox, game pixels). `size:W:H` resizes the window's client area,
 middle of a bar, with an offset: `wmove:R:C`, `wmove:PL+60:C`), `alt+enter` and
 `alt+f12` press the hotkeys, `setcursor` has the pointer come back into the
 window (the game's cursor must survive), and `--keys @FILE` reads the script
-from a file, a step to a line.
+from a file, a step to a line. `ldown:X:Y` and `lup:X:Y` press the left button
+and release it, with any `move:` steps between them sent as a drag (the
+game's box select). `ctrl+KEY` and `shift+KEY` hold the modifier around the
+key, so the game's `GetKeyState` sees it (`ctrl+1` makes a control group).
 
 `--args "..."` passes switches to the game itself; `--game`, `--cd` and
 `--exe` point at other folders; `--films DIR` is where the films are when
