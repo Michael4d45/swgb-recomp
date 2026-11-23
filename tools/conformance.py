@@ -70,6 +70,7 @@ def main():
            '--keys', '20:move:40:565,21:click:40:565']
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, errors='replace', timeout=120)
     log = r.stdout + r.stderr
+    os.makedirs(os.path.join(ROOT, 'work'), exist_ok=True)   # a fresh worktree has none
     open(os.path.join(ROOT, 'work', 'conformance%s.log' % ('_cc' if a.cc else '')), 'w',
          encoding='utf-8').write(log)
     passed = 0
