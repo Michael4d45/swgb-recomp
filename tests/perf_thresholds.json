@@ -1,0 +1,5 @@
+{
+ "_doc": "tools/test.py perf/*: a fixed skirmish (1 computer, Tiny Savannah, Easiest) at --fps 60, headless. cpu_max: the median of --fps-log's CPU (% of one core) in game; presents: its median presents a second. Measured on the integration build 2026-11-22: CPU 5-6% median, 64 presents/s (the game presents a few more than the frames it paces); the limits leave room for a busy machine.",
+ "base": {"cpu_max": 20, "presents_min": 55, "presents_max": 72},
+ "cc": {"cpu_max": 20, "presents_min": 55, "presents_max": 72}
+}

@@ -1,9 +1,104 @@
 # Testing
 
-Two checks, both headless: the conformance harness, and a scripted run into a
-skirmish. Neither opens a window on your screens: `--headless` runs on
+Every check is headless unless it says otherwise: `--headless` runs on
 pcrecomp's private desktop (`native32_headless`), which is never shown, and
-mutes the sound.
+mutes the sound. `tools/test.py` runs them all, in levels; the sections after
+it describe each tool on its own.
+
+## Test levels: `tools/test.py`
+
+```
+py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|--no-cc] [--jobs N]
+                    [--only PATTERN,...] [--just] [--list] [--update-baselines] [--results DIR]
+```
+
+| Level | Name | Time | What it runs | Needs |
+|---|---|---|---|---|
+| L0 | `unit` | ~25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
+| L1 | `smoke` | ~2 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
+| L2 | `functional` | ~20 min | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, `--res 1920x1080` from Options, `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, and the frame-rate check (below) | as L1, ffmpeg |
+| L3 | `soak` | 3-4 h | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat); Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns. `--soak-scale 0.2` for a shorter trial. | as L2 |
+| L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
+
+A level runs the levels below it (`--just`: only its own). Clone Campaigns is
+tested when its host is in `--build` (`swgbrecomp_cc.exe`); `--cc` makes a
+missing one a failure, `--no-cc` leaves it out. `--list` prints the checks.
+
+**Before a merge** (the gate): `py -3 tools\test.py --level functional` on the
+merged build, exit 0. **Nightly**: `--level soak` (`tools\test_nightly.ps1`;
+`-Register` makes it a daily scheduled task, which only the user decides).
+**After a re-lift**: `--level smoke` at least: the lift check says whether the
+C changed.
+
+**Games at once.** Every game is `--headless --multi`, in a game folder of its
+own, `A:\Games\star\games\testing-<base|cc>-<k>` (hard links to the shared
+install, real copies of profiles and saves, as `worktree_env.ps1` makes them;
+made on first use and kept). `--jobs` games run at once (default 5, at most 8
+whatever is asked: the user plays on this machine). The tool stops only the
+processes it started, by PID (`taskkill /T /PID`), when one runs past its
+time or on Ctrl-C.
+
+**Results.** `A:\Games\star\test-results\<time>-<level>\`: `summary.json`
+(every check: status, time, lines, figures, shots), `report.md` and
+`report.html` (the shots inline), and a folder per check with its logs, keys
+and shots. Exit code 0 when nothing failed or errored; a SKIP (no Clone
+Campaigns host, no ffmpeg) is listed but passes.
+
+**Baselines** live outside the repository, in `A:\Games\star\test-baselines`
+(`--baselines`): they are made from the game's files. A missing one is
+recorded by the first run that needs it; `--update-baselines` records them all
+again after an intended change. Screenshots are compared as grey levels: a
+pixel differs when it is more than 24 levels off, and a check allows a share
+of differing pixels: 2% for the main menu, 3% for the setup screen's buttons
+and the Options dialog, 35% for the HUD panel under a skirmish (its minimap
+and counters change every game; the map itself is never compared). A failing
+comparison writes `*_diff.png` (red: what differs).
+
+### The units (L0)
+
+| Unit | Source | Checks |
+|---|---|---|
+| `scaler` | `tools/present_bench.c --quick` | the scaler bit-exact against the reference one-pass scaler, every frame and window size and filter, after a band and a whole frame change |
+| `present` | `tools/present_test.c` | the letterbox layout and the mouse through it; present pacing at 60-600 Hz |
+| `coverage` | `tools/coverage_test.c` | the unresolved-call stop: exit 5, the seed line, `SWGB_ICALL_CONTINUE`, eh32's hook first |
+| `resolve` | `tests/unit/resolve_test.c` | the indirect-call cache: one lookup per address, "not lifted" kept, an answer that is not the dispatch table's never kept, `__local_unwind2` callers bypass it, `SWGB_NO_RESOLVE_CACHE` |
+| `inflate` | `tests/unit/inflate_test.c` | the deflate decoder called as the lifted code calls it: any input and output chunking, two streams in turn, a zeroed state block restarts, corrupt data is -2 |
+| `pacing`, `pacing_cc` | `tests/unit/pacing_test.c` | `framerate.c` itself with a fake clock: `--fps 60/30/144/1000` passes a second, the 16/17 ms gate, the refresh default held to 30-1000, no catch-up burst after a 250 ms hitch, the menus untouched, `--fps` arguments; at the base and Clone Campaigns addresses |
+| `films` | `tests/unit/films_test.c` | `movie.c` itself: AVI headers, `--films` names (`NAME.avi`, then `xNAME.avi`), the film palette, the ordered dither (flat colours stay flat, the level holds on average), drawing into an 8-bit DC (the film palette and a foreign one) |
+| `keys` | `tests/unit/keys_test.c` | `keyscript.c`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
+| `tools` | `tests/unit/test_tools.py` | the Python side, as above |
+
+They run on GitHub Actions (`.github/workflows/unit.yml`, `windows-latest`):
+pcrecomp is fetched at a pinned commit for its headers, and nothing of the game
+is downloaded, built or uploaded. Each unit was checked against a deliberate
+break of the code it covers (the cache keeping every answer, the pacing
+catching up after a hitch, `xNAME.avi` looked for first, the decoder's state
+never marked used): each one fails.
+
+### The lift check
+
+```
+py -3 tools\lift_check.py [--cc] [--gen DIR] [--baseline FILE] [--save]
+```
+
+Reads the lift (`src\recomp\gen`, `gen_cc`) in about two seconds: the
+dispatch table's functions against the bodies in the `recomp_*.c` files,
+`run_lift.py`'s errors and not-lifted stubs (`work\lift_stats*.json`, both
+must be 0), and a SHA-1 of each function's C against a baseline: identical,
+changed, new, gone. It fails on an error or stub, a function in the table
+without a body, a lower function count, or any changed or vanished function
+(new ones pass: seeds add them). After an intended re-lift, record the new
+baseline with `--save` (`test.py --update-baselines`). The baseline holds
+hashes only.
+
+### The frame-rate check (L2)
+
+A fixed skirmish (one Easiest computer, a Tiny Savannah map) at `--fps 60
+--fps-log`, the view moved now and then, for 2.5 minutes of game: the median
+of `--fps-log`'s CPU (% of one core, the process's own time) and presents a
+second from 20 s after the game starts, against `tests/perf_thresholds.json`.
+The first run records its figures as the baseline; a later run 25% worse is
+noted in the report but does not fail (other games share the machine).
 
 ## The conformance harness
 

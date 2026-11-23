@@ -1,0 +1,43 @@
+# L0, the unit level of tools/test.py (docs/testing.md, "Test levels"): the host's C units
+# and the tools' own tests. No game files and no lift: nothing of the game is ever
+# downloaded, built or uploaded here. Only pcrecomp's headers are needed (public, pinned).
+name: unit
+
+on:
+  push:
+    branches: [main, "track/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: pcrecomp (headers), at the commit the host builds against
+        shell: bash
+        run: |
+          git init -q pcrecomp && cd pcrecomp
+          git fetch -q --depth 1 https://github.com/sp00nznet/pcrecomp a67767bed6ee1085fc6614f34c80ebfc25908f72
+          git checkout -q FETCH_HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet numpy pillow
+      - name: tools/test.py --level unit
+        run: python tools/test.py --level unit --pcrecomp pcrecomp --results test-results
+      - name: the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-results
+          # the units' logs and report only: the level makes no game pictures
+          path: |
+            test-results/summary.json
+            test-results/report.md
+            test-results/report.html
+            test-results/*/*.log
