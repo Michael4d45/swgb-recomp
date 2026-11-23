@@ -7,8 +7,7 @@
  * and --keys' on:NAME, message boxes answered on a test run. Second, the 21
  * imports win32hle does not answer yet (docs/linux-macos.md, "The import
  * census"), each the smallest answer that lets the game go on. DirectPlay
- * Create returns a stub IDirectPlay4 (multiplayer stays empty); movies
- * (MCIWnd) are refused until Track 6's player (ROADMAP.md).
+ * is dplay.c's and the films movie.c's (both registered first).
  *
  * Every shim is stdcall unless it says otherwise: g_esp -> [ret][arg0]...,
  * and RET pops the return address and its arguments (win32hle.h).
@@ -20,6 +19,8 @@
 
 #include "win32hle.h"
 #include "swgb_linux.h"
+#include "widescreen.h"
+#include "dplay.h"
 
 /* ---- calling win32hle's own answer ------------------------------------------
  * A wrapper runs win32hle's shim with the stack as it found it: the shim
@@ -55,9 +56,19 @@ static void s_GetLogicalDrives(void) {
 static recomp_func_t g_CreateFileA, g_OpenFile;
 
 static void s_CreateFileA(void) {                         /* 7 arguments */
-    char name[512];
+    char name[512], film[1024], guest[1024];
     snprintf(name, sizeof name, "%s", ASTR(0) ? ASTR(0) : "(null)");
+    uint32_t esp = g_esp, arg0 = A32(0);
     g_CreateFileA();
+    if (g_eax == 0xFFFFFFFFu && swgb_movie_find(name, film, sizeof film)) {   /* --films DIR */
+        hle_guest_path(film, guest, sizeof guest);
+        g_esp = esp;
+        MEM32(g_esp + 4) = hle_guest_strdup(guest);
+        g_CreateFileA();
+        MEM32(esp + 4) = arg0;
+        if (swgb_log_files) printf("[host] open %s -> missing, --films has %s\n", name, film);
+        snprintf(name, sizeof name, "%s", guest);
+    }
     swgb_file_seen(name, g_eax != 0xFFFFFFFFu);
 }
 
@@ -66,6 +77,29 @@ static void s_OpenFile(void) {                            /* 3 arguments */
     snprintf(name, sizeof name, "%s", ASTR(0) ? ASTR(0) : "(null)");
     g_OpenFile();
     swgb_file_seen(name, g_eax != 0xFFFFFFFFu);
+}
+
+/* ---- windows: logged as the Windows host logs them ---------------------------
+ * tools/conformance.py's "menu" milestone is the main menu's text-entry
+ * window (InputDisabledWindow). */
+static recomp_func_t g_CreateWindowExA;
+static void s_CreateWindowExA(void) {                     /* 12 arguments */
+    uint32_t cls = A32(2);
+    printf("[host] CreateWindowExA \"%s\" style %08X at %d,%d %dx%d parent %08X\n",
+           cls > 0xFFFF && ASTR(2) ? ASTR(2) : "", A32(3), (int)A32(4), (int)A32(5), (int)A32(6), (int)A32(7), A32(8));
+    g_CreateWindowExA();
+}
+
+/* ---- strings: --res names its size in the Options dialog (widescreen.c), and
+ * the game's out-of-sync messages are logged (dplay.c) ---- */
+static recomp_func_t g_LoadStringA;
+static void s_LoadStringA(void) {                         /* (instance, id, buf, max) */
+    uint32_t id = A32(1), buf = A32(2);
+    int max = (int)A32(3);
+    dplay_string(id);                                     /* the out-of-sync messages, logged */
+    g_LoadStringA();
+    if (widescreen_w && buf && max > 0 && (int)g_eax > 0)
+        g_eax = (uint32_t)widescreen_string((char*)hle_ptr(buf), max, (int)g_eax);
 }
 
 /* ---- message boxes ---------------------------------------------------------------
@@ -82,15 +116,7 @@ static void s_MessageBoxA(void) {                         /* (hwnd, text, captio
 
 /* ---- the imports win32hle has no answer for ------------------------------------ */
 
-/* MSVFW32: no video codecs, and no movie window yet. MCIWndCreateA is cdecl:
- * the caller pops its four arguments. NULL is what the game sees on a PC
- * whose movies are missing, and it goes on without them. */
-static void s_ICInfo(void) { RET(0, 3); }
-static void s_MCIWndCreateA(void) {
-    printf("[host] MCIWndCreateA %s: no movie player on this host yet\n", ASTR(3) ? ASTR(3) : "(null)");
-    g_eax = 0;
-    g_esp += 4;
-}
+/* MSVFW32 (MCIWndCreateA, ICInfo): movie.c's films, registered first. */
 
 /* WINMM: the CD music. MCI's cdaudio device is not here (the Ogg Vorbis
  * tracks of the Steam release are the plan: docs/linux-macos.md, "Music"). */
@@ -146,142 +172,8 @@ static void s_CreateICA(void) {
     RET(hle_gdi_surface_dc(px, 1, 1, 4, 32), 4);
 }
 
-/* DPLAYX by ordinal: multiplayer is out of scope (ROADMAP.md, "Later"), but
- * the Genie boot path calls DirectPlayCreate as a version check and then keeps
- * a live IDirectPlay4 for the process. Refuse Create and the game MessageBox-
- * exits ("requires DirectPlay 6.1a"). Serve a stub COM object whose methods
- * succeed as no-ops / empty enums so single-player can run; EnumConnections
- * and EnumSessions never report a provider or session. */
-#define DP_OK 0u
-#define DPERR_UNAVAILABLE 0x887703E8u   /* MAKE_DPHRESULT(1000) */
-static uint32_t g_vt_dp4;
-
-#define DP_STUB(name, argc) \
-    static void name(void) { RET(DP_OK, argc); }
-
-DP_STUB(dp_AddPlayerToGroup, 3)
-DP_STUB(dp_Close, 1)
-DP_STUB(dp_CreateGroup, 6)
-DP_STUB(dp_CreatePlayer, 7)
-DP_STUB(dp_DeletePlayerFromGroup, 3)
-DP_STUB(dp_DestroyGroup, 2)
-DP_STUB(dp_DestroyPlayer, 2)
-DP_STUB(dp_EnumGroupPlayers, 6)
-DP_STUB(dp_EnumGroups, 5)
-DP_STUB(dp_EnumPlayers, 5)
-DP_STUB(dp_EnumSessions, 6)
-DP_STUB(dp_GetCaps, 3)
-DP_STUB(dp_GetGroupData, 5)
-DP_STUB(dp_GetGroupName, 4)
-DP_STUB(dp_GetMessageCount, 3)
-DP_STUB(dp_GetPlayerAddress, 4)
-DP_STUB(dp_GetPlayerCaps, 4)
-DP_STUB(dp_GetPlayerData, 5)
-DP_STUB(dp_GetPlayerName, 4)
-DP_STUB(dp_GetSessionDesc, 3)
-DP_STUB(dp_Initialize, 2)
-DP_STUB(dp_Open, 3)
-DP_STUB(dp_Receive, 6)
-DP_STUB(dp_Send, 6)
-DP_STUB(dp_SetGroupData, 5)
-DP_STUB(dp_SetGroupName, 4)
-DP_STUB(dp_SetPlayerData, 5)
-DP_STUB(dp_SetPlayerName, 4)
-DP_STUB(dp_SetSessionDesc, 3)
-DP_STUB(dp_AddGroupToGroup, 3)
-DP_STUB(dp_CreateGroupInGroup, 7)
-DP_STUB(dp_DeleteGroupFromGroup, 3)
-DP_STUB(dp_EnumConnections, 5)
-DP_STUB(dp_EnumGroupsInGroup, 6)
-DP_STUB(dp_GetGroupConnectionSettings, 5)
-DP_STUB(dp_InitializeConnection, 3)
-DP_STUB(dp_SecureOpen, 5)
-DP_STUB(dp_SendChatMessage, 5)
-DP_STUB(dp_SetGroupConnectionSettings, 4)
-DP_STUB(dp_StartSession, 3)
-DP_STUB(dp_GetGroupFlags, 3)
-DP_STUB(dp_GetGroupParent, 3)
-DP_STUB(dp_GetPlayerAccount, 5)
-DP_STUB(dp_GetPlayerFlags, 3)
-DP_STUB(dp_GetGroupOwner, 3)
-DP_STUB(dp_SetGroupOwner, 3)
-DP_STUB(dp_SendEx, 10)
-DP_STUB(dp_GetMessageQueue, 6)
-DP_STUB(dp_CancelMessage, 3)
-DP_STUB(dp_CancelPriority, 4)
-
-static uint32_t dp4_vtable(void) {
-    if (g_vt_dp4) return g_vt_dp4;
-    static const win32hle_shim methods[] = {
-        { "IDirectPlay4::QueryInterface", hle_com_QueryInterface },
-        { "IDirectPlay4::AddRef", hle_com_AddRef },
-        { "IDirectPlay4::Release", hle_com_Release },
-        { "IDirectPlay4::AddPlayerToGroup", dp_AddPlayerToGroup },
-        { "IDirectPlay4::Close", dp_Close },
-        { "IDirectPlay4::CreateGroup", dp_CreateGroup },
-        { "IDirectPlay4::CreatePlayer", dp_CreatePlayer },
-        { "IDirectPlay4::DeletePlayerFromGroup", dp_DeletePlayerFromGroup },
-        { "IDirectPlay4::DestroyGroup", dp_DestroyGroup },
-        { "IDirectPlay4::DestroyPlayer", dp_DestroyPlayer },
-        { "IDirectPlay4::EnumGroupPlayers", dp_EnumGroupPlayers },
-        { "IDirectPlay4::EnumGroups", dp_EnumGroups },
-        { "IDirectPlay4::EnumPlayers", dp_EnumPlayers },
-        { "IDirectPlay4::EnumSessions", dp_EnumSessions },
-        { "IDirectPlay4::GetCaps", dp_GetCaps },
-        { "IDirectPlay4::GetGroupData", dp_GetGroupData },
-        { "IDirectPlay4::GetGroupName", dp_GetGroupName },
-        { "IDirectPlay4::GetMessageCount", dp_GetMessageCount },
-        { "IDirectPlay4::GetPlayerAddress", dp_GetPlayerAddress },
-        { "IDirectPlay4::GetPlayerCaps", dp_GetPlayerCaps },
-        { "IDirectPlay4::GetPlayerData", dp_GetPlayerData },
-        { "IDirectPlay4::GetPlayerName", dp_GetPlayerName },
-        { "IDirectPlay4::GetSessionDesc", dp_GetSessionDesc },
-        { "IDirectPlay4::Initialize", dp_Initialize },
-        { "IDirectPlay4::Open", dp_Open },
-        { "IDirectPlay4::Receive", dp_Receive },
-        { "IDirectPlay4::Send", dp_Send },
-        { "IDirectPlay4::SetGroupData", dp_SetGroupData },
-        { "IDirectPlay4::SetGroupName", dp_SetGroupName },
-        { "IDirectPlay4::SetPlayerData", dp_SetPlayerData },
-        { "IDirectPlay4::SetPlayerName", dp_SetPlayerName },
-        { "IDirectPlay4::SetSessionDesc", dp_SetSessionDesc },
-        { "IDirectPlay4::AddGroupToGroup", dp_AddGroupToGroup },
-        { "IDirectPlay4::CreateGroupInGroup", dp_CreateGroupInGroup },
-        { "IDirectPlay4::DeleteGroupFromGroup", dp_DeleteGroupFromGroup },
-        { "IDirectPlay4::EnumConnections", dp_EnumConnections },
-        { "IDirectPlay4::EnumGroupsInGroup", dp_EnumGroupsInGroup },
-        { "IDirectPlay4::GetGroupConnectionSettings", dp_GetGroupConnectionSettings },
-        { "IDirectPlay4::InitializeConnection", dp_InitializeConnection },
-        { "IDirectPlay4::SecureOpen", dp_SecureOpen },
-        { "IDirectPlay4::SendChatMessage", dp_SendChatMessage },
-        { "IDirectPlay4::SetGroupConnectionSettings", dp_SetGroupConnectionSettings },
-        { "IDirectPlay4::StartSession", dp_StartSession },
-        { "IDirectPlay4::GetGroupFlags", dp_GetGroupFlags },
-        { "IDirectPlay4::GetGroupParent", dp_GetGroupParent },
-        { "IDirectPlay4::GetPlayerAccount", dp_GetPlayerAccount },
-        { "IDirectPlay4::GetPlayerFlags", dp_GetPlayerFlags },
-        { "IDirectPlay4::GetGroupOwner", dp_GetGroupOwner },
-        { "IDirectPlay4::SetGroupOwner", dp_SetGroupOwner },
-        { "IDirectPlay4::SendEx", dp_SendEx },
-        { "IDirectPlay4::GetMessageQueue", dp_GetMessageQueue },
-        { "IDirectPlay4::CancelMessage", dp_CancelMessage },
-        { "IDirectPlay4::CancelPriority", dp_CancelPriority },
-        { 0, 0 }
-    };
-    g_vt_dp4 = hle_com_vtable(methods);
-    return g_vt_dp4;
-}
-
-static void s_DirectPlayCreate(void) {                    /* #1 (guid, &dp, unk) */
-    uint32_t obj = hle_com_new(dp4_vtable(), 8);
-    if (A32(1)) MEM32(A32(1)) = obj;
-    RET(DP_OK, 3);
-}
-static void s_DirectPlayEnumerateA(void) { RET(0, 2); }   /* #2 (callback, context): none */
-static void s_DirectPlayLobbyCreateA(void) {              /* #4 (guid, &lobby, unk, data, size) */
-    if (A32(1)) MEM32(A32(1)) = 0;
-    RET(DPERR_UNAVAILABLE, 5);
-}
+/* DPLAYX: the host's own DirectPlay (src/runtime/dplay.c, as on Windows),
+ * registered by dplay_init ahead of these: LAN games between recomps. */
 
 /* VERSION: win32hle returns "no resource". After DirectPlayCreate the game
  * versions dplayx.dll and MessageBox-exits unless FileVersion looks like
@@ -346,8 +238,8 @@ static const win32hle_shim g_shims[] = {
     { "CreateFileA", s_CreateFileA },
     { "OpenFile", s_OpenFile },
     { "MessageBoxA", s_MessageBoxA },
-    { "ICInfo", s_ICInfo },
-    { "MCIWndCreateA", s_MCIWndCreateA },
+    { "CreateWindowExA", s_CreateWindowExA },
+    { "LoadStringA", s_LoadStringA },
     { "mciSendCommandA", s_mciSendCommandA },
     { "IsDBCSLeadByte", s_IsDBCSLeadByte },
     { "GetPriorityClass", s_GetPriorityClass },
@@ -362,9 +254,6 @@ static const win32hle_shim g_shims[] = {
     { "SetSysColors", s_SetSysColors },
     { "IsIconic", s_IsIconic },
     { "CreateICA", s_CreateICA },
-    { "dplayx.dll#1", s_DirectPlayCreate },
-    { "dplayx.dll#2", s_DirectPlayEnumerateA },
-    { "dplayx.dll#4", s_DirectPlayLobbyCreateA },
     { "GetFileVersionInfoSizeA", s_GetFileVersionInfoSizeA },
     { "GetFileVersionInfoA", s_GetFileVersionInfoA },
     { "VerQueryValueA", s_VerQueryValueA },
@@ -377,6 +266,8 @@ void swgb_register_shims(void) {
     g_CreateFileA = hle_shim(win32hle_kernel32_ext, "CreateFileA");
     g_OpenFile = hle_shim(win32hle_kernel32_ext, "OpenFile");
     g_MessageBoxA = hle_shim(win32hle_user32, "MessageBoxA");
+    g_CreateWindowExA = hle_shim(win32hle_user32, "CreateWindowExA");
+    g_LoadStringA = hle_shim(win32hle_module, "LoadStringA");
     g_DrawTextA = hle_shim(win32hle_user32, "DrawTextA");
     win32hle_register(g_shims);
 }

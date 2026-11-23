@@ -8,10 +8,14 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR i686)
 # Prefer clang when the user did not name a compiler: musttail for ITAIL.
+# A plain variable, not a FORCEd cache entry: a FORCEd compiler differs from
+# the cached one when cmake regenerates the build, and CMake then deletes the
+# cache and configures again without this file (an x86-64 build, which fails
+# to link the i386 SDL2).
 if(NOT CMAKE_C_COMPILER AND NOT DEFINED ENV{CC})
   find_program(_SWGB_CLANG clang)
   if(_SWGB_CLANG)
-    set(CMAKE_C_COMPILER "${_SWGB_CLANG}" CACHE FILEPATH "C compiler" FORCE)
+    set(CMAKE_C_COMPILER "${_SWGB_CLANG}")
   endif()
 endif()
 set(CMAKE_C_FLAGS_INIT "-m32")

@@ -4,7 +4,8 @@
  * Under real DirectDraw, Windows paints EDIT controls over the fullscreen
  * surface. Here only the primary reaches the screen (--shot / SDL present),
  * so each frame is a copy of the primary with visible children WM_PRINTed
- * in (softdd's compose). The controls keep focus and keys.
+ * in (softdd's compose). The controls keep focus and keys. A film's window
+ * (movie.c) is drawn here too.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@
 #include <strings.h>
 #include "win32hle.h"
 #include "ddraw_int.h"
+#include "swgb_linux.h"
 
 #define GW_HWNDNEXT 2u
 #define GW_HWNDPREV 3u
@@ -82,6 +84,12 @@ static const uint8_t *compose(surf_t *s) {
         const char *cls;
         if (!child_shown(c, &l, &t, &r, &b)) continue;
         cls = hle_window_class(c);
+        if (cls && !strcmp(cls, "swgb.movie")) {         /* a film (movie.c): its frame, scaled into the window */
+            if (r > s->w) r = s->w;
+            if (b > s->h) b = s->h;
+            swgb_movie_draw(c, g_comp, s->pitch, s->bpp, l < 0 ? 0 : l, t < 0 ? 0 : t, r, b, pe);
+            continue;
+        }
         if (!cls || (strcasecmp(cls, "Edit") && strcasecmp(cls, "EDIT"))) continue;
         /* softdd SetWindowRgn(empty): the control keeps focus/keys but game-
          * drawn OK/Cancel under/near it receive the clicks. */

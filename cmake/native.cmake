@@ -64,6 +64,14 @@ set(SWGB_NATIVE_INCS src/linux src/runtime ${GEN_DIR} third_party/miniz ${HLE} $
 # C under gcc"); these keep its integer and aliasing semantics x86's.
 set(GEN_OPT "-O1" CACHE STRING "optimization for the generated C")
 set(SWGB_GEN_FLAGS -w ${GEN_OPT} -fno-strict-aliasing -fwrapv)
+# The few generated files the game spends its time in, at GEN_HOT_OPT, as on
+# Windows (CMakeLists.txt, docs/performance.md: tools/profile_report.py --hot
+# picks them; a re-lift moves functions between files, so pick them again).
+set(GEN_HOT_FILES "recomp_0022.c;recomp_0040.c;recomp_0050.c;recomp_0051.c" CACHE STRING
+    "generated files (names, ;-separated) compiled with GEN_HOT_OPT")
+set(GEN_HOT_OPT "-O2" CACHE STRING "optimization for GEN_HOT_FILES")
+set(CC_GEN_HOT_FILES "recomp_0022.c;recomp_0023.c;recomp_0040.c;recomp_0041.c;recomp_0050.c;recomp_0051.c;recomp_0052.c"
+    CACHE STRING "Clone Campaigns' generated files compiled with GEN_HOT_OPT")
 
 if(SWGB_GEN_LIB)
   if(NOT EXISTS "${SWGB_GEN_LIB}")
@@ -83,6 +91,9 @@ else()
   target_compile_definitions(swgb_gen PRIVATE ${SWGB_NATIVE_DEFS})
   target_compile_options(swgb_gen PRIVATE ${SWGB_GEN_FLAGS})
   set(SWGB_GEN_FILE "$<TARGET_FILE:swgb_gen>")
+  foreach(f IN LISTS GEN_HOT_FILES)
+    set_source_files_properties("${GEN_DIR}/${f}" PROPERTIES COMPILE_OPTIONS "${GEN_HOT_OPT}")
+  endforeach()
 endif()
 
 add_executable(swgb
@@ -90,7 +101,13 @@ add_executable(swgb
   src/linux/shims.c
   src/linux/eh.c
   src/linux/fields.c
+  src/linux/framerate.c
+  src/linux/profile.c
+  src/linux/movie.c
   src/runtime/keyscript.c
+  src/runtime/coverage.c
+  src/runtime/widescreen.c
+  src/runtime/dplay.c
   src/runtime/inflate.c
   third_party/miniz/miniz.c
   ${HLE_SOURCES}
@@ -98,7 +115,7 @@ add_executable(swgb
 target_include_directories(swgb PRIVATE ${SWGB_NATIVE_INCS})
 target_compile_definitions(swgb PRIVATE ${SWGB_NATIVE_DEFS})
 target_compile_options(swgb PRIVATE -fno-strict-aliasing -fwrapv)
-set_source_files_properties(src/linux/main.c src/linux/shims.c src/runtime/keyscript.c src/runtime/inflate.c
+set_source_files_properties(src/linux/main.c src/linux/shims.c src/linux/framerate.c src/linux/profile.c src/linux/movie.c src/runtime/keyscript.c src/runtime/coverage.c src/runtime/widescreen.c src/runtime/dplay.c src/runtime/inflate.c
                             PROPERTIES COMPILE_OPTIONS "-Wall;-Wno-unused-parameter")
 set_source_files_properties(third_party/miniz/miniz.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
 # Every object of the lift, referenced or not: the dispatch table is the only
@@ -118,3 +135,53 @@ if(WITH_FFMPEG)
 endif()
 
 set_target_properties(swgb PROPERTIES OUTPUT_NAME swgbrecomp)
+
+# Clone Campaigns' host, swgbrecomp_cc, as on Windows (cmake/clone_campaigns.cmake):
+# only when its lift is there (python3 run_lift.py --build cc --all -> src/recomp/gen_cc),
+# or SWGB_CC_GEN_LIB names a prebuilt libswgb_cc_gen.a. The host is the base
+# target's sources with SWGB_CC (main.c's exe, registry key and disc;
+# guest_addrs.h's engine addresses).
+set(CC_GEN_DIR "${CMAKE_SOURCE_DIR}/src/recomp/gen_cc" CACHE PATH "the lifted Clone Campaigns C (run_lift.py --build cc)")
+set(SWGB_CC_GEN_LIB "" CACHE FILEPATH "a prebuilt libswgb_cc_gen.a to link instead of compiling CC_GEN_DIR")
+file(GLOB CC_GEN_SOURCES CONFIGURE_DEPENDS "${CC_GEN_DIR}/*.c")
+list(FILTER CC_GEN_SOURCES EXCLUDE REGEX "/[.]_[^/]*$")
+if(SWGB_CC_GEN_LIB OR CC_GEN_SOURCES)
+  set(SWGB_CC_INCS ${SWGB_NATIVE_INCS})
+  list(TRANSFORM SWGB_CC_INCS REPLACE "^${GEN_DIR}$" "${CC_GEN_DIR}")
+  if(SWGB_CC_GEN_LIB)
+    if(NOT EXISTS "${SWGB_CC_GEN_LIB}")
+      message(FATAL_ERROR "SWGB_CC_GEN_LIB ${SWGB_CC_GEN_LIB} does not exist")
+    endif()
+    add_library(swgb_cc_gen STATIC IMPORTED)
+    set_target_properties(swgb_cc_gen PROPERTIES IMPORTED_LOCATION "${SWGB_CC_GEN_LIB}")
+    set(SWGB_CC_GEN_FILE "${SWGB_CC_GEN_LIB}")
+  else()
+    add_library(swgb_cc_gen STATIC ${CC_GEN_SOURCES})
+    target_include_directories(swgb_cc_gen PRIVATE ${SWGB_CC_INCS})
+    target_compile_definitions(swgb_cc_gen PRIVATE ${SWGB_NATIVE_DEFS})
+    target_compile_options(swgb_cc_gen PRIVATE ${SWGB_GEN_FLAGS})
+    set(SWGB_CC_GEN_FILE "$<TARGET_FILE:swgb_cc_gen>")
+    foreach(f IN LISTS CC_GEN_HOT_FILES)
+      set_source_files_properties("${CC_GEN_DIR}/${f}" PROPERTIES COMPILE_OPTIONS "${GEN_HOT_OPT}")
+    endforeach()
+  endif()
+  get_target_property(_cc_sources swgb SOURCES)
+  add_executable(swgb_cc ${_cc_sources})
+  target_include_directories(swgb_cc PRIVATE ${SWGB_CC_INCS})
+  target_compile_definitions(swgb_cc PRIVATE ${SWGB_NATIVE_DEFS} SWGB_CC=1)
+  target_compile_options(swgb_cc PRIVATE -fno-strict-aliasing -fwrapv)
+  if(APPLE)
+    target_link_libraries(swgb_cc PRIVATE "-Wl,-force_load,${SWGB_CC_GEN_FILE}")
+  else()
+    target_link_libraries(swgb_cc PRIVATE "-Wl,--whole-archive" "${SWGB_CC_GEN_FILE}" "-Wl,--no-whole-archive")
+  endif()
+  if(NOT SWGB_CC_GEN_LIB)
+    add_dependencies(swgb_cc swgb_cc_gen)
+  endif()
+  target_link_libraries(swgb_cc PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF pthread m)
+  if(WITH_FFMPEG)
+    target_compile_definitions(swgb_cc PRIVATE HLE_WITH_FFMPEG)
+    target_link_libraries(swgb_cc PRIVATE PkgConfig::FFMPEG)
+  endif()
+  set_target_properties(swgb_cc PROPERTIES OUTPUT_NAME swgbrecomp_cc)
+endif()
