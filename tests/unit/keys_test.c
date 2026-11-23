@@ -11,12 +11,43 @@
  * A bad step is skipped by --keys-live (strict 0) and ends the run (exit 1) in --keys.
  *
  *   py -3 tools\test.py --level unit        (builds and runs every unit)
+ *   python3 tools/test.py --level unit      (Linux and macOS: the same parser)
  */
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define SEP "\\"
+#define ABS(p) ((p)[1] == ':')
+#define WSHOT_IN "C:\\t\\y.bmp"
+#define SELF_CMD(args) "\"\"%s\" " args " 2>&1\""   /* cmd.exe: the outer quotes go */
+#else
+#include <unistd.h>
+#include <limits.h>
+#define VK_ESCAPE KS_VK_ESCAPE
+#define VK_RETURN KS_VK_RETURN
+#define VK_F1 KS_VK_F1
+#define VK_F12 (KS_VK_F1 + 11)
+#define VK_BACK KS_VK_BACK
+#define VK_HOME KS_VK_HOME
+#define VK_SPACE KS_VK_SPACE
+#define MAX_PATH PATH_MAX
+#define lstrcpynA(d, s, n) snprintf((d), (n), "%s", (s))
+#define _snprintf snprintf
+#define _popen popen
+/* pclose gives a wait status: the exit code is its high byte */
+#define _pclose(p) (pclose(p) >> 8)
+#define GetModuleFileNameA(m, buf, n) do { ssize_t k_ = readlink("/proc/self/exe", (buf), (n) - 1); (buf)[k_ > 0 ? k_ : 0] = 0; } while (0)
+#define GetTempPathA(n, buf) snprintf((buf), (n), "%s/", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp")
+#define GetCurrentProcessId() ((unsigned long)getpid())
+#define DeleteFileA(p) remove(p)
+#define SEP "/"
+#define ABS(p) ((p)[0] == '/')
+#define WSHOT_IN "/t/y.bmp"
+#define SELF_CMD(args) "'%s' " args " 2>&1"
+#endif
 
 #include "keyscript.h"
 
@@ -76,8 +107,8 @@ int main(int argc, char** argv) {
     CHECK(STEP("7:setcursor") && st.setcursor, "setcursor");
 
     /* shots: the file made absolute (the run's working folder) */
-    CHECK(STEP("4:shot=x.bmp") && !st.wshot && strlen(st.shot) > 6 && st.shot[1] == ':' && !strcmp(st.shot + strlen(st.shot) - 6, "\\x.bmp"), "shot: %s", st.shot);
-    CHECK(STEP("4:wshot=C:\\t\\y.bmp") && st.wshot && !strcmp(st.shot, "C:\\t\\y.bmp"), "wshot: %s", st.shot);
+    CHECK(STEP("4:shot=x.bmp") && !st.wshot && strlen(st.shot) > 6 && ABS(st.shot) && !strcmp(st.shot + strlen(st.shot) - 6, SEP "x.bmp"), "shot: %s", st.shot);
+    CHECK(STEP("4:wshot=" WSHOT_IN) && st.wshot && !strcmp(st.shot, WSHOT_IN), "wshot: %s", st.shot);
 
     /* waits */
     CHECK(STEP("on:logo1") && !strcmp(st.on, "logo1") && st.at == 0, "on:");
@@ -94,7 +125,7 @@ int main(int argc, char** argv) {
         GetModuleFileNameA(NULL, self, MAX_PATH);
         static const char* bad[] = { "8:frob", "9:wmove:R" };
         for (int i = 0; i < 2; i++) {
-            _snprintf(cmd, sizeof cmd, "\"\"%s\" %s 2>&1\"", self, bad[i]);
+            _snprintf(cmd, sizeof cmd, SELF_CMD("%s"), self, bad[i]);
             FILE* p = _popen(cmd, "r");
             char out[1024];
             size_t n = fread(out, 1, sizeof out - 1, p);
@@ -102,7 +133,7 @@ int main(int argc, char** argv) {
             int rc = _pclose(p);
             CHECK(rc == 1 && strstr(out, "--keys") && !strstr(out, "parsed"), "strict %s: exit %d, %s", bad[i], rc, out);
         }
-        _snprintf(cmd, sizeof cmd, "\"\"%s\" 1:esc 2>&1\"", self);
+        _snprintf(cmd, sizeof cmd, SELF_CMD("1:esc"), self);
         FILE* p = _popen(cmd, "r");
         char out[256];
         size_t n = fread(out, 1, sizeof out - 1, p);

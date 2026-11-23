@@ -22,17 +22,27 @@
  * the Options dialog and every "which art" choice keyed off it still see
  * the 1280 entry and use the 1280-wide interface art.
  */
+#ifndef SWGB_WIN32HLE
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "native32.h"
+#include "guest.h"   /* native32 on Windows; win32hle on Linux and macOS (src/linux) */
 #include "guest_addrs.h"
 #include "widescreen.h"
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
+#ifdef SWGB_WIN32HLE
+#include <strings.h>
+#define STRICMP strcasecmp
+#define GUEST_ALLOC(n) hle_heap_alloc((uint32_t)(n), 0)
+#else
+#define STRICMP _stricmp
+#define GUEST_ALLOC(n) malloc(n)
+#endif
 
 int widescreen_w, widescreen_h;
 static int g_base_w, g_base_h;
@@ -51,9 +61,14 @@ static int g_trace_on;
 
 int widescreen_parse(const char* s) {
     int w = 0, h = 0;
-    if (!_stricmp(s, "desktop")) {
+    if (!STRICMP(s, "desktop")) {
+#ifdef SWGB_WIN32HLE
+        /* the display the window opened on: main.c parses --res after hle_screen_open */
+        if (!hle_screen_desktop(&w, &h)) { fprintf(stderr, "--res desktop: no display (headless)\n"); return 0; }
+#else
         w = GetSystemMetrics(SM_CXSCREEN);
         h = GetSystemMetrics(SM_CYSCREEN);
+#endif
     } else if (sscanf(s, "%dx%d", &w, &h) != 2) {
         return 0;
     }
@@ -251,7 +266,7 @@ static uint32_t shifted_slp(uint32_t shape, int dx, int dy) {
         if (cache[i].slp == slp && cache[i].dx == dx && cache[i].dy == dy) return cache[i].copy;
     uint32_t frames = MEM32(slp + 4);
     if (n == 16 || frames == 0 || size < 32 + frames * 32 || size > (64u << 20)) return slp;
-    uint8_t* c = (uint8_t*)malloc(size);
+    uint8_t* c = (uint8_t*)GUEST_ALLOC(size);   /* the game reads it: guest memory */
     if (!c) return slp;
     uint32_t copy = (uint32_t)(uintptr_t)c;
     memcpy(c, (void*)(uintptr_t)slp, size);
@@ -380,28 +395,34 @@ static void hook_info_draw(void) {
     MEM32(area + 0x18) = (uint32_t)widescreen_w;
 }
 
-/* LoadStringA: the Options dialog's "1280 x 1024" (its button and its help
- * line) names the size it now gives. */
+/* A string LoadStringA gave (n characters in a buffer of max): the Options
+ * dialog's "1280 x 1024" (its button and its help line) names the size it now
+ * gives. Returns the new length. */
+int widescreen_string(char* buf, int max, int n) {
+    char* at;
+    if (n > 0 && max > 0 && widescreen_w && (at = strstr(buf, "1280 x 1024")) != NULL) {
+        char size[32], rest[1024];
+        snprintf(size, sizeof size, "%d x %d", widescreen_w, widescreen_h);
+        snprintf(rest, sizeof rest, "%s", at + 11);
+        int room = max - (int)(at - buf);
+        if (room > 0) snprintf(at, room, "%s%s", size, rest);
+        buf[max - 1] = 0;
+        n = (int)strlen(buf);
+    }
+    return n;
+}
+
+#ifndef SWGB_WIN32HLE
 void widescreen_LoadStringA(void) {
     HINSTANCE inst = (HINSTANCE)(uintptr_t)ARG(0);
     UINT id = ARG(1);
     char* buf = (char*)(uintptr_t)ARG(2);
     int max = (int)ARG(3);
-    int n = LoadStringA(inst, id, buf, max);
-    char* at;
-    if (n > 0 && max > 0 && widescreen_w && (at = strstr(buf, "1280 x 1024")) != NULL) {
-        char size[32], rest[1024];
-        _snprintf(size, sizeof size, "%d x %d", widescreen_w, widescreen_h);
-        size[sizeof size - 1] = 0;
-        lstrcpynA(rest, at + 11, sizeof rest);
-        int room = max - (int)(at - buf);
-        if (room > 0) _snprintf(at, room, "%s%s", size, rest);
-        buf[max - 1] = 0;
-        n = (int)strlen(buf);
-    }
+    int n = widescreen_string(buf, max, LoadStringA(inst, id, buf, max));
     g_eax = (uint32_t)n;
     g_esp += 4 + 4 * 4;
 }
+#endif
 
 /* vtable 0x0065CE24 + 0x00: the game screen's destructor. */
 static void hook_game_screen_delete(void) {

@@ -21,15 +21,42 @@
  * address is no function and no handler. SWGB_ICALL_CONTINUE=1 keeps
  * pcrecomp's behaviour (one line per miss, eax = 0, carry on): to collect
  * several misses from one run, knowing the run is no longer trustworthy. */
+#ifndef SWGB_WIN32HLE
 #include <windows.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 
+#include "coverage.h"
+#ifdef SWGB_WIN32HLE
+/* The Linux and macOS host (src/linux): the same stop on win32hle. The run
+ * ends through hle_exit, so the host's exit hook (the recorder) runs. */
+#include <unistd.h>
+#include "win32hle.h"
+typedef int LONG;
+#define native32_name hle_name
+#define InterlockedIncrement(p) __sync_add_and_fetch((p), 1)
+#define InterlockedExchange(p, v) __sync_lock_test_and_set((p), (v))
+#define Sleep(ms) for (;;) pause()
+#define GetCurrentThreadId() ((unsigned long)(uintptr_t)pthread_self())
+#define IsBadReadPtr(p, n) 0
+#define recomp_dump_trace(why) ((void)(why))
+#define recomp_trace_flush() ((void)0)
+#define softdd_finish() ((void)0)
+#define TerminateProcess(p, code) hle_exit(code)
+#define SEEDS_CMD "python3 tools/seeds_from_logs.py"
+#define RUN_SEEDS "work/run_seeds.json"
+#include <pthread.h>
+uint32_t coverage_image_end = 0x00A5A000u;   /* the guest image's end (main.c sets it) */
+static int native32_in_guest(uint32_t va) { return va >= 0x00400000u && va < coverage_image_end; }
+#else
 #include "native32.h"
 #include "recomp_trace.h"
 #include "softdd.h"
-#include "coverage.h"
+#define SEEDS_CMD "py -3 tools\\seeds_from_logs.py"
+#define RUN_SEEDS "work\\run_seeds.json"
+#endif
 
 static int (*g_eh_prev)(uint32_t va);
 static int g_continue;
@@ -88,7 +115,7 @@ static int coverage_miss(uint32_t va) {
         fprintf(stderr, "  inside the game's image, no lifted function starts there; nearest below: "
                         "sub_%08X (+0x%X)\n", below, va - below);
         fprintf(stderr, "  if it is a function (a vtable slot, a callback), it is an entry the catalog\n"
-                        "  missed: `py -3 tools\\seeds_from_logs.py --merge` adds it to work\\run_seeds.json,\n"
+                        "  missed: `" SEEDS_CMD " --merge` adds it to " RUN_SEEDS ",\n"
                         "  then re-lift (run_lift.py) and rebuild. docs/lifting.md, \"Pointers the catalog dropped\"\n");
     } else
         fprintf(stderr, "  outside the game's image and no import: a pointer into data or freed memory\n");

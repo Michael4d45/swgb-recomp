@@ -10,13 +10,11 @@
  *
  *   py -3 tools\test.py --level unit        (builds and runs every unit)
  */
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "native32.h"
+#include "guest.h"   /* native32 on Windows, win32hle (-DSWGB_WIN32HLE) on Linux and macOS */
 #include "miniz.h"
 
 void swgb_inflate(void);

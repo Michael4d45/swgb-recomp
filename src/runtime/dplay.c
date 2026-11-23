@@ -30,7 +30,27 @@
  * for any native call); a network thread of ours reads the sockets and
  * queues messages. Guest code (the EnumSessions callback) is called only on
  * the game's thread, inside EnumSessions, and never with our lock held.
+ *
+ * The Linux and macOS host (SWGB_WIN32HLE, src/linux) builds this file too:
+ * winport.h gives it the Win32 it uses (sockets, threads, events, UTF-16), the
+ * methods are win32hle shims (a vtable of shim addresses; each shim lets the
+ * machine go and calls the method below with the guest's arguments), guest
+ * callbacks go through hle_call_guest, and a player's event is the game's own
+ * win32hle event (hle_set_event). 32-bit only: the game's pointers are the
+ * host's (flat memory), as under native32.
  */
+#ifdef SWGB_WIN32HLE
+#include <stdarg.h>
+#include <sys/stat.h>
+#include <ifaddrs.h>
+#include "winport.h"
+#include "win32hle.h"
+#if UINTPTR_MAX != 0xFFFFFFFFu
+#error "dplay.c on win32hle needs the 32-bit host (flat memory: the game's pointers are the host's)"
+#endif
+typedef socklen_t sock_len;
+#define WSTR(s) u##s
+#else
 #define WIN32_LEAN_AND_MEAN
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
@@ -43,9 +63,12 @@
 #include <string.h>
 
 #include "native32.h"
+#include "widescreen.h"
+typedef int sock_len;
+#define WSTR(s) L##s
+#endif
 #include "dplay.h"
 #include "guest_addrs.h"
-#include "widescreen.h"
 
 typedef DWORD DPID;
 
@@ -115,7 +138,13 @@ static char g_join[256];         /* --mp-join a,b */
 static int  g_log;               /* --mp-log */
 
 int dplay_arg(int argc, char** argv, int i) {
-    if (!strcmp(argv[i], "--dplay") && i + 1 < argc) { g_native = !_stricmp(argv[i + 1], "native"); return 2; }
+    if (!strcmp(argv[i], "--dplay") && i + 1 < argc) {
+        g_native = !_stricmp(argv[i + 1], "native");
+#ifdef SWGB_WIN32HLE
+        if (g_native) { printf("[dplay] --dplay native: no DirectPlay on this system but ours\n"); g_native = 0; }
+#endif
+        return 2;
+    }
     if (!strcmp(argv[i], "--mp-port") && i + 1 < argc) { g_port = atoi(argv[i + 1]); return 2; }
     if (!strcmp(argv[i], "--mp-join") && i + 1 < argc) { lstrcpynA(g_join, argv[i + 1], sizeof g_join); return 2; }
     if (!strcmp(argv[i], "--mp-log")) { g_log = 1; return 1; }
@@ -153,7 +182,11 @@ static void seen(volatile LONG* c, const char* what, const char* name) {
 /* ---- strings: the game's interface is the Unicode one, and it passes ANSI strings through it
  * ("<name>'s Game" as a WCHAR*). dplayx takes them as WCHARs up to a 0x0000 and hands the same
  * bytes back, so the game reads its own text; so do we. An A interface is handled too. ---- */
+#ifdef SWGB_WIN32HLE
+static int wlen(const WCHAR* s) { return s ? wcslen16(s) : 0; }
+#else
 static int wlen(const WCHAR* s) { return s ? (int)wcslen(s) : 0; }
+#endif
 /* a name from the game (WCHAR* or char*) into ours */
 static void name_in(WCHAR* out, int cap, const void* s, int ansi) {
     out[0] = 0;
@@ -268,9 +301,19 @@ static DPID first_local(void) {
     for (int i = 0; i < g_npl; i++) if (g_pl[i].owner < 0) return g_pl[i].id;
     return 0;
 }
+/* A local player's event is the game's (CreatePlayer's): on win32hle a handle of its own,
+ * set holding the machine. */
 static void signal_player(DPID to) {
     for (int i = 0; i < g_npl; i++)
-        if (g_pl[i].owner < 0 && g_pl[i].event && (to == 0 || g_pl[i].id == to)) SetEvent(g_pl[i].event);
+        if (g_pl[i].owner < 0 && g_pl[i].event && (to == 0 || g_pl[i].id == to)) {
+#ifdef SWGB_WIN32HLE
+            mach_enter();
+            hle_set_event((uint32_t)(uintptr_t)g_pl[i].event);
+            mach_leave();
+#else
+            SetEvent(g_pl[i].event);
+#endif
+        }
 }
 
 /* queue a message for this process (lock held) */
@@ -396,10 +439,18 @@ static void send_all(const wbuf* w, int except) {
 static DWORD build_stamp(void) {
     static DWORD stamp;
     if (!stamp) {
+#ifdef SWGB_WIN32HLE
+        /* the host's file (its time and size: an ELF has no link stamp) and the guest's PE stamp */
+        struct stat st;
+        uint32_t host = stat("/proc/self/exe", &st) == 0 ? (uint32_t)st.st_mtime ^ ((uint32_t)st.st_size * 0x9E3779B1u) : 0;
+        uint32_t guest = MEM32(0x00400000u + MEM32(0x0040003Cu) + 8);
+        stamp = host ^ guest ^ 0x4C4E5800u;   /* never equal to a Windows host's: they cannot play together */
+#else
         const uint8_t* h = (const uint8_t*)GetModuleHandleA(NULL);
         const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(h + ((const IMAGE_DOS_HEADER*)h)->e_lfanew);
         const IMAGE_NT_HEADERS* g = (const IMAGE_NT_HEADERS*)(uintptr_t)(0x00400000u + *(const DWORD*)(uintptr_t)0x0040003Cu);
         stamp = nt->FileHeader.TimeDateStamp ^ (nt->OptionalHeader.SizeOfImage * 0x9E3779B1u) ^ g->FileHeader.TimeDateStamp;
+#endif
         if (!stamp) stamp = 1;
     }
     return stamp;
@@ -610,7 +661,7 @@ static void conn_read(int i) {
 static void disc_read(void) {
     uint8_t b[1500];
     struct sockaddr_in from;
-    int fl = sizeof from;
+    sock_len fl = sizeof from;
     int k = recvfrom(g_disc, (char*)b, sizeof b, 0, (struct sockaddr*)&from, &fl);
     if (k < 8 + 16 || memcmp(b, "SWGBDPE1", 8)) return;
     GUID app, zero = { 0 };
@@ -628,7 +679,7 @@ static void disc_read(void) {
 static void enum_read(void) {
     uint8_t b[1500];
     struct sockaddr_in from;
-    int fl = sizeof from;
+    sock_len fl = sizeof from;
     int k = recvfrom(g_enum, (char*)b, sizeof b, 0, (struct sockaddr*)&from, &fl);
     if (k < 12 || memcmp(b, "SWGBDPS1", 8)) return;
     rbuf r = { b + 8, k - 8, 0 };
@@ -662,9 +713,14 @@ static void enum_read(void) {
 #define SYNC_N 54
 static uint32_t g_sync_prev[SYNC_N][9], g_sync_logged[SYNC_N][9];
 static LONG64 g_sync_lines;
+#ifdef SWGB_WIN32HLE
+/* sync_sample holds the machine (net_thread), so the game frees nothing meanwhile */
+static uint32_t peek32(uint32_t a) { return a >= 0x10000 && a < 0xC0000000u ? MEM32(a) : 0; }
+#else
 static uint32_t peek32(uint32_t a) {
     __try { return a >= 0x10000 ? *(volatile uint32_t*)(uintptr_t)a : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
+#endif
 static void sync_sample(void) {
     uint32_t comm = peek32(G_COMM), t = comm ? peek32(comm + 0x1600) : 0;
     if (!t) return;
@@ -682,27 +738,42 @@ static void sync_sample(void) {
 }
 
 /* The game's out-of-sync messages, as it loads them to show them. */
-void dplay_LoadStringA(void) {
-    UINT id = MEM32(g_esp + 8);
+void dplay_string(unsigned id) {
     if (id == 1211 || id == 2012 || (id >= 2406 && id <= 2413) || id == 9013 || id == 9800 || id == 9801)
         printf("[mp] the game loaded string %u (%s)\n", id, id == 1211 ? "resynchronizing" : "OUT OF SYNC");
+}
+#ifndef SWGB_WIN32HLE
+void dplay_LoadStringA(void) {
+    dplay_string(MEM32(g_esp + 8));
     widescreen_LoadStringA();
 }
+#endif
 
 static DWORD WINAPI net_thread(LPVOID unused) {
     DWORD last_sync = GetTickCount();
     (void)unused;
     while (!g_stop) {
         fd_set rd;
-        if (GetTickCount() - last_sync >= 1000) { last_sync = GetTickCount(); sync_sample(); }
+        if (GetTickCount() - last_sync >= 1000) {
+            last_sync = GetTickCount();
+#ifdef SWGB_WIN32HLE
+            mach_enter();
+            sync_sample();
+            mach_leave();
+#else
+            sync_sample();
+#endif
+        }
         FD_ZERO(&rd);
+        int nfd = 0, maxfd = 0;   /* select's first argument: POSIX needs it, Windows ignores it */
+#define ADD_FD(s_) do { FD_SET((s_), &rd); nfd++; if ((int)(s_) > maxfd) maxfd = (int)(s_); } while (0)
         lock();
-        if (g_listen != INVALID_SOCKET) FD_SET(g_listen, &rd);
-        if (g_disc != INVALID_SOCKET) FD_SET(g_disc, &rd);
-        if (g_enum != INVALID_SOCKET) FD_SET(g_enum, &rd);
+        if (g_listen != INVALID_SOCKET) ADD_FD(g_listen);
+        if (g_disc != INVALID_SOCKET) ADD_FD(g_disc);
+        if (g_enum != INVALID_SOCKET) ADD_FD(g_enum);
         for (int i = 0; i < g_nconn; i++) {
             if (g_conn[i].dead && g_conn[i].s != INVALID_SOCKET) conn_close(i);
-            if (g_conn[i].s != INVALID_SOCKET) FD_SET(g_conn[i].s, &rd);
+            if (g_conn[i].s != INVALID_SOCKET) ADD_FD(g_conn[i].s);
         }
         /* a ping each second each way; 30 s of silence is a drop (a pulled cable sends no FIN) */
         DWORD now = GetTickCount();
@@ -714,13 +785,13 @@ static DWORD WINAPI net_thread(LPVOID unused) {
         }
         unlock();
         struct timeval tv = { 0, 50000 };
-        if (rd.fd_count == 0) { Sleep(50); continue; }
-        int n = select(0, &rd, NULL, NULL, &tv);
+        if (nfd == 0) { Sleep(50); continue; }
+        int n = select(maxfd + 1, &rd, NULL, NULL, &tv);
         if (n <= 0) continue;
         lock();
         if (g_listen != INVALID_SOCKET && FD_ISSET(g_listen, &rd)) {
             struct sockaddr_in a;
-            int al = sizeof a;
+            sock_len al = sizeof a;
             SOCKET s = accept(g_listen, (struct sockaddr*)&a, &al);
             if (s != INVALID_SOCKET) {
                 int i;
@@ -798,6 +869,18 @@ static void probe_to(uint32_t ip_net, const GUID* app) {
 static void probe_all(const GUID* app) {
     probe_to(htonl(INADDR_LOOPBACK), app);
     probe_to(INADDR_BROADCAST, app);
+#ifdef SWGB_WIN32HLE
+    struct ifaddrs* ifs = NULL;
+    if (!getifaddrs(&ifs)) {
+        for (struct ifaddrs* i = ifs; i; i = i->ifa_next) {
+            if (!i->ifa_addr || !i->ifa_netmask || i->ifa_addr->sa_family != AF_INET) continue;
+            if (!(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK)) continue;
+            uint32_t a = ((struct sockaddr_in*)i->ifa_addr)->sin_addr.s_addr, m = ((struct sockaddr_in*)i->ifa_netmask)->sin_addr.s_addr;
+            probe_to(a | ~m, app);
+        }
+        freeifaddrs(ifs);
+    }
+#else
     INTERFACE_INFO ii[32];
     DWORD got = 0;
     if (!WSAIoctl(g_enum, SIO_GET_INTERFACE_LIST, NULL, 0, ii, sizeof ii, &got, NULL, NULL)) {
@@ -807,6 +890,7 @@ static void probe_all(const GUID* app) {
             probe_to(a | ~m, app);
         }
     }
+#endif
     char list[sizeof g_join + 70];
     _snprintf(list, sizeof list, "%s,%s", g_join, g_target);
     list[sizeof list - 1] = 0;
@@ -819,6 +903,31 @@ static void probe_all(const GUID* app) {
         }
     }
 }
+
+/* ---- the game's callbacks: called directly under native32, through hle_call_guest on win32hle ---- */
+#ifdef SWGB_WIN32HLE
+static BOOL guest_cb(void* cb, int n, ...) {
+    uint32_t a[8];
+    va_list ap;
+    va_start(ap, n);
+    for (int i = 0; i < n; i++) a[i] = va_arg(ap, uint32_t);
+    va_end(ap);
+    /* The bridge let the machine go (hle_block_begin, which keeps this thread's nesting count):
+     * take it back first, or hle_call_guest would run the callback without it. */
+    hle_block_end();
+    BOOL r = hle_call_guest((uint32_t)(uintptr_t)cb, n, a) != 0;
+    hle_block_begin();
+    return r;
+}
+#define U_(x) ((uint32_t)(uintptr_t)(x))
+#define GUEST_CB4(T, cb, a, b, c, d) guest_cb((cb), 4, U_(a), U_(b), U_(c), U_(d))
+#define GUEST_CB5(T, cb, a, b, c, d, e) guest_cb((cb), 5, U_(a), U_(b), U_(c), U_(d), U_(e))
+#define GUEST_CB6(T, cb, a, b, c, d, e, f) guest_cb((cb), 6, U_(a), U_(b), U_(c), U_(d), U_(e), U_(f))
+#else
+#define GUEST_CB4(T, cb, a, b, c, d) ((T)(cb))(a, b, c, d)
+#define GUEST_CB5(T, cb, a, b, c, d, e) ((T)(cb))(a, b, c, d, e)
+#define GUEST_CB6(T, cb, a, b, c, d, e, f) ((T)(cb))(a, b, c, d, e, f)
+#endif
 
 /* ---- the IDirectPlay4 object ---------------------------------------------------------------- */
 typedef struct { void** vtbl; LONG refs; int ansi; } dpobj;
@@ -992,7 +1101,7 @@ static HRESULT __stdcall dp_EnumPlayers(dpobj* o, GUID* inst, void* cb, void* ct
         if (copy[i].has_short) { name_out(sb, copy[i].shortname, o->ansi); dn.lpszShortName = sb; }
         if (copy[i].has_long) { name_out(lb, copy[i].longname, o->ansi); dn.lpszLongName = lb; }
         DWORD pf = copy[i].owner < 0 ? 0x8 /* DPENUMPLAYERS_LOCAL */ : 0x10 /* REMOTE */;
-        if (!((ENUMPLAYERS_CB)cb)(copy[i].id, DPPLAYERTYPE_PLAYER, &dn, pf, ctx)) break;
+        if (!GUEST_CB5(ENUMPLAYERS_CB, cb, copy[i].id, DPPLAYERTYPE_PLAYER, &dn, pf, ctx)) break;
     }
     (void)flags;
     return DP_OK;
@@ -1030,10 +1139,10 @@ static HRESULT __stdcall dp_EnumSessions(dpobj* o, SD2* want, DWORD timeout, voi
             sd.lpszSessionName = nb;
             sd.lpszPassword = NULL;
             DWORD to = timeout;
-            if (!((ENUMSESS_CB)cb)(&sd, &to, 0, ctx)) return DP_OK;
+            if (!GUEST_CB4(ENUMSESS_CB, cb, &sd, &to, 0, ctx)) return DP_OK;
         }
         DWORD to = timeout;
-        if (!((ENUMSESS_CB)cb)(NULL, &to, DPESC_TIMEDOUT, ctx) || (flags & DPENUMSESSIONS_ASYNC)) return DP_OK;
+        if (!GUEST_CB4(ENUMSESS_CB, cb, NULL, &to, DPESC_TIMEDOUT, ctx) || (flags & DPENUMSESSIONS_ASYNC)) return DP_OK;
     }
     return DP_OK;
 }
@@ -1146,8 +1255,12 @@ static HRESULT __stdcall dp_Open(dpobj* o, SD2* sd, DWORD flags) {
             a.sin_port = htons((u_short)(g_port + k));
             SOCKET t = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP), u = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
             BOOL one = TRUE;
+#ifdef SO_EXCLUSIVEADDRUSE   /* POSIX: a bound port is taken without SO_REUSEADDR */
             setsockopt(t, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&one, sizeof one);
             setsockopt(u, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&one, sizeof one);
+#else
+            (void)one;
+#endif
             if (!bind(t, (struct sockaddr*)&a, sizeof a) && !listen(t, 8) && !bind(u, (struct sockaddr*)&a, sizeof a)) {
                 ls = t, ds = u, port = g_port + k;
             } else { closesocket(t); closesocket(u); }
@@ -1305,10 +1418,10 @@ static HRESULT __stdcall dp_EnumConnections(dpobj* o, const GUID* app, void* cb,
     /* the TCP/IP connection, its address an empty INet string */
     struct { GUID g1; DWORD n1; DWORD total; GUID g2; DWORD n2; GUID sp; GUID g3; DWORD n3; char s[1]; } a;
     a.g1 = AID_TOTAL, a.n1 = 4, a.total = sizeof a, a.g2 = AID_SP, a.n2 = 16, a.sp = SP_TCPIP, a.g3 = AID_INET, a.n3 = 1, a.s[0] = 0;
-    WCHAR wn[] = L"Internet TCP/IP Connection For DirectPlay";
+    WCHAR wn[] = WSTR("Internet TCP/IP Connection For DirectPlay");
     char an[] = "Internet TCP/IP Connection For DirectPlay";
     DPN dn = { sizeof dn, 0, o->ansi ? (void*)an : (void*)wn, NULL };
-    ((ENUMCONN_CB)cb)(&SP_TCPIP, &a, sizeof a, &dn, 0, ctx);
+    GUEST_CB6(ENUMCONN_CB, cb, &SP_TCPIP, &a, sizeof a, &dn, 0, ctx);
     return DP_OK;
 }
 static HRESULT __stdcall dp_EnumGroupsInGroup(dpobj* o, DPID g, GUID* i, void* cb, void* ctx, DWORD f) { (void)o; (void)g; (void)i; (void)cb; (void)ctx; (void)f; UNSUP(36); }
@@ -1508,7 +1621,7 @@ static HRESULT WINAPI my_DirectPlayEnumerateA(void* cb, void* ctx) {
     static char name[] = "Internet TCP/IP Connection For DirectPlay";
     if (!cb) return DPERR_INVALIDPARAMS;
     g = SP_TCPIP;
-    ((ENUMSP_CB)cb)(&g, name, 6, 0, ctx);
+    GUEST_CB5(ENUMSP_CB, cb, &g, name, 6, 0, ctx);
     return DP_OK;
 }
 static HRESULT WINAPI my_DirectPlayLobbyCreateA(GUID* sp, void** out, void* unk, void* data, DWORD n) {
@@ -1527,11 +1640,210 @@ static HRESULT WINAPI my_CoCreateInstance(const GUID* clsid, void* outer, DWORD 
         return DP_OK;
     }
     if (clsid && IsEqualGUID(clsid, &CLSID_DPL)) { if (!out) return DPERR_INVALIDPARAMS; *out = lob_new(); return DP_OK; }
+#ifdef SWGB_WIN32HLE
+    (void)outer; (void)ctx;
+    return 0x80040154;   /* REGDB_E_CLASSNOTREG: only ours come here */
+#else
     return CoCreateInstance(clsid, (LPUNKNOWN)outer, ctx, riid, out);
+#endif
 }
+
+#ifdef SWGB_WIN32HLE
+/* ---- the win32hle host: each method a shim ---------------------------------------------
+ * The guest's call reaches a shim holding the machine, with g_esp at [ret][this][args...]. The
+ * bridge reads the arguments, lets the machine go (a method may wait: Open, CreatePlayer,
+ * EnumSessions; the network thread takes the machine to set a player's event), calls the
+ * method, takes the machine back and pops the arguments, as the stdcall method would.
+ * X(slot, function, arguments counting this) */
+#define DP_METHODS(X) \
+    X(0, dp_QueryInterface, 3) \
+    X(1, dp_AddRef, 1) \
+    X(2, dp_Release, 1) \
+    X(3, dp_AddPlayerToGroup, 3) \
+    X(4, dp_Close, 1) \
+    X(5, dp_CreateGroup, 6) \
+    X(6, dp_CreatePlayer, 7) \
+    X(7, dp_DeletePlayerFromGroup, 3) \
+    X(8, dp_DestroyGroup, 2) \
+    X(9, dp_DestroyPlayer, 2) \
+    X(10, dp_EnumGroupPlayers, 6) \
+    X(11, dp_EnumGroups, 5) \
+    X(12, dp_EnumPlayers, 5) \
+    X(13, dp_EnumSessions, 6) \
+    X(14, dp_GetCaps, 3) \
+    X(15, dp_GetGroupData, 5) \
+    X(16, dp_GetGroupName, 4) \
+    X(17, dp_GetMessageCount, 3) \
+    X(18, dp_GetPlayerAddress, 4) \
+    X(19, dp_GetPlayerCaps, 4) \
+    X(20, dp_GetPlayerData, 5) \
+    X(21, dp_GetPlayerName, 4) \
+    X(22, dp_GetSessionDesc, 3) \
+    X(23, dp_Initialize, 2) \
+    X(24, dp_Open, 3) \
+    X(25, dp_Receive, 6) \
+    X(26, dp_Send, 6) \
+    X(27, dp_SetGroupData, 5) \
+    X(28, dp_SetGroupName, 4) \
+    X(29, dp_SetPlayerData, 5) \
+    X(30, dp_SetPlayerName, 4) \
+    X(31, dp_SetSessionDesc, 3) \
+    X(32, dp_AddGroupToGroup, 3) \
+    X(33, dp_CreateGroupInGroup, 7) \
+    X(34, dp_DeleteGroupFromGroup, 3) \
+    X(35, dp_EnumConnections, 5) \
+    X(36, dp_EnumGroupsInGroup, 6) \
+    X(37, dp_GetGroupConnectionSettings, 5) \
+    X(38, dp_InitializeConnection, 3) \
+    X(39, dp_SecureOpen, 5) \
+    X(40, dp_SendChatMessage, 5) \
+    X(41, dp_SetGroupConnectionSettings, 4) \
+    X(42, dp_StartSession, 3) \
+    X(43, dp_GetGroupFlags, 3) \
+    X(44, dp_GetGroupParent, 3) \
+    X(45, dp_GetPlayerAccount, 5) \
+    X(46, dp_GetPlayerFlags, 3) \
+    X(47, dp_GetGroupOwner, 3) \
+    X(48, dp_SetGroupOwner, 3) \
+    X(49, dp_SendEx, 10) \
+    X(50, dp_GetMessageQueue, 6) \
+    X(51, dp_CancelMessage, 3) \
+    X(52, dp_CancelPriority, 4) \
+
+#define DP1_METHODS(X) \
+    X(0, dp1_QueryInterface, 3) \
+    X(1, dp1_AddRef, 1) \
+    X(2, dp1_Release, 1) \
+    X(3, dp1_AddPlayerToGroup, 3) \
+    X(4, dp1_Close, 1) \
+    X(5, dp1_CreatePlayer, 5) \
+    X(6, dp1_CreateGroup, 4) \
+    X(7, dp1_DeletePlayerFromGroup, 3) \
+    X(8, dp1_DestroyPlayer, 2) \
+    X(9, dp1_DestroyGroup, 2) \
+    X(10, dp1_EnableNewPlayers, 2) \
+    X(11, dp1_EnumGroupPlayers, 5) \
+    X(12, dp1_EnumGroups, 5) \
+    X(13, dp1_EnumPlayers, 5) \
+    X(14, dp1_EnumSessions, 6) \
+    X(15, dp1_GetCaps, 2) \
+    X(16, dp1_GetMessageCount, 3) \
+    X(17, dp1_GetPlayerCaps, 3) \
+    X(18, dp1_GetPlayerName, 6) \
+    X(19, dp1_Initialize, 2) \
+    X(20, dp1_Open, 2) \
+    X(21, dp1_Receive, 6) \
+    X(22, dp1_SaveSession, 2) \
+    X(23, dp1_Send, 6) \
+    X(24, dp1_SetPlayerName, 4) \
+
+#define LOB_METHODS(X) \
+    X(0, lob_QueryInterface, 3) \
+    X(1, lob_AddRef, 1) \
+    X(2, lob_Release, 1) \
+    X(3, lob_Connect, 4) \
+    X(4, lob_CreateAddress, 7) \
+    X(5, lob_EnumAddress, 5) \
+    X(6, lob_EnumAddressTypes, 5) \
+    X(7, lob_EnumLocalApplications, 4) \
+    X(8, lob_GetConnectionSettings, 4) \
+    X(9, lob_ReceiveLobbyMessage, 6) \
+    X(10, lob_RunApplication, 5) \
+    X(11, lob_SendLobbyMessage, 5) \
+    X(12, lob_SetConnectionSettings, 4) \
+    X(13, lob_SetLobbyMessageEvent, 4) \
+    X(14, lob_CreateCompoundAddress, 5) \
+    X(15, lob_ConnectEx, 5) \
+    X(16, lob_RegisterApplication, 3) \
+    X(17, lob_UnregisterApplication, 3) \
+    X(18, lob_WaitForConnectionSettings, 2) \
+
+typedef uint32_t (*fn1)(uint32_t);
+typedef uint32_t (*fn2)(uint32_t, uint32_t);
+typedef uint32_t (*fn3)(uint32_t, uint32_t, uint32_t);
+typedef uint32_t (*fn4)(uint32_t, uint32_t, uint32_t, uint32_t);
+typedef uint32_t (*fn5)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+typedef uint32_t (*fn6)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+typedef uint32_t (*fn7)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+typedef uint32_t (*fn10)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+static uint32_t bridge(void* fn, int n) {
+    uint32_t a[10] = { 0 }, r = DPERR_GENERIC;
+    for (int i = 0; i < n; i++) a[i] = A32(i);
+    hle_block_begin();
+    switch (n) {   /* every argument is a dword (32-bit host): i386 cdecl takes them as declared */
+    case 1: r = ((fn1)fn)(a[0]); break;
+    case 2: r = ((fn2)fn)(a[0], a[1]); break;
+    case 3: r = ((fn3)fn)(a[0], a[1], a[2]); break;
+    case 4: r = ((fn4)fn)(a[0], a[1], a[2], a[3]); break;
+    case 5: r = ((fn5)fn)(a[0], a[1], a[2], a[3], a[4]); break;
+    case 6: r = ((fn6)fn)(a[0], a[1], a[2], a[3], a[4], a[5]); break;
+    case 7: r = ((fn7)fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6]); break;
+    case 10: r = ((fn10)fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9]); break;
+    default: fprintf(stderr, "[dplay] no bridge for %d arguments\n", n); break;
+    }
+    hle_block_end();
+    return r;
+}
+#define BRIDGE(slot, fn, n) static void br_##fn(void) { uint32_t r_ = bridge((void*)fn, n); RET(r_, n); }
+DP_METHODS(BRIDGE)
+DP1_METHODS(BRIDGE)
+LOB_METHODS(BRIDGE)
+#define SHIM_DP(slot, fn, n) { "IDirectPlay4::" #fn, br_##fn },
+#define SHIM_DP1(slot, fn, n) { "IDirectPlay::" #fn, br_##fn },
+#define SHIM_LOB(slot, fn, n) { "IDirectPlayLobby::" #fn, br_##fn },
+#define VT(slot, fn, n) vt[slot] = (void*)(uintptr_t)hle_resolve(names[slot].name);
+
+/* The exports: dplayx's ordinals, as the game imports them. */
+static void s_DirectPlayCreate(void) { uint32_t r = bridge((void*)my_DirectPlayCreate, 3); RET(r, 3); }
+static void s_DirectPlayEnumerateA(void) { uint32_t r = bridge((void*)my_DirectPlayEnumerateA, 2); RET(r, 2); }
+static void s_DirectPlayLobbyCreateA(void) { uint32_t r = bridge((void*)my_DirectPlayLobbyCreateA, 5); RET(r, 5); }
+
+/* CoCreateInstance(CLSID_DirectPlay or CLSID_DirectPlayLobby): ole32.c asks its classes. */
+static uint32_t create_dp(const uint8_t* iid, uint32_t* out) {
+    void* o = NULL;
+    HRESULT r = my_CoCreateInstance(&CLSID_DP, NULL, 0, (const GUID*)iid, &o);
+    *out = (uint32_t)(uintptr_t)o;
+    return (uint32_t)r;
+}
+static uint32_t create_dpl(const uint8_t* iid, uint32_t* out) {
+    void* o = NULL;
+    HRESULT r = my_CoCreateInstance(&CLSID_DPL, NULL, 0, (const GUID*)iid, &o);
+    *out = (uint32_t)(uintptr_t)o;
+    return (uint32_t)r;
+}
+#endif
 
 void dplay_init(void) {
     if (g_native) { LOG("Windows' DirectPlay (--dplay native)"); return; }
+#ifdef SWGB_WIN32HLE
+    static const win32hle_shim dp_names[] = { DP_METHODS(SHIM_DP) { 0, 0 } };
+    static const win32hle_shim dp1_names[] = { DP1_METHODS(SHIM_DP1) { 0, 0 } };
+    static const win32hle_shim lob_names[] = { LOB_METHODS(SHIM_LOB) { 0, 0 } };
+    static const win32hle_shim exports[] = {
+        { "dplayx.dll#1", s_DirectPlayCreate },          /* DirectPlayCreate */
+        { "dplayx.dll#2", s_DirectPlayEnumerateA },      /* DirectPlayEnumerateA */
+        { "dplayx.dll#4", s_DirectPlayLobbyCreateA },    /* DirectPlayLobbyCreateA */
+        { "DirectPlayCreate", s_DirectPlayCreate },
+        { "DirectPlayEnumerateA", s_DirectPlayEnumerateA },
+        { "DirectPlayLobbyCreateA", s_DirectPlayLobbyCreateA },
+        { 0, 0 } };
+    win32hle_register(dp_names);
+    win32hle_register(dp1_names);
+    win32hle_register(lob_names);
+    win32hle_register(exports);
+    { void** vt = g_dp_vtbl; const win32hle_shim* names = dp_names; DP_METHODS(VT) }
+    { void** vt = g_dp1_vtbl; const win32hle_shim* names = dp1_names; DP1_METHODS(VT) }
+    { void** vt = g_lob_vtbl; const win32hle_shim* names = lob_names; LOB_METHODS(VT) }
+    hle_com_register_class((const uint8_t*)&CLSID_DP, create_dp);
+    hle_com_register_class((const uint8_t*)&CLSID_DPL, create_dpl);
+    if (!g_inited) {
+        InitializeCriticalSection(&g_cs);
+        InitializeCriticalSection(&g_send_cs);
+        g_reply_ev = CreateEventA(NULL, TRUE, FALSE, NULL);
+        g_inited = 1;
+    }
+    LOG("the host's DirectPlay: TCP/IP on port %d%s%s", g_port, g_join[0] ? ", also probing " : "", g_join);
+#else
     void* dp[53] = {
         dp_QueryInterface, dp_AddRef, dp_Release, dp_AddPlayerToGroup, dp_Close, dp_CreateGroup, dp_CreatePlayer,
         dp_DeletePlayerFromGroup, dp_DestroyGroup, dp_DestroyPlayer, dp_EnumGroupPlayers, dp_EnumGroups,
@@ -1571,6 +1883,7 @@ void dplay_init(void) {
     native32_redirect("DirectPlayLobbyCreateA", my_DirectPlayLobbyCreateA);
     native32_redirect("CoCreateInstance", my_CoCreateInstance);
     LOG("the host's DirectPlay: TCP/IP on port %d%s%s", g_port, g_join[0] ? ", also probing " : "", g_join);
+#endif
 }
 
 void dplay_finish(void) {

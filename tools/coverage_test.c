@@ -7,15 +7,37 @@
  *   cl /nologo /DRECOMP_FLAT_MEMORY /DRECOMP_LOCAL_REGS tools\coverage_test.c src\runtime\coverage.c
  *      /Isrc\runtime /I%PCRECOMP%\runtime\native32 /I%PCRECOMP%\runtime\recomp32
  *   coverage_test.exe                                      OK
+ *
+ * Linux and macOS (the win32hle host): -DSWGB_WIN32HLE, -I runtime/win32hle;
+ * python3 tools/test.py --level unit builds it.
  */
-#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
+#ifdef SWGB_WIN32HLE
+#include <unistd.h>
+#include <limits.h>
+#include "win32hle.h"
+#include "coverage.h"
+#define MAX_PATH PATH_MAX
+#define GetModuleFileNameA(m, buf, n) do { ssize_t k_ = readlink("/proc/self/exe", (buf), (n) - 1); (buf)[k_ > 0 ? k_ : 0] = 0; } while (0)
+#define _snprintf snprintf
+#define _popen popen
+#define _pclose(p) (pclose(p) >> 8)
+#define _putenv putenv
+#define SELF_CMD "'%s' 0x005648A0 2>&1"
+/* What coverage.c uses from win32hle. */
+const char* hle_name(uint32_t va) { return va == 0x77E4DAA0u ? "KERNEL32.dll!HeapAlloc" : NULL; }
+void hle_exit(int code) { fflush(stdout); fflush(stderr); _exit(code); }
+#else
+#include <windows.h>
 #include "native32.h"
 #include "recomp_trace.h"
 #include "coverage.h"
+#define SELF_CMD "\"\"%s\" 0x005648A0 2>&1\""
+#endif
 
 static void f1(void) {}
 const recomp_dispatch_entry_t recomp_dispatch_table[] = {
@@ -23,13 +45,15 @@ const recomp_dispatch_entry_t recomp_dispatch_table[] = {
 };
 const uint32_t recomp_dispatch_count = 3;
 
+#ifndef SWGB_WIN32HLE
 /* What coverage.c uses from native32, the tracer and softdd. */
 int native32_in_guest(uint32_t va) { return va >= 0x00400000u && va < 0x007AF000u; }
 const char* native32_name(uint32_t va) { return va == 0x77E4DAA0u ? "KERNEL32.dll!HeapAlloc" : NULL; }
-uint32_t g_icall_trace[ICALL_TRACE_SIZE], g_icall_from[ICALL_TRACE_SIZE], g_icall_trace_idx;
 void recomp_dump_trace(const char* why) { (void)why; }
 void recomp_trace_flush(void) {}
 void softdd_finish(void) {}
+#endif
+uint32_t g_icall_trace[ICALL_TRACE_SIZE], g_icall_from[ICALL_TRACE_SIZE], g_icall_trace_idx;
 const char* g_cur_import = "(none)";
 uint32_t g_eax, g_ecx, g_edx, g_esp, g_ebx, g_esi, g_edi, g_ebp, g_cur_func;   /* native32.c's */
 
@@ -55,8 +79,8 @@ int main(int argc, char** argv) {
     char self[MAX_PATH], cmd[2 * MAX_PATH], out[8192];
     GetModuleFileNameA(NULL, self, MAX_PATH);
     for (int mode = 0; mode < 2; mode++) {
-        _putenv(mode ? "SWGB_ICALL_CONTINUE=1" : "SWGB_ICALL_CONTINUE=");
-        _snprintf(cmd, sizeof cmd, "\"\"%s\" 0x005648A0 2>&1\"", self);
+        _putenv(mode ? (char*)"SWGB_ICALL_CONTINUE=1" : (char*)"SWGB_ICALL_CONTINUE=");
+        _snprintf(cmd, sizeof cmd, SELF_CMD, self);
         FILE* p = _popen(cmd, "r");
         size_t n = fread(out, 1, sizeof out - 1, p);
         out[n] = 0;
@@ -76,7 +100,7 @@ int main(int argc, char** argv) {
         if (fails) fputs(out, stdout);
     }
     /* In this process: the previous hook (eh32) sees the address first. */
-    _putenv("SWGB_ICALL_CONTINUE=1");   /* getenv reads the CRT's copy */
+    _putenv((char*)"SWGB_ICALL_CONTINUE=1");   /* getenv reads the CRT's copy */
     recomp_eh_jump_hook = fake_eh;
     coverage_init();
     recomp_eh_jump_hook(0x00632E6Fu);
