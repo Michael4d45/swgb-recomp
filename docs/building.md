@@ -71,6 +71,7 @@ build\swgbrecomp.exe --run --headless --profile p.txt         where the game thr
 build\swgbrecomp.exe --run --films "<Steam>\Game"            films the game cannot find, from there
 build\swgbrecomp.exe --run --fullscreen --filter integer      borderless fullscreen, whole-number scaling
 py -3 tools\conformance.py                                    the milestones, PASS/FAIL
+build\swgbrecomp.exe --run --mp-join 192.168.1.7             multiplayer: also look for games there (docs/multiplayer.md)
 ```
 
 ### The picture: scaling, fullscreen, pacing

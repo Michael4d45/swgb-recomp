@@ -344,6 +344,18 @@ On the `/O1` build with the code-pointer seeds, four at once:
 unresolved indirect call, no not-lifted stub, no eh32 miss, and nothing new
 for `seeds_from_logs.py --cc`.
 
+## Multiplayer: `tools/mp_pair.py`
+
+```
+py -3 tools\mp_pair.py [--minutes 20] [--activity idle|habits|busy] [--seed S] [--run EXE] [--game DIR]
+```
+
+Two headless `--multi` runs on this machine: one hosts, one joins over
+127.0.0.1, both start a two-player game and play `--minutes`. It passes when
+both reach their watchdog, nobody drops, the game shows no out-of-sync
+message and the game's own sync checkpoints (`[sync]` lines) agree between the
+two logs. Details and results in [multiplayer.md](multiplayer.md).
+
 ## The game's three resolutions
 
 ```
