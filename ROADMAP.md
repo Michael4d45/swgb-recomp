@@ -272,8 +272,25 @@ what needs research or a new subsystem.
   into the window procedure without an exception each (pcrecomp).
 - **Risk:** low.
 
+### 9. Multiplayer (LAN)
+- **Known:** the game uses DirectPlay 4 (dplayx) for a small set of calls, plus
+  IDirectPlay's EnableNewPlayers ([docs/multiplayer.md](docs/multiplayer.md)).
+  Windows' own DirectPlay works through native32's bridge but can't host on a
+  machine whose WSL mirrored networking holds port 47624, and isn't on Linux.
+- **Done (2026-11-22, headless, loopback):** a DirectPlay of the host's own
+  (`dplay.c`; `--dplay native` keeps Windows'): sessions over TCP through the
+  host process, UDP discovery on port 2300. Two recomps find the game, join,
+  meet in the setup screen, start and play. The game's own sync checkpoints are
+  logged (`[sync]`) and compared by `tools/mp_pair.py`.
+  Results: 25 minutes of the base game and 5 of Clone Campaigns, every
+  checkpoint the same on both sides; a different build is refused at the join.
+- **Left:** two real machines (a firewall Allow rule on the host's exe); chat, more players,
+  drops mid-game, saved multiplayer games; answering the startup version check
+  and the ordinal imports without dplayx.dll on disk (Linux); playing the
+  original exe (`--dplay native`, a working dplaysvr, the x87 transcendentals).
+- **Risk:** medium: out-of-sync shows only in long games and across machines.
+
 ## Later
-- DirectPlay multiplayer over LAN.
 
 ## Done
 - Text in 8-bit surfaces' DCs (labels, buttons, the HUD) in the palette in
