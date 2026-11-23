@@ -21,6 +21,7 @@
 #ifdef SWGB_CC
 /* ---- battlegrounds_x1.exe (Clone Campaigns, 2002-05-29) ---- */
 #define G_GAME              0x006A3684u   /* the game object pointer */
+#define G_COMM              0x006A35E0u   /* the communications handler (multiplayer) */
 #define G_CODE_END          0x00631D70u   /* game code below, the CRT above */
 #define G_SCREEN_VTABLE     0x0065FE48u   /* the game screen; constructor sub_004F2BA0 */
 #define G_SCREEN_GATE       0x1270        /* ms between passes (base +0x1258) */
@@ -53,6 +54,7 @@
 #else
 /* ---- Battlegrounds.exe v1.1 (2001-11-28) ---- */
 #define G_GAME              0x006A0FD4u
+#define G_COMM              0x006A0F30u   /* the communications handler; its out-of-sync check is sub_00440260 */
 #define G_CODE_END          0x0062E000u
 #define G_SCREEN_VTABLE     0x0065CE24u   /* constructor sub_004F1820 */
 #define G_SCREEN_GATE       0x1258

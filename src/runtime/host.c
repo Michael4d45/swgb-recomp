@@ -40,6 +40,7 @@
 #include "present.h"
 #include "coverage.h"
 #include "present_d3d.h"
+#include "dplay.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -195,6 +196,7 @@ static void shim_OutputDebugStringA(void) {
 static void shim_ExitProcess(void) {
     UINT code = ARG(0);
     printf("[host] ExitProcess(%u) from sub_%08X\n", code, g_cur_func);
+    dplay_finish();
     profile_finish();
     softdd_finish();
     recomp_trace_flush();
@@ -920,7 +922,7 @@ static native32_shim_t g_shims[] = {
     { "GetModuleHandleA", shim_GetModuleHandleA },
     { "GetModuleFileNameA", shim_GetModuleFileNameA },
     { "GetCommandLineA", shim_GetCommandLineA },
-    { "LoadStringA", widescreen_LoadStringA },
+    { "LoadStringA", dplay_LoadStringA },   /* widescreen_LoadStringA, and the out-of-sync messages */
     { "timeGetTime", framerate_timeGetTime },
     { "PeekMessageA", framerate_PeekMessageA },
 };
@@ -1016,6 +1018,7 @@ static DWORD WINAPI watchdog(LPVOID unused) {
     fprintf(stderr, "\n[watchdog] %lu s: in sub_%08X, last native call %s, %u indirect calls, %ld frames\n",
             g_watchdog_s, g_cur_func, g_cur_import, g_icall_count, softdd_frames);
     coverage_dump_icalls(8);
+    dplay_finish();
     recomp_trace_flush();
     profile_finish();
     softdd_finish();
@@ -1047,6 +1050,7 @@ int main(int argc, char** argv) {
         if (n) { i += n - 1; continue; }
         if ((n = framerate_arg(argc, argv, i))) { i += n - 1; continue; }
         if ((n = profile_arg(argc, argv, i))) { i += n - 1; continue; }
+        if ((n = dplay_arg(argc, argv, i))) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--sound")) sound = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = softdd_headless = present_noclip = 1;
@@ -1093,7 +1097,8 @@ int main(int argc, char** argv) {
                    "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
                    "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
                    "                  [--refresh HZ] [--present-log] [--present gdi|d3d11]\n"
-                   "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n");
+                   "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n"
+                   "                  [--dplay host|native] [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
@@ -1118,6 +1123,7 @@ int main(int argc, char** argv) {
     printf("  mapped %s: 0x%08X-0x%08X\n", exe, IMAGE_BASE, IMAGE_BASE + span);
     resolve_init(IMAGE_BASE);
     SetDllDirectoryA(game_full);   /* language.dll */
+    dplay_init();   /* DirectPlay: ours, unless --dplay native */
     if (native32_bind(IMAGE_BASE, g_shims, (int)(sizeof g_shims / sizeof g_shims[0]))) return 1;
     printf("  guest command line %s\n", g_guest_cmdline);
     if (!run) {
