@@ -46,6 +46,7 @@ MAIN_MULTI = (275, 390)          # the main menu: Multiplayer
 MAIN_MULTI_CC = (290, 405)       # ... in Clone Campaigns
 MP_CREATE = (602, 452)           # the Multiplayer screen: Create
 MP_CREATE_CC = (515, 452)        # ... in Clone Campaigns, beside its Restore
+MP_LAN = (560, 134)              # ... the connection list: Local (LAN) TCP/IP Connection
 MP_JOIN = (602, 402)             # ... Join
 MP_ROW0 = (600, 238)             # ... the first game in the list
 SETUP_READY = (88, 517)          # the multiplayer setup screen: I'm Ready!
@@ -64,7 +65,12 @@ def script(rnd, who, minutes, activity, out):
         s.click(51, SETUP_READY)
         s.click(81, SETUP_START)
     else:
+        # the LAN connection: its games appear by themselves. A folder that last used it
+        # (the Windows farm's) has it selected already; a new one has "Internet", whose
+        # Show Games asks for an address.
+        s.click(40, MP_LAN)
         s.click(47, MP_ROW0)
+        s.click(52, MP_ROW0)   # again: Clone Campaigns' list drops the selection when it refreshes
         s.click(53, MP_JOIN)
         s.click(63, SETUP_READY)
     s.at(GAME_FROM - d - 10, 'shot=%s' % os.path.join(out, 'start.bmp'))
@@ -162,6 +168,7 @@ def main():
         if not os.path.isdir(args.game):
             soak.ensure_game(os.path.join(root, 'game'), args.game)
     out = os.path.abspath(args.out or os.path.join(os.getcwd(), 'mp-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
+    args.game = os.path.abspath(args.game)   # each run starts in its own folder
     game_b = args.game.rstrip('\\/') + '-mp2'
     soak.ensure_game(args.game, game_b)
     procs = {}

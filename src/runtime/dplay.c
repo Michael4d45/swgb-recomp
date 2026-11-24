@@ -289,6 +289,13 @@ typedef struct {
 } found_t;
 static found_t g_found[16];
 static int g_nfound;
+/* An asynchronous enumeration goes on between the game's calls, as DirectPlay's does: the
+ * network thread probes once a second until STOPASYNC, Open or Close. Clone Campaigns asks
+ * for the list only every five seconds or so, and a session is listed for four seconds after
+ * its last answer: probing only inside EnumSessions, its game blinked in and out of the list
+ * and a click on it found nothing to join. */
+static volatile int g_async;
+static GUID g_async_app;
 
 static void lock(void) { EnterCriticalSection(&g_cs); }
 static void unlock(void) { LeaveCriticalSection(&g_cs); }
@@ -749,6 +756,8 @@ void dplay_LoadStringA(void) {
 }
 #endif
 
+static void probe_all(const GUID* app);
+
 static DWORD WINAPI net_thread(LPVOID unused) {
     DWORD last_sync = GetTickCount();
     (void)unused;
@@ -763,6 +772,11 @@ static DWORD WINAPI net_thread(LPVOID unused) {
 #else
             sync_sample();
 #endif
+        }
+        static DWORD last_probe;
+        if (g_async && g_enum != INVALID_SOCKET && GetTickCount() - last_probe >= 1000) {
+            last_probe = GetTickCount();
+            probe_all(&g_async_app);
         }
         FD_ZERO(&rd);
         int nfd = 0, maxfd = 0;   /* select's first argument: POSIX needs it, Windows ignores it */
@@ -981,6 +995,7 @@ static HRESULT __stdcall dp_AddPlayerToGroup(dpobj* o, DPID g, DPID p) { (void)o
 
 static HRESULT __stdcall dp_Close(dpobj* o) {
     DPM(4);
+    g_async = 0;
     if (g_owner != o) return DP_OK;
     LOG("Close (%s)", g_role == 1 ? "host" : g_role == 2 ? "client" : "-");
     net_stop();
@@ -1111,8 +1126,9 @@ typedef BOOL (__stdcall *ENUMSESS_CB)(const SD2*, DWORD*, DWORD, void*);
 static HRESULT __stdcall dp_EnumSessions(dpobj* o, SD2* want, DWORD timeout, void* cb, void* ctx, DWORD flags) {
     DPM(13);
     if (!want || !cb) return DPERR_INVALIDPARAMS;
-    if (flags & DPENUMSESSIONS_STOPASYNC) return DP_OK;
+    if (flags & DPENUMSESSIONS_STOPASYNC) { g_async = 0; return DP_OK; }
     if (!enum_socket()) return DPERR_GENERIC;
+    if (flags & DPENUMSESSIONS_ASYNC) { g_async_app = want->guidApplication; g_async = 1; }
     static int said;
     if (!said++) LOG("EnumSessions (timeout %lu, flags %lX): probing port %d", timeout, flags, g_port);
     for (int round = 0; round < 20; round++) {
@@ -1247,6 +1263,7 @@ static HRESULT __stdcall dp_Open(dpobj* o, SD2* sd, DWORD flags) {
     DPM(24);
     if (!sd) return DPERR_INVALIDPARAMS;
     if (g_role) { LOG("Open while a session is open"); return DPERR_ALREADYINITIALIZED; }
+    g_async = 0;
     if (flags & DPOPEN_CREATE) {
         SOCKET ls = INVALID_SOCKET, ds = INVALID_SOCKET;
         int port = 0;

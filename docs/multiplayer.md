@@ -122,7 +122,12 @@ Playing against the original needs (a) on both sides plus everything in
   broadcast address of each interface (`SIO_GET_INTERFACE_LIST`), the address
   from `InitializeConnection` (the game's "Internet" connection) and each
   `--mp-join` address. The host answers (`SWGBDPS1`) with its session and TCP
-  port. Sessions with joins disabled or no room are hidden, as in dplayx.
+  port. Sessions with joins disabled or no room are hidden, as in dplayx. An
+  asynchronous enumeration goes on between the game's calls, as DirectPlay's
+  does: the network thread probes once a second until `STOPASYNC`, `Open` or
+  `Close`. Clone Campaigns asks for the list only every five seconds or so,
+  and a session is listed for four seconds after its last answer, so probing
+  only inside `EnumSessions` made its game blink in and out of the list.
 - **Ports.** The host listens on TCP and UDP 2300 (the next free of
   2300-2303, so a second host on one machine works). Clients use ephemeral
   ports only. Nothing is near 44620-48715.
