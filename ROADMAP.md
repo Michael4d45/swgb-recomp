@@ -202,8 +202,9 @@ what needs research or a new subsystem.
   Main's Windows features run there too: the `--keys` grammar and
   `--keys-live`, the unresolved-call stop, `--res`, `--fps`/`--fps-log`,
   `--profile`, `--films`, DirectPlay and Clone Campaigns' host.
-- **Open bugs:** the in-game chat stays open (game paused) after Enter; the
-  minimap is black. The soak's `fight` fails on them.
+- **Open:** the game's own cursor is not drawn in game (the host's pointer
+  is); the soak's `fight` razes the enemy's base but no victory comes
+  (docs/linux-macos.md, "Found by the soak").
 - **Work:** MCI `cdaudio` over the Steam Ogg tracks (also Windows music, and
   Clone Campaigns' `WIN32.dll`); `setup.sh`'s native path; macOS (64-bit
   based, needs a Mac; `dplay.c` there needs guest-pointer conversion).

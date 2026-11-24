@@ -12,9 +12,10 @@ is the steps.
   `tools/test.py` drives the Linux host (smoke and the base game's
   functional checks pass): see [linux-macos.md](linux-macos.md), "What is
   done", and [testing.md](testing.md), "On Linux".
-- pcrecomp: `swgb-linux-palette` at **`7402e53`** (adds
-  `hle_lookup_manual_hook` for `--res`, and makes the Enter-to-OK-click
-  opt-in; local commits: push them with the branch).
+- pcrecomp: `swgb-linux-palette` at **`35406d6`** (adds
+  `hle_lookup_manual_hook` for `--res`, makes the Enter-to-OK-click
+  opt-in, DestroyWindow moves the focus first; local commits: push them
+  with the branch).
 
 - Branch `track/linux-macos` on the fork, PR
   [Michael4d45/swgb-recomp#1](https://github.com/Michael4d45/swgb-recomp/pull/1).

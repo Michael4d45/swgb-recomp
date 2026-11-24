@@ -320,11 +320,41 @@ work/battlegrounds_x1.exe`, then pcrecomp's `disasm32.py`, 14 minutes),
   x86-64), `build-linux.sh`, `build-macos.sh`.
 
 Not done: music (gap 5), macOS (needs a Mac), `setup.sh`'s native path.
-Open bugs, from the soak ([testing.md](testing.md), "On Linux"): the in-game
-chat line stays open after Enter with the game paused, and the minimap is
-black. Enter in New Player clears the name instead of accepting it (click
-OK; `HLE_EDIT_ENTER_CLICK=1` turns Enter into that click, but it also
-swallowed the chat's Enter, so it is off by default).
+Enter in New Player clears the name instead of accepting it (click OK;
+`HLE_EDIT_ENTER_CLICK=1` turns Enter into that click, but it also swallowed
+the chat's Enter, so it is off by default).
+
+### Found by the soak (2026-11-23)
+
+- **The minimap was black, and the terrain plain.** The game writes some
+  graphics resources to the temp folder and reads them back as bitmaps
+  (`sub_004BE820`: the minimap's `map800.bmp`, resource 50411, and one more
+  at start-up). win32hle's temp folder is `C:\WINDOWS\TEMP\`, under the
+  game folder here, which has none: the minimap got no size
+  (`[panel+0x12C]`, `+0x130` stayed 0) and never drew. The host now maps a
+  folder of the run's own (`$TMPDIR/swgbrecomp-XXXXXX`, removed at exit) as
+  `T:` and answers `GetTempPathA` with it (`shims.c`). The minimap shows the
+  map and every player's colour, and the terrain has its dirt and scenery.
+- **After the chat, the game stopped drawing.** Enter sends the chat; the
+  game deletes the chat dialog panel while its field still has the focus.
+  `DestroyWindow` takes the focus away first on Windows (the field gets
+  `WM_KILLFOCUS`, which lets the panel tree release it); win32hle just
+  forgot the focus, and the game screen's message handler went on swallowing
+  `WM_PAINT`: the map froze with "Game Paused" and the chat line on it while
+  the world ran on. pcrecomp's `destroy()` now moves the focus first.
+- **The game window is never told it lost the focus or the activation**, as
+  `host_wndproc` does on Windows (`shims.c` subclasses it): Genie pauses on
+  `WM_KILLFOCUS`, and its own chat field taking the focus is not the window
+  losing it.
+
+Open: the game's own mouse cursor is not drawn into the frame in game (the
+save and restore under it run every frame, the sprite never; it draws
+straight onto the 800x600 surface it treats as the screen), and after a
+chat a 30x16 piece of the chat box can stay under the cursor's place (that
+save-under). Both are in the cursor code (`sub_0049F080`, `sub_0049F630`);
+in a window the host's SDL pointer is shown. `SWGB_MSG_TRACE=1` (focus, key
+and paint messages) and `SWGB_CHILD_TRACE=1` (the visible child windows)
+are the debugging aids used here.
 
 ## Effort
 

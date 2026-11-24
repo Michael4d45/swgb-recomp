@@ -132,11 +132,16 @@ Results on Linux (Omarchy/Arch, clang 21, `-m32`, 2026-11-23), both games:
   1920x1080`; the three resolutions; `perf` at `--fps 60` (CPU 6-7% of a
   core, 64 presents a second: the Windows build's figures); every
   civilization skirmish with its save and load.
-- `--level soak --just --soak-scale 0.2`: 12 of 13. `base-fight` fails: no
-  victory by combat in 20 minutes. Two Linux bugs behind it, not fixed yet:
-  the chat line stays open after Enter (the cheat is sent, the Ewoks come,
-  but the game stays "Game Paused" and Esc does not close it), and the
-  minimap is black (the controller aims by the minimap's colours).
+- `--level soak --just --soak-scale 0.2`: 12 of 13. `base-fight` fails: the
+  Ewoks find the enemy's base on the minimap and raze it (its colour is gone
+  from the minimap by 6:45), but the game declares no victory in the next 14
+  minutes, and the controller finds nothing more to aim at. Not explained
+  yet. Two Linux bugs found on the way are fixed (linux-macos.md, "Found by
+  the soak"): the chat line stayed open after Enter with the game no longer
+  drawing, and the minimap was black.
+- `soak.py --mode victory --minutes 3` (not the level's own length) fails on
+  Linux before and after those fixes: after the save dialog, the first Enter
+  only destroys the dialog's leftover field and the chat opens a step late.
 - `mp_pair.py`, both games: see Multiplayer below.
 
 ### The units (L0)
