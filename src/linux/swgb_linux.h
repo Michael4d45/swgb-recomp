@@ -3,6 +3,7 @@
 #define SWGB_LINUX_H
 
 extern char swgb_cd_letter;   /* the play disc's drive letter, or 0 */
+extern char swgb_temp_drive;  /* the temp folder's drive letter (GetTempPathA), or 0 */
 extern int  swgb_test_run;    /* --headless, --keys or --watchdog: boxes answer themselves */
 
 /* shims.c: the game's own answers, registered ahead of win32hle's. */

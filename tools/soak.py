@@ -841,6 +841,7 @@ def main():
     MY_CIV[0] = args.my_civ or None
     sys.stdout.reconfigure(line_buffering=True)    # a run's line as it ends, into a redirected log too
     args.out = os.path.abspath(args.out)        # the game runs in its own folder
+    args.game = os.path.abspath(args.game)
     seed = args.seed if args.seed is not None else random.randrange(1 << 20)
     rnd = random.Random(seed)
     os.makedirs(args.out, exist_ok=True)

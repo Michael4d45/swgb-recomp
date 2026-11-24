@@ -14,6 +14,7 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -49,7 +50,19 @@ static void s_GetDriveTypeA(void) {
 static void s_GetLogicalDrives(void) {
     uint32_t m = 1u << 2 | 1u << 25;                      /* C: (the game) and Z: (/) */
     if (swgb_cd_letter) m |= 1u << (swgb_cd_letter - 'A');
+    if (swgb_temp_drive) m |= 1u << (swgb_temp_drive - 'A');
     RET(m, 0);
+}
+
+/* ---- the temp folder: drive T: (main.c maps it to a folder of this run's own) ----
+ * win32hle answers C:\WINDOWS\TEMP\, which is under the game folder here and
+ * does not exist. The game writes a resource there and reads it back as a
+ * bitmap (sub_004BE820: the minimap's map800.bmp, resource 50411): with no
+ * folder the minimap had no size and stayed black. */
+static void s_GetTempPathA(void) {                        /* (size, buf) */
+    if (!swgb_temp_drive) { snprintf(ASTR(1), A32(0), "C:\\WINDOWS\\TEMP\\"); RET(16, 2); }
+    snprintf(ASTR(1), A32(0), "%c:\\", swgb_temp_drive);
+    RET(3, 2);
 }
 
 /* ---- files: --files and on:NAME --------------------------------------------- */
@@ -83,11 +96,36 @@ static void s_OpenFile(void) {                            /* 3 arguments */
  * tools/conformance.py's "menu" milestone is the main menu's text-entry
  * window (InputDisabledWindow). */
 static recomp_func_t g_CreateWindowExA;
+/* The game's window, subclassed as the Windows host's host_wndproc does it: the
+ * game is never told it lost the focus or the activation (it pauses, and its
+ * screen panel lets go of its input). A field of its own taking the focus (the
+ * chat line) is not the window losing it. */
+static uint32_t g_game_wnd, g_game_proc;
+static void s_game_proc(void) {                           /* (hwnd, msg, wParam, lParam) */
+    uint32_t h = A32(0), m = A32(1), w = A32(2), l = A32(3);
+    if (m == 0x0008u) RET(0, 4);                          /* WM_KILLFOCUS: never */
+    if (m == 0x001Cu || m == 0x0086u) w = 1;              /* WM_ACTIVATEAPP, WM_NCACTIVATE: always active */
+    if (m == 0x0006u) w = (w & 0xFFFF0000u) | 1u;         /* WM_ACTIVATE: WA_ACTIVE */
+    uint32_t a[5] = { g_game_proc, h, m, w, l };
+    uint32_t r = hle_call_guest(hle_resolve("CallWindowProcA"), 5, a);
+    RET(r, 4);
+}
+
 static void s_CreateWindowExA(void) {                     /* 12 arguments */
-    uint32_t cls = A32(2);
+    uint32_t cls = A32(2), parent = A32(8), style = A32(3);
+    int game = 0;
     printf("[host] CreateWindowExA \"%s\" style %08X at %d,%d %dx%d parent %08X\n",
-           cls > 0xFFFF && ASTR(2) ? ASTR(2) : "", A32(3), (int)A32(4), (int)A32(5), (int)A32(6), (int)A32(7), A32(8));
+           cls > 0xFFFF && ASTR(2) ? ASTR(2) : "", style, (int)A32(4), (int)A32(5), (int)A32(6), (int)A32(7), parent);
+    /* the game's top-level window: no parent, a popup (InputDisabledWindow and the rest are children) */
+    if (!g_game_wnd && !parent && (style & 0x80000000u)) game = 1;
     g_CreateWindowExA();
+    if (game && g_eax) {
+        uint32_t esp = g_esp, eax = g_eax;
+        uint32_t a[3] = { eax, 0xFFFFFFFCu, hle_resolve("swgb::GameWndProc") };   /* GWL_WNDPROC */
+        g_game_wnd = eax;
+        g_game_proc = hle_call_guest(hle_resolve("SetWindowLongA"), 3, a);
+        g_esp = esp, g_eax = eax;
+    }
 }
 
 /* ---- strings: --res names its size in the Options dialog (widescreen.c), and
@@ -236,9 +274,11 @@ static const win32hle_shim g_shims[] = {
     { "GetDriveTypeA", s_GetDriveTypeA },
     { "GetLogicalDrives", s_GetLogicalDrives },
     { "CreateFileA", s_CreateFileA },
+    { "GetTempPathA", s_GetTempPathA },
     { "OpenFile", s_OpenFile },
     { "MessageBoxA", s_MessageBoxA },
     { "CreateWindowExA", s_CreateWindowExA },
+    { "swgb::GameWndProc", s_game_proc },
     { "LoadStringA", s_LoadStringA },
     { "mciSendCommandA", s_mciSendCommandA },
     { "IsDBCSLeadByte", s_IsDBCSLeadByte },

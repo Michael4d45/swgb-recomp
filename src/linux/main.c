@@ -64,6 +64,32 @@ extern const uint32_t swgb_entry_va;   /* recomp_dispatch.c */
 #endif
 
 char swgb_cd_letter;
+char swgb_temp_drive;
+static char g_temp_dir[PATH_MAX];
+
+/* The game's temp folder: a folder of this run's own (two --multi games at
+ * once write the same temNNNN.TMP names), drive T:, removed at exit. */
+static void temp_make(void) {
+    const char* base = getenv("TMPDIR");
+    snprintf(g_temp_dir, sizeof g_temp_dir, "%s/swgbrecomp-XXXXXX", base && *base ? base : "/tmp");
+    if (!mkdtemp(g_temp_dir)) { g_temp_dir[0] = 0; return; }
+    swgb_temp_drive = 'T';
+    hle_set_drive('T', g_temp_dir);
+}
+static void temp_remove(void) {
+    if (!g_temp_dir[0]) return;
+    DIR* d = opendir(g_temp_dir);
+    struct dirent* e;
+    while (d && (e = readdir(d))) {
+        char p[PATH_MAX + 260];
+        if (e->d_name[0] == '.') continue;
+        snprintf(p, sizeof p, "%s/%s", g_temp_dir, e->d_name);
+        unlink(p);
+    }
+    if (d) closedir(d);
+    rmdir(g_temp_dir);
+    g_temp_dir[0] = 0;
+}
 int  swgb_test_run;
 int swgb_log_files;
 static unsigned g_watchdog_s;
@@ -189,7 +215,7 @@ static void record_close(void) {
     if (g_ffmpeg) { pclose(g_ffmpeg); g_ffmpeg = NULL; fprintf(stderr, "[record] closed %s\n", g_record); }
     pthread_mutex_unlock(&g_rec_lock);
 }
-static void on_exit_close(int code) { (void)code; dplay_finish(); profile_finish(); record_close(); }
+static void on_exit_close(int code) { (void)code; dplay_finish(); profile_finish(); record_close(); temp_remove(); }
 
 static void* record_thread(void* unused) {
     (void)unused;
@@ -433,6 +459,23 @@ static void on_primary(void) {
     if (g_prev_primary_hook) g_prev_primary_hook();
 }
 
+/* ---- SWGB_MSG_TRACE=1: the focus, activation, key and show messages the
+ * windows are given (a debugging aid for input and focus). */
+static void msg_trace(uint32_t h, uint32_t m, uint32_t w, uint32_t l) {
+    static const struct { uint32_t m; const char* n; } k[] = {
+        { 0x0006, "WM_ACTIVATE" }, { 0x0007, "WM_SETFOCUS" }, { 0x0008, "WM_KILLFOCUS" }, { 0x0018, "WM_SHOWWINDOW" },
+        { 0x001C, "WM_ACTIVATEAPP" }, { 0x0086, "WM_NCACTIVATE" }, { 0x0100, "WM_KEYDOWN" }, { 0x0101, "WM_KEYUP" },
+        { 0x0102, "WM_CHAR" }, { 0x0104, "WM_SYSKEYDOWN" }, { 0x0111, "WM_COMMAND" }, { 0x0087, "WM_GETDLGCODE" },
+        { 0x0046, "WM_WINDOWPOSCHANGING" }, { 0x0047, "WM_WINDOWPOSCHANGED" }, { 0x000C, "WM_SETTEXT" }, { 0x000E, "WM_GETTEXTLENGTH" },
+        { 0x000D, "WM_GETTEXT" }, { 0x0010, "WM_CLOSE" }, { 0x0002, "WM_DESTROY" }, { 0x000A, "WM_ENABLE" }, { 0x000F, "WM_PAINT" }, { 0x0014, "WM_ERASEBKGND" } };
+    for (size_t i = 0; i < sizeof k / sizeof k[0]; i++)
+        if (k[i].m == m) {
+            const char* cls = hle_window_class(h);
+            fprintf(stderr, "[msg] %s %08X (%s) w=%08X l=%08X\n", k[i].n, h, cls ? cls : "?", w, l);
+            return;
+        }
+}
+
 /* ---- faults and the watchdog ------------------------------------------------- */
 static void report(const char* why) {
     fprintf(stderr, "\n=== %s ===\n  in lifted sub_%08X, last import %s\n", why, g_cur_func,
@@ -640,6 +683,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     hle_set_drive('C', game_full);                        /* the game's folder is C:\ */
+    temp_make();
 
     signal(SIGPIPE, SIG_IGN);                             /* a recorder whose ffmpeg went away gets an error */
     {   /* faults report on their own stack: a guest stack overflow is one */
@@ -706,6 +750,7 @@ int main(int argc, char** argv) {
         printf("  --res: the 1280 x 1024 screen size is %dx%d\n", widescreen_w, widescreen_h);
     }
     hle_on_exit = on_exit_close;
+    if (getenv("SWGB_MSG_TRACE")) hle_proc_hook = msg_trace;
     g_prev_primary_hook = hle_dd_primary_hook;
     hle_dd_primary_hook = on_primary;
     if (g_record) spawn(record_thread);

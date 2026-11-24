@@ -8,6 +8,7 @@
  * (movie.c) is drawn here too.
  */
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -38,6 +39,18 @@ static int child_shown(uint32_t c, int *l, int *t, int *r, int *b) {
 static int has_children(uint32_t root) {
     int l, t, r, b;
     if (!root) return 0;
+    static int trace = -1;                                /* SWGB_CHILD_TRACE=1: the visible children, once a second */
+    if (trace < 0) trace = getenv("SWGB_CHILD_TRACE") != NULL;
+    if (trace) {
+        static uint32_t last;
+        uint32_t now = hle_ticks_ms();
+        if (now - last >= 1000) {
+            last = now;
+            for (uint32_t c = hle_window_get(root, GW_CHILD); c; c = hle_window_get(c, GW_HWNDNEXT))
+                if (child_shown(c, &l, &t, &r, &b))
+                    fprintf(stderr, "[child] %08X %s %d,%d-%d,%d\n", c, hle_window_class(c) ? hle_window_class(c) : "?", l, t, r, b);
+        }
+    }
     for (uint32_t c = hle_window_get(root, GW_CHILD); c; c = hle_window_get(c, GW_HWNDNEXT))
         if (child_shown(c, &l, &t, &r, &b)) return 1;
     return 0;
