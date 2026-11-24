@@ -202,9 +202,10 @@ what needs research or a new subsystem.
   Main's Windows features run there too: the `--keys` grammar and
   `--keys-live`, the unresolved-call stop, `--res`, `--fps`/`--fps-log`,
   `--profile`, `--films`, DirectPlay and Clone Campaigns' host.
-- **Open:** the game's own cursor is not drawn in game (the host's pointer
-  is); the soak's `fight` razes the enemy's base but no victory comes
-  (docs/linux-macos.md, "Found by the soak").
+- **Open:** the soak's `fight` razes the enemy's base but no victory comes
+  (docs/linux-macos.md, "Found by the soak"). The in-game cursor is drawn
+  (win32hle `GetClipper` now returns the real `DDERR_NOCLIPPERATTACHED`;
+  the old code made `sub_0049F080` return before the sprite blit).
 - **Work:** MCI `cdaudio` over the Steam Ogg tracks (also Windows music, and
   Clone Campaigns' `WIN32.dll`); `setup.sh`'s native path; macOS (64-bit
   based, needs a Mac; `dplay.c` there needs guest-pointer conversion).

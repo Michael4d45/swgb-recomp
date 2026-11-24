@@ -347,14 +347,20 @@ the chat's Enter, so it is off by default).
   `WM_KILLFOCUS`, and its own chat field taking the focus is not the window
   losing it.
 
-Open: the game's own mouse cursor is not drawn into the frame in game (the
-save and restore under it run every frame, the sprite never; it draws
-straight onto the 800x600 surface it treats as the screen), and after a
-chat a 30x16 piece of the chat box can stay under the cursor's place (that
-save-under). Both are in the cursor code (`sub_0049F080`, `sub_0049F630`);
-in a window the host's SDL pointer is shown. `SWGB_MSG_TRACE=1` (focus, key
-and paint messages) and `SWGB_CHILD_TRACE=1` (the visible child windows)
-are the debugging aids used here.
+The game's own cursor is drawn into the frame in game. `GetClipper` on a
+surface with no clipper must return `DDERR_NOCLIPPERATTACHED`
+(`0x88760238`, `MAKE_DDHRESULT(568)`). win32hle returned `0x88760082`
+(`DDERR_INVALIDOBJECT`). `sub_0049F080` and `sub_0049F630` treat any other
+failure as fatal and return after the save-under blit, before `BltFast` of
+the mcursor sprite, so the arrow never appeared and a saved rectangle (a
+piece of the chat box, after a chat) could stay where the cursor was.
+pcrecomp `ddraw.c` now returns the real code. A headless skirmish shot
+shows the arrow on the map, over the panel, and, after the chat closes and
+the pointer moves, a clean background where it was. In a window the host's
+SDL pointer is still shown on the menu, where Genie does not blit mcursor,
+and hidden once the game calls `ShowCursor(FALSE)`. `SWGB_MSG_TRACE=1`
+(focus, key and paint messages) and `SWGB_CHILD_TRACE=1` (the visible
+child windows) are the debugging aids used here.
 
 ## Effort
 
