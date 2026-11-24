@@ -6,7 +6,15 @@ how to build, what to expect on the first runs, and the work in order.
 [linux-macos.md](linux-macos.md) has the design and the reasons; this page
 is the steps.
 
-## Where it stands (2026-11-22)
+## Where it stands (2026-11-23)
+
+- Rebased on main; main's Windows features run on Linux too, and
+  `tools/test.py` drives the Linux host (smoke and the base game's
+  functional checks pass): see [linux-macos.md](linux-macos.md), "What is
+  done", and [testing.md](testing.md), "On Linux".
+- pcrecomp: `swgb-linux-palette` at **`7402e53`** (adds
+  `hle_lookup_manual_hook` for `--res`, and makes the Enter-to-OK-click
+  opt-in; local commits: push them with the branch).
 
 - Branch `track/linux-macos` on the fork, PR
   [Michael4d45/swgb-recomp#1](https://github.com/Michael4d45/swgb-recomp/pull/1).
@@ -24,9 +32,9 @@ is the steps.
   - `tools/linux_menu_shots.sh` captures boot + Single Player hover PNGs.
   - `src/linux/eh.c` supplies `recomp_eh_push`/`pop` (win32hle has no
     guest EH yet).
-- pcrecomp: branch `swgb-linux-palette` (tip **`4d69543`**: 8bpp TextOut +
-  live DD palette nearest-match, softdd's `sync_dib_palette`). Build with
-  `PCRECOMP=~/star/pcrecomp`.
+- pcrecomp: branch `swgb-linux-palette` (8bpp TextOut + live DD palette
+  nearest-match, softdd's `sync_dib_palette`; `hle_lookup_manual_hook`).
+  Build with `PCRECOMP=~/star/pcrecomp`.
 - Arch notes: no `lib32-sdl2` in repos — use AUR `lib32-sdl2-compat` and
   `lib32-sdl2_ttf`. Ubuntu packages in §1 still apply on Debian/Ubuntu.
 
@@ -39,6 +47,7 @@ sudo dpkg --add-architecture i386 && sudo apt update
 sudo apt install git gcc-multilib cmake ninja-build pkg-config python3-pip ffmpeg \
                  fonts-liberation libsdl2-dev:i386 libsdl2-ttf-dev:i386
 python3 -m pip install --user capstone pefile   # only to lift on Linux (step 3b)
+# tools/test.py: Pillow and numpy (a venv: python3 -m venv --system-site-packages work/venv)
 ```
 
 `fonts-liberation`: win32hle draws Arial and MS Sans Serif with Liberation.

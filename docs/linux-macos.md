@@ -123,11 +123,16 @@ Each one, and what it becomes on win32hle:
 | Vectored exception handler, `TerminateProcess` | the fault report | `sigaction` on an alternate stack, `_exit` |
 | `SetDllDirectoryA` (`language.dll`) | the string DLL beside the game | win32hle's `LoadLibraryA` maps a resource DLL from the game folder |
 
-**Separating host.c.** The rules for parallel work forbid moving code
-around in `host.c` while Tracks 2, 3 and 6 edit it. So it is unchanged for
-now, and its `--keys` parser is a second copy of `keyscript.c`'s grammar.
-Once those tracks have merged, `host.c` should parse with `keyscript.c`
-instead. That is a deletion with no change in behaviour.
+**What both hosts share.** `host.c` parses `--keys` with `keyscript.c`
+(main did that), and `keyscript.c` builds without Win32, so the Linux host
+runs the same grammar: modifiers, right clicks, drags, window places,
+`@FILE` scripts and `--keys-live`. The other runtime files the native host
+compiles from `src/runtime` are `coverage.c` (the unresolved-call stop, exit
+5), `widescreen.c` (`--res`), `dplay.c` (DirectPlay), `inflate.c` and
+`keyscript.c`; each picks its platform with `SWGB_WIN32HLE` (`guest.h`,
+`winport.h`). `src/linux` has its own `framerate.c` (`--fps`, `--fps-log`),
+`profile.c` (`--profile`) and `movie.c` (`--films`), with the Windows host's
+options, logic and log lines, over SDL and POSIX instead of softdd and Win32.
 
 ### 2. Text fields (EDIT controls) — done
 
@@ -151,24 +156,19 @@ surface's palette (else the primary's) to `hle_gdi_surface_dc_pal` as a
 live `PALETTEENTRY` table; `gdidc.c` nearest-matches `SetTextColor` against
 it. Main-menu hangar labels are white with the black drop shadow.
 
-### 4. Movies (MCIWnd): shared with Track 6
+### 4. Movies (MCIWnd) — done
 
-The game plays its films through `MCIWndCreateA`: a child window over its
-own. On Windows, Track 6 is building a player that decodes with FFmpeg's
-libraries into softdd frames and DirectSound. For this port to reuse it,
-the player needs a portable core:
-
-- the decoder (FFmpeg: Indeo 5 video, PCM or ADPCM audio) has no Win32 in
-  it, and gives frames and audio to two callbacks;
-- the MCIWnd shim and the window are per host. On Windows the frames go to
-  softdd and the sound to DirectSound or waveOut. Natively, the frames go
-  into the primary (through `hle_dd_frame_hook`, like the text fields) and
-  the sound to `hle_audio_stream_*`, as win32hle's `bink.c` does with
-  ffmpeg;
-- skip on Esc or a click, headless and `--record` the same.
-
-Until then `shims.c` returns NULL, and the game goes on without the film.
-Effort after Track 6: 1 to 2 days.
+`src/linux/movie.c` plays the films as `src/runtime/movie.c` does on
+Windows: `ICInfo` says Indeo 5 is there when `ffmpeg` is on the PATH, and
+`MCIWndCreateA` makes a child window (class `swgb.movie`, its window
+procedure a shim) that answers the game's MCI messages. Two `ffmpeg`
+processes decode the video (BGRA) and the sound (s16 stereo, into
+`hle_audio_stream_*`, which is the clock). The frame is drawn where the text
+fields are, in `fields.c`'s compose of the primary, dithered into the film
+palette the game installs (`MCIWNDM_GETPALETTE`, a real `CreatePalette`), so
+headless shots and `--record` have it. `--films DIR` finds `NAME.avi` or
+`xNAME.avi` there, as on Windows. Measured: the logo 220 frames and the
+intro 2120, none dropped.
 
 ### 5. Music: `WINMM`'s CD audio, and Steam's `WIN32.dll`
 
@@ -224,13 +224,21 @@ game's likely ones:
 Each is the usual permissive-bind loop: run, read the stub's name or the
 fault report, answer it.
 
-### 8. DirectPlay
+### 8. DirectPlay — the Windows host's own
 
-Multiplayer is out of scope, as on Windows (`ROADMAP.md`, *Later*). Boot
-still calls `DirectPlayCreate` and versions `dplayx.dll`; refusing Create
-or VERSION makes the game exit with "requires DirectPlay 6.1a". `shims.c`
-returns a stub `IDirectPlay4` and FIXEDFILEINFO 4.06.03.0516. Enumerations
-stay empty; lobby Create stays `DPERR_UNAVAILABLE`.
+`src/runtime/dplay.c` (DirectPlay 4 over TCP/UDP, [multiplayer.md](multiplayer.md))
+builds on win32hle too. `winport.h` gives it the Win32 it uses (sockets,
+threads, events, critical sections, UTF-16 names). Each method is a shim
+(`IDirectPlay4::dp_Open` and so on) whose vtable slots are shim addresses; the
+shim lets the machine go (`hle_block_begin`: `Open` and `EnumSessions` wait),
+calls the method with the guest's arguments, and pops them. The game's
+callbacks go through `hle_call_guest` with the machine taken back first, and
+a player's event is the game's own win32hle event (`hle_set_event`).
+`CoCreateInstance(CLSID_DirectPlay)` reaches it through
+`hle_com_register_class`. 32-bit only (the game's pointers are the host's).
+`shims.c` still answers VERSION with 4.06.03.0516 for the boot check. A
+Linux build's join stamp differs from a Windows build's, so the two refuse
+to play each other (lockstep needs the same code).
 
 ### 9. macOS
 
@@ -273,24 +281,50 @@ build-macos/swgbrecomp --run --game game
 ```
 
 The command line is the Windows host's: `--headless`, `--record`,
-`--frames`, `--shot`, `--keys`, `--watchdog`, `--files`, `--exe`, `--game`,
-`--args`, plus `--cd DIR` (a folder, not a letter), `--fullscreen` and
-`--scale sharp|smooth|crt|nearest|integer` (F11 and F12 in the window).
+`--frames`, `--shot`, `--keys` (inline or `@FILE`), `--keys-live`,
+`--watchdog`, `--files`, `--multi`, `--exe`, `--game`, `--args`, `--res`,
+`--fps`, `--fps-log`, `--films`, `--profile` (`--profile-window`,
+`--profile-hz`), `--mp-port`, `--mp-join`, `--mp-log`, plus `--cd DIR` (a
+folder, not a letter), `--fullscreen` and
+`--scale sharp|smooth|crt|nearest|integer` (F11 and F12 in the window). The
+presenter's own switches (`--scale N`, `--filter`, `--refresh`,
+`--present`, `--present-log`) and native32's (`--callbacks`,
+`--native-trace`) are Windows ones. `tools/profile_report.py` reads a Linux
+profile with `nm`.
 
-## What is done (2026-11-22)
+**Clone Campaigns** builds the same way: unwrap and catalog its exe
+(`python3 tools/steamstub_swgb.py <Steam>/Game/battlegrounds_x1.exe
+work/battlegrounds_x1.exe`, then pcrecomp's `disasm32.py`, 14 minutes),
+`python3 run_lift.py --build cc --all`, and `./build-linux.sh` also builds
+`build-linux/swgbrecomp_cc` (`SWGB_CC`: its exe, registry key and disc).
 
-- `src/runtime/guest.h`; `inflate.c` on it (no change on Windows: rebuilt,
-  and the headless run reaches the main menu).
-- `src/runtime/keyscript.c`: the `--keys` grammar with no Win32.
-- `src/linux/main.c`, `shims.c`, `eh.c`: native host, DirectPlay stub +
-  VERSION for the 6.1a check, and `recomp_eh_push`/`pop`.
-- `cmake/native.cmake`, `cmake/linux-i386.cmake`, `build-linux.sh`,
-  `build-macos.sh`, and the branch in `CMakeLists.txt`.
-- Linux `-m32` link of the full lift; headless run to the main-menu hangar
-  (`--shot`) with white GDI menu labels (gap 3, pcrecomp
-  `swgb-linux-palette`).
+## What is done (2026-11-23)
 
-Not done: a played skirmish, music, movies, macOS.
+- `src/runtime/guest.h`; `inflate.c` on it (no change on Windows).
+- `src/linux/main.c`, `shims.c`, `eh.c`, `fields.c`: the native host;
+  VERSION for the 6.1a check; `recomp_eh_push`/`pop`; EDIT fields and films
+  composed into the primary.
+- Rebased on main (test.py, soak, the resolve cache and profiler, Clone
+  Campaigns, DirectPlay), and the Windows host's features on Linux too:
+  the full `--keys` grammar and `--keys-live` (`keyscript.c`, shared), the
+  unresolved-call stop (`coverage.c`, exit 5), `--res` (`widescreen.c`,
+  through win32hle's `hle_lookup_manual_hook`, pcrecomp `swgb-linux-palette`),
+  `--fps`/`--fps-log` (`framerate.c`), `--profile` (`profile.c`), `--films`
+  (`movie.c`), DirectPlay (`dplay.c`), Clone Campaigns' host
+  (`swgbrecomp_cc`), the hot files at `-O2` (`GEN_HOT_FILES`).
+- `tools/test.py`, `conformance.py`, `res_check.py`, `soak.py`,
+  `mp_pair.py`, `profile_report.py` run on Linux ([testing.md](testing.md),
+  "On Linux").
+- `cmake/native.cmake`, `cmake/linux-i386.cmake` (no longer FORCEs the
+  compiler into the cache: a regenerate then dropped the toolchain and built
+  x86-64), `build-linux.sh`, `build-macos.sh`.
+
+Not done: music (gap 5), macOS (needs a Mac), `setup.sh`'s native path.
+Open bugs, from the soak ([testing.md](testing.md), "On Linux"): the in-game
+chat line stays open after Enter with the game paused, and the minimap is
+black. Enter in New Player clears the name instead of accepting it (click
+OK; `HLE_EDIT_ENTER_CLICK=1` turns Enter into that click, but it also
+swallowed the chat's Enter, so it is off by default).
 
 ## Effort
 

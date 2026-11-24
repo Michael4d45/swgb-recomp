@@ -195,19 +195,19 @@ what needs research or a new subsystem.
   (`inflate.c` through `guest.h`, the `--keys` grammar in `keyscript.c`).
   `cmake/native.cmake` is the build, reached from `CMakeLists.txt` on Linux
   and macOS.
-- **Done:** that scaffolding; the native host and shims, checked with gcc
-  against win32hle; no change on Windows.
-- **Work:** toolchain (`gcc-multilib`, i386 SDL2 and SDL2_ttf), then the
-  link and the bring-up loop to the main menu. 8-bit surface text in the
-  palette, and EDIT painting plus child-window walking (both pcrecomp
-  changes, in a pcrecomp worktree). Text-field composition through
-  `hle_dd_frame_hook`. MCI `cdaudio` over the Steam Ogg tracks, which also
-  gives Windows music and covers Clone Campaigns' `WIN32.dll` (which needs
-  no lift). Movies on Track 6's portable decoder core. Exceptions only if a
-  run raises. `setup.sh` and the harness on Linux. Then macOS (64-bit
-  based, needs a Mac).
-- **Estimate:** about 3 to 4 weeks to a playable Linux build; macOS one
-  more week.
+- **Done:** the native host (`-m32`, clang) boots, plays and passes the
+  harness on Linux: conformance 5/5, `tools/test.py` smoke and the base
+  game's functional checks (films, `--res`, the three resolutions, `--fps`
+  perf at the Windows figures, civilization skirmishes saved and loaded).
+  Main's Windows features run there too: the `--keys` grammar and
+  `--keys-live`, the unresolved-call stop, `--res`, `--fps`/`--fps-log`,
+  `--profile`, `--films`, DirectPlay and Clone Campaigns' host.
+- **Open bugs:** the in-game chat stays open (game paused) after Enter; the
+  minimap is black. The soak's `fight` fails on them.
+- **Work:** MCI `cdaudio` over the Steam Ogg tracks (also Windows music, and
+  Clone Campaigns' `WIN32.dll`); `setup.sh`'s native path; macOS (64-bit
+  based, needs a Mac; `dplay.c` there needs guest-pointer conversion).
+- **Estimate:** music 2 days; macOS one more week.
 - **Risk:** medium. The hard part exists, and the rest is the bring-up loop
   the sibling ports went through.
 

@@ -77,6 +77,68 @@ and the Options dialog, 35% for the HUD panel under a skirmish (its minimap
 and counters change every game; the map itself is never compared). A failing
 comparison writes `*_diff.png` (red: what differs).
 
+### On Linux (and macOS)
+
+The same runner drives the native host (`src/linux`, [linux-macos.md](linux-macos.md)):
+
+```
+python3 -m venv --system-site-packages work/venv && work/venv/bin/pip install pillow numpy
+work/venv/bin/python tools/test.py --level smoke          # or unit, functional, soak
+```
+
+Off Windows its defaults are this checkout's: the hosts in `build-linux/`
+(`build-macos/` on a Mac: `swgbrecomp`, `swgbrecomp_cc`), the lift and
+`work/*.exe` here, and the game folders, baselines and results under `work/`
+(`work/games/testing-*`, `work/test-baselines`, `work/test-results`); set
+`SWGB_STAR` to share them like the Windows farm does. Each game runs in a
+process group of its own, which is what a timeout or Ctrl-C ends.
+
+Clone Campaigns' folders take their profile (`player.nf1`) from
+`work/games/clone-campaigns` (`--cc-profiles`), as on Windows. Without one the
+game stops at New Player and every check that starts a game fails. Make one
+once with the host itself:
+
+```
+python3 -c "import sys; sys.path.insert(0, 'tools'); import soak; soak.ensure_game('game', 'work/games/ccprof')"
+build-linux/swgbrecomp_cc --run --headless --multi --watchdog 45 --game work/games/ccprof \
+  --keys "20:move:345:250,21:click:345:250,26:t,26.5:e,27:s,27.5:t,29:click:323:353,36:esc,40:move:40:565,41:click:40:565"
+mkdir -p work/games/clone-campaigns && cp work/games/ccprof/player.nf1 work/games/clone-campaigns/
+```
+
+`conformance.py` runs in `game/` itself, so `--cc` there leaves a
+`player.nf1` without a player in it: do not let the test folders copy that.
+
+What runs there:
+
+- **L0:** `keys`, `inflate` and `coverage` build with clang (or `$CC`) `-m32`
+  against win32hle's headers (`-DSWGB_WIN32HLE`), and `tests/unit/test_tools.py`.
+  `scaler`, `present`, `resolve`, `pacing`, `films` test the Windows host's own
+  presenter, cache and players and SKIP: the native host's counterparts are
+  win32hle's (`screen.c`, its `RECOMP_RESOLVE_CACHE`) or `src/linux`'s
+  `framerate.c` and `movie.c`.
+- **L1-L3:** every check, through `conformance.py`, `res_check.py`,
+  `soak.py` and `mp_pair.py`, which find the Linux host by themselves. The
+  host prints the lines they read as the Windows host does (`[host] frame N
+  presented`, `[host] CreateWindowExA "..."`, `[fps]`, `[movie]`); win32hle's
+  `SetDisplayMode(WxHxB)` is read as well as softdd's `(W, H, B)`.
+- **The presenter's checks** (`present/*`, L4 `real/present`) SKIP: they test
+  the Windows presenter (GDI, Direct3D 11, the real screen).
+
+Results on Linux (Omarchy/Arch, clang 21, `-m32`, 2026-11-23), both games:
+
+- `--level functional --cc`: 24 passed, 0 failed, 11 skipped (the units
+  above and the presenter's checks). Conformance 5/5 each; the skirmishes;
+  films (220 and 2120 frames, none dropped, the sound the clock); `--res
+  1920x1080`; the three resolutions; `perf` at `--fps 60` (CPU 6-7% of a
+  core, 64 presents a second: the Windows build's figures); every
+  civilization skirmish with its save and load.
+- `--level soak --just --soak-scale 0.2`: 12 of 13. `base-fight` fails: no
+  victory by combat in 20 minutes. Two Linux bugs behind it, not fixed yet:
+  the chat line stays open after Enter (the cheat is sent, the Ewoks come,
+  but the game stays "Game Paused" and Esc does not close it), and the
+  minimap is black (the controller aims by the minimap's colours).
+- `mp_pair.py`, both games: see Multiplayer below.
+
 ### The units (L0)
 
 | Unit | Source | Checks |
@@ -355,6 +417,14 @@ Two headless `--multi` runs on this machine: one hosts, one joins over
 both reach their watchdog, nobody drops, the game shows no out-of-sync
 message and the game's own sync checkpoints (`[sync]` lines) agree between the
 two logs. Details and results in [multiplayer.md](multiplayer.md).
+
+The joiner selects "Local (LAN) TCP/IP Connection" first: its games appear
+by themselves. A folder that last used it (the Windows farm's) has it
+selected already; a new one has "Internet", whose Show Games asks for an
+address. On Linux (`python3 tools/mp_pair.py`, `build-linux/` and
+`work/games/multiplayer` by default; `--cc --game DIR` with a Clone Campaigns
+profile in DIR), 2026-11-23: base game and Clone Campaigns, 3 minutes each,
+46 sync records in both logs, none different, no out-of-sync message.
 
 ## The game's three resolutions
 
