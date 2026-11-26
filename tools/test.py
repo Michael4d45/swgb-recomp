@@ -803,6 +803,64 @@ for _k in GAMES:
     CHECKS.append(Check('films/' + _k, 'functional', films_fn(_k), _k, 1.9))
 
 
+NEWPLAYER_NAME = 'enter'
+WIN_CHEAT = 'skywalker'                    # tools/soak.py's: typed in the chat, an instant victory
+SKIRMISH_AI = re.compile(r'open data\\load\\[^ ]+\.per -> ok', re.I)   # the computer players' scripts
+GAME_WON = re.compile(r'open sound\\stream\\won\d\.mp3 -> ok', re.I)  # the victory's music
+
+
+def enter_fn(kind):
+    # Enter in both of the game's text fields, as on Windows: New Player's name (Enter
+    # accepts the dialog, like OK) and the chat line (Enter sends it: the victory cheat).
+    # The folder's profile is moved aside, so Single Player opens New Player.
+    def fn(ctx, r):
+        g = GAMES[kind]
+        out = r.dir
+        os.makedirs(out, exist_ok=True)
+        aside = os.path.join(out, 'profiles')
+        os.makedirs(aside, exist_ok=True)
+        for f in os.listdir(r.game):
+            if f.lower().startswith('player.nf'):
+                shutil.move(os.path.join(r.game, f), os.path.join(aside, f))
+        try:
+            s = [(20, 'move:%d:%d' % MAIN_SINGLE), (21, 'click:%d:%d' % MAIN_SINGLE),
+                 (25, 'shot=%s' % os.path.join(out, 'newplayer.bmp'))]
+            s += [(26 + 0.5 * k, ch) for k, ch in enumerate(NEWPLAYER_NAME)]
+            t = 26 + 0.5 * len(NEWPLAYER_NAME) + 1
+            s += [(t, 'enter'), (t + 4, 'shot=%s' % os.path.join(out, 'single_player.bmp')),
+                  (t + 6, 'move:%d:%d' % g['sp_standard']), (t + 7, 'click:%d:%d' % g['sp_standard']),
+                  (t + 17, 'move:%d:%d' % SETUP_START), (t + 18, 'click:%d:%d' % SETUP_START)]
+            t += 65                                      # the map is up (skirmish_steps: 44 s after Start)
+            s += [(t, 'shot=%s' % os.path.join(out, 'map.bmp')), (t + 1, 'enter')]
+            s += [(t + 2 + 0.3 * k, ch) for k, ch in enumerate(WIN_CHEAT)]
+            t += 3 + 0.3 * len(WIN_CHEAT)
+            s += [(t, 'enter'), (t + 12, 'shot=%s' % os.path.join(out, 'won.bmp'))]
+            rc, text = run_host(ctx, r, kind, s, t + 15)
+        finally:
+            for f in os.listdir(r.game):
+                if f.lower().startswith('player.nf'):
+                    os.remove(os.path.join(r.game, f))
+            for f in os.listdir(aside):
+                shutil.move(os.path.join(aside, f), os.path.join(r.game, f))
+        expect_exit(r, rc)
+        events(r, text)
+        for n, cap in (('newplayer', 'New Player, the name typed'), ('single_player', 'after Enter: Single Player'),
+                       ('map', 'the skirmish'), ('won', 'after the chat\'s Enter: the victory')):
+            r.image(png_of(os.path.join(out, n + '.bmp')), cap)
+        if not SKIRMISH_AI.search(text):
+            return r.fail('no skirmish started: Enter did not accept New Player (no profile, no Standard Game)')
+        r.log('New Player: Enter accepted the name; the skirmish started')
+        if not GAME_WON.search(text):
+            return r.fail('no victory: the chat\'s Enter did not send "%s"' % WIN_CHEAT)
+        r.log('the chat: Enter sent "%s", the game was won' % WIN_CHEAT)
+    fn.__doc__ = 'Enter accepts New Player\'s name and sends the chat line (the victory cheat) (%s)' % GAMES[kind]['title']
+    return fn
+
+
+for _k in GAMES:
+    CHECKS.append(Check('enter/' + _k, 'functional', enter_fn(_k), _k, 2.0))
+
+
 def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):
     """Standard Game: me as my_civ, one computer per civ in civs, a Small map, Easiest; Start,
     Fast speed, then the idle player and a save 40% of the way in. Returns (steps, end)."""
