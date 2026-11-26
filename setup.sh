@@ -20,7 +20,8 @@
 #   --yes, -y         answer yes to every question (installs too)
 #   --force           redo every step
 #
-# PCRECOMP picks the toolkit checkout (default ../pcrecomp); CC the compiler.
+# PCRECOMP picks the toolkit checkout (default ../pcrecomp); CC the compiler;
+# SUDO_ASKPASS the password helper when there is no terminal.
 # macOS: build-macos.sh by hand (docs/linux-macos.md).
 set -u
 cd "$(dirname "$0")" || exit 1
@@ -79,8 +80,10 @@ run() {
   "$@" >>"$LOG" 2>&1 || fail "$what failed (exit code $?)."
 }
 have() { command -v "$1" >/dev/null 2>&1; }
-SUDO=
-[ "$(id -u)" = 0 ] || SUDO=sudo
+# sudo for the installs; with no terminal (a launcher), SUDO_ASKPASS's helper asks.
+if [ "$(id -u)" = 0 ]; then SUDO=
+elif [ ! -t 0 ] && [ -n "${SUDO_ASKPASS:-}" ]; then SUDO="sudo -A"
+else SUDO=sudo; fi
 
 say "Star Wars: Galactic Battlegrounds: static recompilation setup (Linux, native)"
 say "You need your own copy: the Steam Saga release, or the game installed from its US disc 1 with"
