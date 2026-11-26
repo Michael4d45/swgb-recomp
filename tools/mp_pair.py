@@ -2,6 +2,7 @@
 
     py -3 tools\\mp_pair.py [--minutes M] [--activity idle|habits|busy] [--seed S] [--cc]
                             [--run EXE] [--exe GUEST] [--game DIR] [--out DIR] [--port N]
+                            [--extra SWITCHES] [--extra-a SWITCHES] [--extra-b SWITCHES]
 
 --cc plays Clone Campaigns (swgbrecomp_cc.exe, battlegrounds_x1.exe): the main menu's Multiplayer
 button and the Multiplayer screen's Create (beside a Restore) are elsewhere.
@@ -26,6 +27,8 @@ What it checks, from the two logs:
   - the game's own sync records ("[sync] slot: nine words", dplay.c) agree: every record both
     instances logged for the same player and turn is the same in both, and within each log every
     player's record for a turn is the same.
+--extra-a and --extra-b give one player switches the other does not have: --extra-a=--smooth
+checks that drawing between steps (docs/framerate.md) leaves the simulation alone.
 Exit code 0 when all hold, 1 otherwise. Logs, keys and shots (every five minutes) in --out.
 """
 import argparse
@@ -149,6 +152,8 @@ def main():
     ap.add_argument('--out', default=None)
     ap.add_argument('--port', type=int, default=2300)
     ap.add_argument('--extra', default='', help='more host switches for both runs')
+    ap.add_argument('--extra-a', default='', help='more host switches for A (the host) only')
+    ap.add_argument('--extra-b', default='', help='more host switches for B only')
     args = ap.parse_args()
     global MAIN_MULTI, MP_CREATE
     if args.cc:
@@ -183,7 +188,7 @@ def main():
         wd = int(end + 20) if who == 'a' else int(end + 10)   # B stops first: A sees a player leave, not a lost host
         ends[who] = wd
         cmd = [args.run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
-               '--watchdog', str(wd), '--keys', '@' + keys, '--mp-port', str(args.port)] + args.extra.split()
+               '--watchdog', str(wd), '--keys', '@' + keys, '--mp-port', str(args.port)] + args.extra.split() +               (args.extra_a if who == 'a' else args.extra_b).split()
         procs[who] = subprocess.Popen(cmd, cwd=d, stdout=open(os.path.join(d, 'run.log'), 'w'), stderr=subprocess.STDOUT)
         print('%s: pid %d, %d s' % (who, procs[who].pid, wd), flush=True)
         if who == 'a':
@@ -206,6 +211,8 @@ def main():
     if rc.get('b') == 4:   # B leaving at its watchdog, before A's, is planned
         losta = [l for l in losta if not l.startswith('[dplay] player') and 'client 0 ' not in l]
     summary = {
+        'switches': {'a': ' '.join((args.extra + ' ' + args.extra_a).split()),
+                     'b': ' '.join((args.extra + ' ' + args.extra_b).split())},
         'exit': rc, 'sync_records': {'a': len(ra), 'b': len(rb), 'shared': len(shared), 'differ': len(bad)},
         'events': {'a': eva, 'b': evb}, 'lost': {'a': losta, 'b': lostb},
         'turns_checked': len({k[1] for k in shared}),

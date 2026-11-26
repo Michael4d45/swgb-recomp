@@ -1,5 +1,5 @@
 """The tools' own tests, no game needed: tools/soak.py's scripts and log reading,
-tools/lift_check.py, and tools/test.py's image and --fps-log readers.
+tools/lift_check.py, tools/smooth_check.py, and tools/test.py's image and --fps-log readers.
 
     py -3 -m unittest -v tests.unit.test_tools        (tools/test.py --level unit runs it)
 """
@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 
 import lift_check  # noqa: E402
+import smooth_check  # noqa: E402
 import soak  # noqa: E402
 import test as runner  # noqa: E402
 
@@ -58,6 +59,40 @@ class SoakTools(unittest.TestCase):
         self.assertEqual(t, 12.5)
         (ax, ay), (ix, iy), step = soak.DD_SIZE
         self.assertEqual(s.steps, [(10, 'click:%d:%d' % (ax, ay)), (11.2, 'click:%d:%d' % (ix, iy + 2 * step))])
+
+
+class SmoothCheck(unittest.TestCase):
+    def log(self, smooth):
+        """A unit that walks 6 px a step (50 ms), drawn every 10 ms; a tree that stands."""
+        lines = []
+        for frame in range(60):
+            ms = 1000 + 10 * frame
+            step = frame // 5
+            sx = 100 + 6 * step
+            f = (frame % 5) / 5.0
+            ox = round((f - 1) * 6) if smooth and step else 0
+            lines.append('%d %d %d 0A000000 7 %.4f 10.0000 %d 50 %d 0' % (ms, step, 1000 + 50 * step, 1 + 0.1 * step, sx, ox))
+            lines.append('%d %d %d 0B000000 8 5.0000 5.0000 300 80 0 0' % (ms, step, 1000 + 50 * step))
+        return '\n'.join(lines) + '\nnot a draw line\n'
+
+    def analyse(self, smooth):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'draw.log')
+            open(p, 'w').write(self.log(smooth))
+            return smooth_check.analyse(p)
+
+    def test_plain_and_smooth(self):
+        plain = self.analyse(False)
+        self.assertEqual(len(plain), 1)          # the tree never moved
+        m = plain[0]
+        self.assertEqual((m['id'], m['steps']), (7, 11))
+        self.assertEqual(m['plain_max'], 6.0)
+        self.assertGreater(m['plain_still'], 0.7)
+        self.assertFalse(m['smoothed'])
+        m = self.analyse(True)[0]
+        self.assertTrue(m['smoothed'])
+        self.assertLessEqual(m['smooth_max'], 2.0)
+        self.assertLess(m['smooth_still'], m['plain_still'])
 
 
 class LiftCheck(unittest.TestCase):
