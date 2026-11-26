@@ -24,6 +24,9 @@ music and art are not in this repository and are excluded by `.gitignore`.
 | Path | Upstream | Version | License | Text |
 |---|---|---|---|---|
 | `third_party/miniz/` | [richgel999/miniz](https://github.com/richgel999/miniz) | 11.0.2 (`MZ_VERSION`) | MIT | [LICENSES/miniz.txt](LICENSES/miniz.txt) |
+| `third_party/stb_vorbis/` | [nothings/stb](https://github.com/nothings/stb) `stb_vorbis.c` | 1.22 | public domain or MIT, either | [LICENSES/stb_vorbis.txt](LICENSES/stb_vorbis.txt) |
 
 The files keep their own headers. `src/runtime/inflate.c` is ours: it calls
-miniz in place of the game's own decoder.
+miniz in place of the game's own decoder. `src/runtime/cdaudio.c` is ours:
+it decodes the Steam release's music with stb_vorbis. `tests/data/tone.ogg`
+is ours too (two sine tones, made with ffmpeg), not the game's.

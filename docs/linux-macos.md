@@ -90,7 +90,7 @@ are answered in `src/linux/shims.c`, registered ahead of win32hle:
 |---|---|---|
 | `MCIWndCreateA` (MSVFW32) | NULL: no movie, as on a PC without the films | Track 6's player (below) |
 | `ICInfo` (MSVFW32) | FALSE: no codecs | the same |
-| `mciSendCommandA` (WINMM) | `MCIERR_INVALID_DEVICE_NAME`: no CD music | CD audio from the Ogg tracks (below) |
+| `mciSendCommandA`, `mciGetErrorStringA`, `mixer*` (WINMM) | `cdaudio.c`: CD audio from the Ogg tracks, the mixer's CD line its volume (gap 5, [music.md](music.md)) | the same |
 | `DPLAYX` #1 | stub `IDirectPlay4` (Create must succeed or boot MessageBox-exits) | multiplayer still empty |
 | `DPLAYX` #2, #4 | empty enum / `DPERR_UNAVAILABLE` | the same: DirectPlay MP out of scope |
 | `GetFileVersionInfo*` / `VerQueryValueA` | FIXEDFILEINFO 4.06.03.0516 (DirectX 6.1a) | the same, or win32hle VERSION later |
@@ -191,8 +191,16 @@ message. It decodes with stb_vorbis (one public-domain file in
 `hle_audio_stream_*` natively, or on waveOut on Windows.
 
 The Windows build gains from it too: a Steam install has no audio CD, so
-today the recompiled game has no music there. Effort: 2 days, testable on
-Windows first.
+the recompiled game had no music there.
+
+**Done (2026-11-26): `src/runtime/cdaudio.c`, both hosts** ([music.md](music.md)).
+The MCI commands the game sends (open, set, status, play, seek, stop, pause,
+close, and `MM_MCINOTIFY`) over `Music\TrackNN.ogg`, decoded with
+stb_vorbis, played on win32hle's audio stream here and on `waveOut` on
+Windows; the mixer's CD line is its volume. It replaces `shims.c`'s old
+`s_mciSendCommandA`. Checked on WSL Ubuntu (clang `-m32`): `unit/cdaudio`
+and `music/base` pass (tracks 2-49 in order, 48 two-second tracks in 95.7
+s, the notification and the game's repeat).
 
 ### 6. Exceptions
 
@@ -284,7 +292,7 @@ The command line is the Windows host's: `--headless`, `--record`,
 `--frames`, `--shot`, `--keys` (inline or `@FILE`), `--keys-live`,
 `--watchdog`, `--files`, `--multi`, `--exe`, `--game`, `--args`, `--res`,
 `--fps`, `--fps-log`, `--films`, `--profile` (`--profile-window`,
-`--profile-hz`), `--mp-port`, `--mp-join`, `--mp-log`, plus `--cd DIR` (a
+`--profile-hz`), `--mp-port`, `--mp-join`, `--mp-log`, `--music off|DIR`, plus `--cd DIR` (a
 folder, not a letter), `--fullscreen` and
 `--scale sharp|smooth|crt|nearest|integer` (F11 and F12 in the window). The
 presenter's own switches (`--scale N`, `--filter`, `--refresh`,
@@ -319,7 +327,8 @@ work/battlegrounds_x1.exe`, then pcrecomp's `disasm32.py`, 14 minutes),
   compiler into the cache: a regenerate then dropped the toolchain and built
   x86-64), `build-linux.sh`, `build-macos.sh`.
 
-Not done: music (gap 5), macOS (needs a Mac), `setup.sh`'s native path.
+Not done: macOS (needs a Mac), `setup.sh`'s native path. Music (gap 5) is
+done (2026-11-26).
 Enter in New Player clears the name instead of accepting it (click OK;
 `HLE_EDIT_ENTER_CLICK=1` turns Enter into that click, but it also swallowed
 the chat's Enter, so it is off by default).
@@ -373,7 +382,7 @@ the code. The first item needs the toolchain installed.
 | Boot to the main menu: the permissive-bind loop (registry, paths, activation, timing) and 8-bit text (gap 3) | 3 to 4 |
 | Text fields (gap 2, pcrecomp and here) | 2 to 3 |
 | A skirmish played with the mouse and keys; sound | 3 to 5 |
-| Music: MCI `cdaudio` over Ogg, shared with Windows (gap 5) | 2 |
+| Music: MCI `cdaudio` over Ogg, shared with Windows (gap 5) | 2 (done) |
 | Movies, after Track 6 (gap 4) | 1 to 2 |
 | `setup.sh` native path, `conformance.py` and `docs/testing.md` on Linux | 2 |
 | **Linux, playable** | **about 3 to 4 weeks** |

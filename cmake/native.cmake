@@ -109,13 +109,14 @@ add_executable(swgb
   src/runtime/widescreen.c
   src/runtime/dplay.c
   src/runtime/inflate.c
+  src/runtime/cdaudio.c
   third_party/miniz/miniz.c
   ${HLE_SOURCES}
 )
 target_include_directories(swgb PRIVATE ${SWGB_NATIVE_INCS})
 target_compile_definitions(swgb PRIVATE ${SWGB_NATIVE_DEFS})
 target_compile_options(swgb PRIVATE -fno-strict-aliasing -fwrapv)
-set_source_files_properties(src/linux/main.c src/linux/shims.c src/linux/framerate.c src/linux/profile.c src/linux/movie.c src/runtime/keyscript.c src/runtime/coverage.c src/runtime/widescreen.c src/runtime/dplay.c src/runtime/inflate.c
+set_source_files_properties(src/linux/main.c src/linux/shims.c src/linux/framerate.c src/linux/profile.c src/linux/movie.c src/runtime/keyscript.c src/runtime/coverage.c src/runtime/widescreen.c src/runtime/dplay.c src/runtime/inflate.c src/runtime/cdaudio.c
                             PROPERTIES COMPILE_OPTIONS "-Wall;-Wno-unused-parameter")
 set_source_files_properties(third_party/miniz/miniz.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
 # Every object of the lift, referenced or not: the dispatch table is the only

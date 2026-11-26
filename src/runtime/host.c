@@ -42,6 +42,7 @@
 #include "present_d3d.h"
 #include "keyscript.h"
 #include "dplay.h"
+#include "cdaudio.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -839,6 +840,16 @@ static native32_shim_t g_shims[] = {
     { "LoadStringA", dplay_LoadStringA },   /* widescreen_LoadStringA, and the out-of-sync messages */
     { "timeGetTime", framerate_timeGetTime },
     { "PeekMessageA", framerate_PeekMessageA },
+    /* the CD music from Music\TrackNN.ogg, and the mixer's CD line its volume (cdaudio.c) */
+    { "mciSendCommandA", cdaudio_mciSendCommandA },
+    { "mciGetErrorStringA", cdaudio_mciGetErrorStringA },
+    { "mixerGetNumDevs", cdaudio_mixerGetNumDevs },
+    { "mixerOpen", cdaudio_mixerOpen },
+    { "mixerClose", cdaudio_mixerClose },
+    { "mixerGetLineInfoA", cdaudio_mixerGetLineInfoA },
+    { "mixerGetLineControlsA", cdaudio_mixerGetLineControlsA },
+    { "mixerGetControlDetailsA", cdaudio_mixerGetControlDetailsA },
+    { "mixerSetControlDetails", cdaudio_mixerSetControlDetails },
 };
 
 /* ---- muted by default -------------------------------------------------------
@@ -965,6 +976,7 @@ int main(int argc, char** argv) {
         if ((n = framerate_arg(argc, argv, i))) { i += n - 1; continue; }
         if ((n = profile_arg(argc, argv, i))) { i += n - 1; continue; }
         if ((n = dplay_arg(argc, argv, i))) { i += n - 1; continue; }
+        if ((n = cdaudio_arg(argc, argv, i))) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--sound")) sound = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = softdd_headless = present_noclip = 1;
@@ -1012,7 +1024,8 @@ int main(int argc, char** argv) {
                    "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
                    "                  [--refresh HZ] [--present-log] [--present gdi|d3d11]\n"
                    "                  [--args \"<game switches>\"] [--callbacks] [--native-trace]\n"
-                   "                  [--dplay host|native] [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log]\n");
+                   "                  [--dplay host|native] [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log]\n"
+                   "                  [--music off|native|DIR]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }

@@ -206,12 +206,31 @@ what needs research or a new subsystem.
   (docs/linux-macos.md, "Found by the soak"). The in-game cursor is drawn
   (win32hle `GetClipper` now returns the real `DDERR_NOCLIPPERATTACHED`;
   the old code made `sub_0049F080` return before the sprite blit).
-- **Work:** MCI `cdaudio` over the Steam Ogg tracks (also Windows music, and
-  Clone Campaigns' `WIN32.dll`); `setup.sh`'s native path; macOS (64-bit
-  based, needs a Mac; `dplay.c` there needs guest-pointer conversion).
-- **Estimate:** music 2 days; macOS one more week.
+- **Work:** `setup.sh`'s native path; macOS (64-bit based, needs a Mac;
+  `dplay.c` there needs guest-pointer conversion). Music is done (below).
+- **Estimate:** macOS one more week.
 - **Risk:** medium. The hard part exists, and the rest is the bring-up loop
   the sibling ports went through.
+
+### Music (CD audio from the Steam Ogg tracks)
+- **Known:** the game plays its in-game music from disc 2's audio tracks
+  through MCI `cdaudio` and sets its loudness on the mixer's CD line; Steam
+  has `Music\Track02-50.ogg` instead. Measured (docs/music.md): every game
+  start plays tracks 2-49 in one play with notify and repeats it at the
+  end; the menus, victory and defeat use the game's own MP3 streams, not
+  the CD. Clone Campaigns' `WIN32.dll` (ogg-winmm) would play the Oggs on
+  Windows, but its music is off on this machine (`Music Volume` 9900), so it
+  never opens the CD here.
+- **Done (2026-11-26):** `src/runtime/cdaudio.c`, both hosts: MCI open, set
+  (ms, MSF, TMSF), status, play from/to, seek, stop, pause, close and
+  `MM_MCINOTIFY` (successful, aborted, superseded), over the Oggs with
+  stb_vorbis, on `waveOut` (Windows) or win32hle's audio stream; the
+  mixer's CD line is the music slider (the wave line, the effects' slider,
+  stays WINMM's). `--music off|native|DIR`. Test runs stay muted. Tests:
+  `unit/cdaudio` and `music/base` (tracks on time, the notification, the
+  game's repeat), on Windows and Linux (WSL).
+- **Open:** a listening test on real speakers; Clone Campaigns with its
+  music on (its slider), which no test profile has.
 
 ### Stability / coverage
 - **Goal:** a complete skirmish against computer players, and a campaign

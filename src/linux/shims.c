@@ -22,6 +22,7 @@
 #include "swgb_linux.h"
 #include "widescreen.h"
 #include "dplay.h"
+#include "cdaudio.h"
 
 /* ---- calling win32hle's own answer ------------------------------------------
  * A wrapper runs win32hle's shim with the stack as it found it: the shim
@@ -156,13 +157,8 @@ static void s_MessageBoxA(void) {                         /* (hwnd, text, captio
 
 /* MSVFW32 (MCIWndCreateA, ICInfo): movie.c's films, registered first. */
 
-/* WINMM: the CD music. MCI's cdaudio device is not here (the Ogg Vorbis
- * tracks of the Steam release are the plan: docs/linux-macos.md, "Music"). */
-static void s_mciSendCommandA(void) {                     /* (device, msg, flags, params) */
-    static int once;
-    if (!once++) printf("[host] mciSendCommandA(0x%X): no CD audio on this host yet\n", A32(1));
-    RET(263u, 4);                                         /* MCIERR_INVALID_DEVICE_NAME */
-}
+/* WINMM: the CD music (Music\TrackNN.ogg) and the mixer's CD line, its
+ * volume, are cdaudio.c's, as on Windows. */
 
 /* KERNEL32 */
 static void s_IsDBCSLeadByte(void) { RET(0, 1); }         /* code page 1252: no lead bytes */
@@ -280,7 +276,15 @@ static const win32hle_shim g_shims[] = {
     { "CreateWindowExA", s_CreateWindowExA },
     { "swgb::GameWndProc", s_game_proc },
     { "LoadStringA", s_LoadStringA },
-    { "mciSendCommandA", s_mciSendCommandA },
+    { "mciSendCommandA", cdaudio_mciSendCommandA },
+    { "mciGetErrorStringA", cdaudio_mciGetErrorStringA },
+    { "mixerGetNumDevs", cdaudio_mixerGetNumDevs },
+    { "mixerOpen", cdaudio_mixerOpen },
+    { "mixerClose", cdaudio_mixerClose },
+    { "mixerGetLineInfoA", cdaudio_mixerGetLineInfoA },
+    { "mixerGetLineControlsA", cdaudio_mixerGetLineControlsA },
+    { "mixerGetControlDetailsA", cdaudio_mixerGetControlDetailsA },
+    { "mixerSetControlDetails", cdaudio_mixerSetControlDetails },
     { "IsDBCSLeadByte", s_IsDBCSLeadByte },
     { "GetPriorityClass", s_GetPriorityClass },
     { "WinExec", s_WinExec },
