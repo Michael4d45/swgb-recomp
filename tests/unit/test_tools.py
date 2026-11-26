@@ -137,7 +137,7 @@ class ResCheck(unittest.TestCase):
         after[100:104, 300:304] = 0                         # a unit walking
         self.assertEqual(res_check.popup_box(before, after), (810, 390, 1109, 689))
         self.assertIsNone(res_check.popup_box(before, before))
-        rep = res_check.Report()
+        rep = res_check.Report(quiet=True)
         self.assertTrue(res_check.check_centred(rep, before, after, 'dialog'))
         off = before.copy()
         off[150:450, 250:550] = 10                          # where an 800x600 layout put it
@@ -147,7 +147,7 @@ class ResCheck(unittest.TestCase):
 
     def test_full_screen(self):
         import numpy as np
-        rep = res_check.Report()
+        rep = res_check.Report(quiet=True)
         good = np.zeros((1080, 1920), dtype=np.int16)
         good[28:1052, 320:1600] = 40                        # 1280x1024, centred
         self.assertTrue(res_check.check_full_screen(rep, good, 'save'))

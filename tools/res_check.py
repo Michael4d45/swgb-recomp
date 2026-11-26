@@ -163,11 +163,12 @@ def popup_box(before, after, frac=0.35):
 
 
 class Report:
-    def __init__(self):
-        self.fails = 0
+    def __init__(self, quiet=False):
+        self.fails, self.quiet = 0, quiet
 
     def ok(self, cond, what):
-        print('%s: %s' % ('PASS' if cond else 'FAIL', what))
+        if not self.quiet:
+            print('%s: %s' % ('PASS' if cond else 'FAIL', what))
         self.fails += not cond
         return cond
 
