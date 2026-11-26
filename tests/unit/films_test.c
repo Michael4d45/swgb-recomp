@@ -15,6 +15,11 @@
 #include <math.h>
 
 void softdd_refresh(void) {}
+/* not recording (recaudio.c has its own test) */
+int recaudio_stream_open(int rate, int channels) { (void)rate, (void)channels; return -1; }
+void recaudio_stream_write(int id, const int16_t* pcm, int frames, double plays_in_ms) { (void)id, (void)pcm, (void)frames, (void)plays_in_ms; }
+void recaudio_stream_pause(int id, int paused) { (void)id, (void)paused; }
+void recaudio_stream_close(int id) { (void)id; }
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)

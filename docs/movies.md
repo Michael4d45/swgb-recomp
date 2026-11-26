@@ -52,7 +52,10 @@ campaigns each scenario's pregame, victory and loss film from its header
 - **Skipping** is the game's own (above). The window gives the keyboard
   focus back to the game window, which handles the keys.
 - `--record` scales a mode other than the first one (the films' 640x480)
-  to the recording's size, so the mp4 has the films in it.
+  to the recording's size, so the mp4 has the films in it, and their sound:
+  every chunk queued on waveOut goes to the recording too, with when it will
+  be heard (recaudio's stream tap, [recording.md](recording.md)). A muted
+  test run records it all the same.
 
 The log says what played and how the timing held:
 
@@ -91,6 +94,5 @@ the menu as before.
 
 - Disc 2's own films: untested here (no disc 2). The path, the names and
   the format (Indeo 5 AVI) are the same as the Clone Campaigns films'.
-- The sound is not in `--record`'s mp4 (it has no sound at all yet).
 - Linux and macOS (track 7): the player uses `CreateProcess` pipes,
   `waveOut` and GDI; the decoding side would carry over as it is.

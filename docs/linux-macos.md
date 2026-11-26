@@ -47,7 +47,9 @@ softdd portable would mean writing a GDI for it, which win32hle already is.
 softdd's palette-true 8-bit text and EDIT compose are done on this track;
 remaining gaps are below.
 `--shot` and `--record` are the native host's own (`main.c`, through
-`hle_dd_frame`), as in Red Alert 2's.
+`hle_dd_frame`), as in Red Alert 2's. `--record` there has the picture only:
+the Windows host's sound comes from a DirectSound proxy (`recaudio.c`), and
+here the mix is win32hle's ([recording.md](recording.md), "Not done").
 
 ### The lifted C under clang (preferred) or gcc
 

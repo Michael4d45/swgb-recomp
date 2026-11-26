@@ -61,7 +61,7 @@ by its PE timestamp; a pcrecomp checkout on `main` lacks the EH support
 
 ```
 build\swgbrecomp.exe --run                                    windowed, with sound
-build\swgbrecomp.exe --run --headless --record out.mp4        no window, record the frames
+build\swgbrecomp.exe --run --headless --record out.mp4        no window, record the frames and the sound
 build\swgbrecomp.exe --run --headless --shot 20 menu.bmp      save the frame after 20 s
 build\swgbrecomp.exe --run --keys "10:move:330:240,11:click:330:240"   scripted mouse and keys
 build\swgbrecomp.exe --run --headless --watchdog 60 --files   stop after 60 s, log every file opened
@@ -97,7 +97,7 @@ second while loading, a handful in an idle menu). A frame is drawn when a
 refresh interval has passed since the last one; otherwise it is held, and a
 one-shot timer draws the latest after the interval, so the last frame before
 the game goes quiet is never lost. `--shot`, `--record` (30 fps by the wall
-clock) and `--frames` still see every frame they need, and the game's text
+clock, with the sound: [recording.md](recording.md)) and `--frames` still see every frame they need, and the game's text
 fields are composed into the frame that is drawn.
 
 The mouse and the map's edge scrolling follow the letterbox: the game scrolls

@@ -58,9 +58,9 @@ Not yet played to a finish.
 | Single Player / skirmish | **runs**: New Player dialog (a name typed into its edit control), Single Player, Standard Game, Start Game, and the map: buildings, units, selection, the minimap |
 | Campaign | not tried yet |
 | Clone Campaigns | **plays** as a second lift and host (`run_lift.py --build cc`, `swgbrecomp_cc.exe`, the same runtime): Steam's `battlegrounds_x1.exe` unwrapped, 21,069 functions, 0 lift errors, `/O1`; its menus, `_x1` data, films, `--res`, skirmishes with the Republic and the Confederacy and both Episode II campaigns' first missions, 1.9 game-hours of soak with no fault ([docs/lifting.md](docs/lifting.md#clone-campaigns)) |
-| Sound | DirectSound and the mixer are the real ones; test runs are muted |
+| Sound | DirectSound and the mixer are the real ones; test runs are muted. `--record` records it anyway: a proxy over DirectSound mixes the game's sound again, with the films', on the video's clock ([docs/recording.md](docs/recording.md)) |
 | Films | **play**: Indeo 5 decoded by FFmpeg (on `PATH`), with sound, skippable; tested with the Saga's Clone Campaigns logo and intro ([docs/movies.md](docs/movies.md)) |
-| Headless mode | `--headless --record out.mp4`: a private desktop (pcrecomp `native32_headless`), nothing on the user's screens, frames piped to ffmpeg; muted |
+| Headless mode | `--headless --record out.mp4`: a private desktop (pcrecomp `native32_headless`), nothing on the user's screens, frames piped to ffmpeg, the sound muxed in; muted |
 | Conformance harness | **5/5** milestones: boot, `genie.dat` inflated, 800x600x8 with 100 frames, the main menu, the Exit button ([docs/testing.md](docs/testing.md)) |
 | Setup.cmd | tested from a fresh clone (2026-11-12): catalog, lift, the full build and the shortcut; the conformance harness 5/5 on that build |
 | Linux, macOS | not yet (`setup.sh` says so) |

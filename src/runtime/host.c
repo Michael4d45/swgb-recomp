@@ -42,6 +42,7 @@
 #include "present_d3d.h"
 #include "keyscript.h"
 #include "dplay.h"
+#include "recaudio.h"
 
 extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
@@ -806,7 +807,20 @@ static void shim_LoadCursorA(void) {
     g_esp += 4 + 2 * 4;
 }
 
+/* DirectSoundCreate: the real one, under --record behind recaudio's proxy,
+ * which records what the game plays. */
+static void shim_DirectSoundCreate(void) {
+    const void* guid = (const void*)(uintptr_t)ARG(0);
+    void** out = (void**)(uintptr_t)ARG(1);
+    void* outer = (void*)(uintptr_t)ARG(2);
+    long hr;
+    UNLOCKED(hr = recaudio_DirectSoundCreate(guid, out, outer));
+    g_eax = (uint32_t)hr;
+    g_esp += 4 + 3 * 4;
+}
+
 static native32_shim_t g_shims[] = {
+    { "DSOUND.dll#1", shim_DirectSoundCreate },
     { "LoadIconA", shim_LoadIconA },
     { "LoadCursorA", shim_LoadCursorA },
     { "GetCursorPos", shim_GetCursorPos },
@@ -972,6 +986,7 @@ int main(int argc, char** argv) {
             static char rec[MAX_PATH];   /* the game runs in its own folder */
             GetFullPathNameA(argv[++i], MAX_PATH, rec, NULL);
             softdd_record = rec;
+            recaudio_init();   /* the sound too (recaudio.c) */
         }
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) softdd_stop_after = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) softdd_scale = atoi(argv[++i]);
