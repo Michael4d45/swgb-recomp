@@ -99,14 +99,19 @@ GAMES = {
 
 # ---- results ---------------------------------------------------------------------------------
 class Result:
-    def __init__(self, check, root):
+    def __init__(self, check, root, attempt=0):
         self.check = check
         self.name = check.name
-        self.dir = os.path.join(root, re.sub(r'[^A-Za-z0-9_.-]+', '_', check.name))
+        # each try in a folder of its own: <check> first, then <check>-retry1, -retry2 (--retry),
+        # so a retry never overwrites the first try's logs and shots, nor passes on its leftovers
+        self.attempt = attempt
+        self.dir = os.path.join(root, re.sub(r'[^A-Za-z0-9_.-]+', '_', check.name) + ('-retry%d' % attempt if attempt else ''))
         self.status = 'PASS'
         self.lines = []
         self.metrics = {}
         self.images = []                     # (path relative to the results folder, caption)
+        self.own_lines, self.own_images = self.lines, self.images   # this try's alone (merge_tries)
+        self.tries = []                      # the earlier tries of this check, first first
         self.seconds = 0
         self.game = None                     # the game folder, while it holds one
         self.root = root
@@ -129,7 +134,41 @@ class Result:
     def as_dict(self):
         return {'name': self.name, 'level': self.check.level, 'game': self.check.game, 'status': self.status,
                 'seconds': round(self.seconds, 1), 'lines': self.lines, 'metrics': self.metrics,
-                'images': [{'path': p, 'caption': c} for p, c in self.images], 'dir': os.path.relpath(self.dir, self.root)}
+                'images': [{'path': p, 'caption': c} for p, c in self.images], 'dir': os.path.relpath(self.dir, self.root),
+                'tries': [{'try': t.attempt + 1, 'status': t.status, 'dir': os.path.relpath(t.dir, self.root)}
+                          for t in self.tries + [self]]}
+
+
+def merge_tries(old, new):
+    """new is a retry of old: its report lines and shots become every try's, each try headed
+    by its status and its folder (old's folder is untouched, so both sets of logs stay)."""
+    new.tries = old.tries + [old]
+    lines, images = [], []
+    for t in new.tries + [new]:
+        lines.append('try %d: %s, in %s/' % (t.attempt + 1, t.status, os.path.basename(t.dir)))
+        lines += ['  ' + l for l in t.own_lines]
+        images += [(p, 'try %d: %s' % (t.attempt + 1, c)) for p, c in t.own_images]
+    new.lines, new.images = lines, images
+    if new.status == 'PASS':
+        new.status = 'FLAKY'
+    return new
+
+
+def retry_failed(ctx, results, times, run):
+    """--retry: a game check (not a soak) that failed is run again, up to `times` times, by
+    run(check, attempt) -> Result. Passing then, it is FLAKY, which does not fail the run but
+    is listed. Each retry replaces its check's result in `results`, keeping the earlier tries'
+    lines and shots (merge_tries)."""
+    for k in range(1, times + 1):
+        again = [r for r in results if r.status == 'FAIL' and r.check.game and r.check.level != 'soak']
+        if not again or ctx.cancelled:
+            break
+        print('retry %d: %d failed check(s): %s' % (k, len(again), ', '.join(r.name for r in again)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, ctx.a.jobs)) as ex:
+            retried = list(ex.map(lambda r: run(r.check, k), again))
+        for old, new in zip(again, retried):
+            results[results.index(old)] = merge_tries(old, new)
+    return results
 
 
 class Check:
@@ -1084,8 +1123,8 @@ def select(a):
     return chosen
 
 
-def run_check(ctx, c):
-    r = Result(c, ctx.results)
+def run_check(ctx, c, attempt=0):
+    r = Result(c, ctx.results, attempt)
     os.makedirs(r.dir, exist_ok=True)
     t0 = time.time()
     kind = c.game
@@ -1277,11 +1316,12 @@ def main():
     games = sorted((c for c in checks if c.game), key=lambda c: -c.minutes)
     lock = threading.Lock()
 
-    def one(c):
-        r = run_check(ctx, c)
+    def one(c, attempt=0):
+        r = run_check(ctx, c, attempt)
         with lock:
-            results.append(r)
-            print('  %-5s %-28s %6.0f s  %s' % (r.status, r.name, r.seconds,
+            if not attempt:                  # a retry replaces its first try (retry_failed)
+                results.append(r)
+            print('  %-5s %-28s %6.0f s  %s' % (r.status, r.name + ('  (retry %d)' % attempt if attempt else ''), r.seconds,
                                                next((l for l in r.lines if l.startswith(('FAIL', 'SKIP'))), '')[:110]))
         return r
 
@@ -1291,23 +1331,8 @@ def main():
         # a thread per game slot: each kind has --jobs folders, and at most --jobs games run at once
         with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
             list(ex.map(one, games))
-        # a game check that failed is run again (--retry): passing then, it is FLAKY, which
-        # does not fail the run but is listed (the first try's lines are kept in its report)
-        for attempt in range(a.retry):
-            again = [r for r in results if r.status == 'FAIL' and r.check.game and r.check.level != 'soak']
-            if not again or ctx.cancelled:
-                break
-            print('retrying %d failed check(s): %s' % (len(again), ', '.join(r.name for r in again)))
-            first = {r.name: r for r in again}
-            with lock:
-                for r in again:
-                    results.remove(r)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-                retried = list(ex.map(one, [r.check for r in again]))
-            for r in retried:
-                if r.status == 'PASS':
-                    r.status = 'FLAKY'
-                r.lines = ['first try: %s' % first[r.name].status] + ['  ' + l for l in first[r.name].lines] +                           ['second try:'] + r.lines
+        # a game check that failed is run again (--retry), in a folder of its own
+        retry_failed(ctx, results, a.retry, one)
     except KeyboardInterrupt:
         print('interrupted: ending the processes this run started')
         ctx.stop_all()

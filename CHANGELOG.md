@@ -10,6 +10,60 @@ versions follow [SemVer](https://semver.org/).
   (9% of a core at 60 against 98%); game speed unchanged from 10 up.
 - `--fps-log`: frames, changed frames, world steps and the game clock a
   second ([docs/framerate.md](docs/framerate.md)); `rclick:X:Y` in `--keys`.
+- The game's three resolutions checked in a skirmish (`tools/res_check.py`);
+  with `--multi`, a private copy of the game's HKCU options per `--game`
+  folder; the window takes each mode's shape.
+- `--res WxH` and `--res desktop`: any resolution, widescreen included (the
+  map fills the screen, the interface centred), `src/runtime/widescreen.c`.
+- A presenter (`present.c`): aspect-correct letterbox, `--filter
+  sharp|smooth|nearest|integer` (Alt+F12), borderless `--fullscreen`
+  (Alt+Enter), presents paced to the display; `--present d3d11`, opt-in;
+  `tools/present_check.py` and `present_check_real.ps1`.
+- The films: MCIWnd answered by the host, Indeo 5 decoded by FFmpeg, with
+  sound, `--films DIR` ([docs/movies.md](docs/movies.md)).
+- Clone Campaigns: a second lift (`run_lift.py --build cc`) and host,
+  `swgbrecomp_cc.exe`, on the same runtime (`src/runtime/guest_addrs.h`).
+- Performance ([docs/performance.md](docs/performance.md)): a sampling
+  profiler (`--profile`, `tools/profile_report.py`), menus that wait for
+  input, the display's refresh as the default frame rate, an indirect-call
+  cache (`resolve.c`), a change-only presenter and a faster scaler
+  (`scaler.c`), the four hot generated files at `/O2`.
+- Coverage: `tools/code_ptr_seeds.py` (19 entries the catalog dropped), an
+  unresolved indirect call stops the run and names the address (exit 5),
+  `tools/seeds_from_logs.py`, `tools/soak.py` (long games, games to the
+  end, campaigns, `--mode fight`); `--keys` drags, `ctrl+`/`shift+` and
+  `--keys-live`.
+- Multiplayer (LAN): a DirectPlay 4 of the host's own (`dplay.c`, TCP and
+  UDP discovery on 2300; `--dplay native` keeps Windows'), `[sync]`
+  checkpoints and `tools/mp_pair.py` ([docs/multiplayer.md](docs/multiplayer.md)).
+- `tools/test.py`: one test runner in levels (`unit`, `smoke`,
+  `functional`, `soak`, `real`), reports in Markdown and HTML, `--retry`
+  (a failed game check run again: FLAKY), `--prefix`; `keyscript.c` (the
+  `--keys` parser) with a unit test.
+- Linux: a native host on pcrecomp's `win32hle` (`src/linux`,
+  `cmake/native.cmake`, `./build-linux.sh`), no Wine; it plays, and the
+  harness, `test.py`, `soak.py` and `mp_pair.py` run there
+  ([docs/linux-macos.md](docs/linux-macos.md)).
+- `docs/parallel-work.md` and `tools/worktree_env.ps1`: several worktrees on
+  one machine, linking one prebuilt `swgb_gen.lib`; `--multi`.
+
+### Changed
+- The README's status brought up to date (the lift, campaigns, Linux,
+  multiplayer, tests) and its documentation list completed.
+
+### Fixed
+- `test.py --retry`: a retry ran in the first try's folder and overwrote its
+  `run.log` and shots (and could pass on a shot the first try left). Each
+  retry now has a folder of its own, `<check>-retry1`, and the report lists
+  every try with its folder, lines and shots.
+- softdd: text in 8-bit surfaces' DCs in the palette in use; the game's
+  EDIT controls composed into the frame with a caret, no ghost box, focus
+  kept across a trip to another window; edge scrolling in a window.
+- A THIS_COD span blitter that reads the byte before the back buffer
+  faulted long games (13 and 25 minutes): softdd puts 4 KB of slack around
+  every surface.
+- `0x005648A0`, a vtable slot the catalog lost, ended skirmishes about two
+  minutes in.
 
 ## [0.1.0] - 2026-11-20
 

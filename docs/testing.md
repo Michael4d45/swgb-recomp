@@ -55,7 +55,13 @@ registry hive; two runs that did made every edge case of `present_check` fail.
 
 **Flaky checks.** A game check (not a soak) that fails is run once more
 (`--retry N`, default 1). If it passes then, it is **FLAKY**: the run still
-passes, and the report keeps both tries. On main of 2026-11-22, present group
+passes, and the report keeps both tries. Each retry runs in a folder of its
+own beside the first, `<check>-retry1` (then `-retry2`), so the first try's
+`run.log`, keys and shots are kept as they were, and a retry cannot pass on a
+shot the first try left. The check's report lines start each try with its
+result and folder (`try 1: FAIL, in skirmish_base/`), its shots are captioned
+`try 1:`, `try 2:`, and `summary.json` lists the tries (`tries`: try, status,
+dir). On main of 2026-11-22, present group
 A failed once in three runs on the same build: after Alt+Enter, eight
 fullscreen edge cases saw the game read the cursor at 400,300 (what the host
 reports while another window is active) although the view scrolled. The other
