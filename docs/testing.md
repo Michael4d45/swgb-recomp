@@ -155,6 +155,7 @@ Results on Linux (Omarchy/Arch, clang 21, `-m32`, 2026-11-23), both games:
 | `inflate` | `tests/unit/inflate_test.c` | the deflate decoder called as the lifted code calls it: any input and output chunking, two streams in turn, a zeroed state block restarts, corrupt data is -2 |
 | `pacing`, `pacing_cc` | `tests/unit/pacing_test.c` | `framerate.c` itself with a fake clock: `--fps 60/30/144/1000` passes a second, the 16/17 ms gate, the refresh default held to 30-1000, no catch-up burst after a 250 ms hitch, the menus untouched, `--fps` arguments; at the base and Clone Campaigns addresses |
 | `films` | `tests/unit/films_test.c` | `movie.c` itself: AVI headers, `--films` names (`NAME.avi`, then `xNAME.avi`), the film palette, the ordered dither (flat colours stay flat, the level holds on average), drawing into an 8-bit DC (the film palette and a foreign one) |
+| `smooth`, `smooth_cc` | `tests/unit/smooth_test.c` | `smooth.c` (`--smooth`) itself with a fake clock and fake objects: a walk moves at most 2 px a frame and is never drawn ahead of the object, a stop ends where it stopped, teleports, new objects, a new game and a pause are drawn where they are, other callers are left alone, nothing is written; at the base and Clone Campaigns addresses |
 | `keys` | `tests/unit/keys_test.c` | `keyscript.c`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
 | `tools` | `tests/unit/test_tools.py` | the Python side, as above |
 
@@ -180,6 +181,15 @@ without a body, a lower function count, or any changed or vanished function
 (new ones pass: seeds add them). After an intended re-lift, record the new
 baseline with `--save` (`test.py --update-baselines`). The baseline holds
 hashes only.
+
+### Smooth motion (L2): `smooth/base`, `smooth/cc`
+
+A fixed skirmish (as the frame-rate check's) at `--smooth --fps 120` with
+`SWGB_SMOOTH_LOG`: three workers trained with a rally point, then whoever
+stands there box-selected and sent back and forth. `tools/smooth_check.py`
+reads the log; it passes when the longest walk is 10 steps or more, 95% of
+its frames move 3 px or less, and fewer of them are still than in the
+game's own draw ([framerate.md](framerate.md#--smooth-drawn-between-steps)).
 
 ### The frame-rate check (L2)
 
@@ -415,7 +425,11 @@ for `seeds_from_logs.py --cc`.
 
 ```
 py -3 tools\mp_pair.py [--minutes 20] [--activity idle|habits|busy] [--seed S] [--run EXE] [--game DIR]
+                       [--port N] [--extra SWITCHES] [--extra-a=SWITCHES] [--extra-b=SWITCHES]
 ```
+
+`--extra-a` and `--extra-b` give one player switches the other does not
+have (`--extra-a=--smooth`: the sync records stay the same, framerate.md).
 
 Two headless `--multi` runs on this machine: one hosts, one joins over
 127.0.0.1, both start a two-player game and play `--minutes`. It passes when

@@ -10,6 +10,9 @@ versions follow [SemVer](https://semver.org/).
   (9% of a core at 60 against 98%); game speed unchanged from 10 up.
 - `--fps-log`: frames, changed frames, world steps and the game clock a
   second ([docs/framerate.md](docs/framerate.md)); `rclick:X:Y` in `--keys`.
+- `--smooth`: units drawn between simulation steps, so they glide at high
+  frame rates instead of moving once a step; drawing only, multiplayer sync
+  unchanged. `--record-fps N`; `SWGB_SMOOTH_LOG` and `tools/smooth_check.py`.
 
 ## [0.1.0] - 2026-11-20
 

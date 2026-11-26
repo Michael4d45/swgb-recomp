@@ -1,7 +1,8 @@
 # Frame rate
 
 How often Galactic Battlegrounds draws, how often it simulates, what ties
-them together, and the host's `--fps N`. Measured headless with
+them together, the host's `--fps N`, and `--smooth` (units drawn between
+steps). Measured headless with
 `--fps-log` (below) in the scripted skirmish of [testing.md](testing.md),
 v1.1, 800x600x8, on 2026-11-21.
 
@@ -23,6 +24,11 @@ v1.1, 800x600x8, on 2026-11-21.
   unchanged from 10 up (the table below). **Since the performance track this
   is the default, at the display's refresh** (`--fps off`: the game's own
   rate, as measured below); see [performance.md](performance.md).
+- **`--smooth`** draws every object between its last two simulated
+  positions, so at 120 frames a second a walking unit moves a pixel or so
+  every frame instead of 3-7 pixels every sixth. Only the place a sprite is
+  drawn changes, never the game's state: a multiplayer game with `--smooth`
+  on one side only stays in sync. Off by default ([below](#--smooth-drawn-between-steps)).
 
 ## How a frame is made
 
@@ -116,7 +122,8 @@ second pair of runs with the same script):
 
 ## Is a higher frame rate worth it?
 
-Not for units. They move once a step, 20 times a second, and a frame drawn
+Not for units, as the game draws them (`--smooth`, below, changes that).
+They move once a step, 20 times a second, and a frame drawn
 between two steps is the same picture: of the ~920 frames drawn a second,
 8 to 13 differ from the one before at rest, 20 while a unit walks (one a
 step), and 20 to 30 while the view scrolls. Whatever Expanding Fronts'
@@ -139,6 +146,126 @@ What could make motion smoother, none of it host-only:
   75 ms steps. Multiplayer steps by turns and would need the same change
   on every machine. This is a change to lifted code (a re-lift or a
   patched constant), so out of this track's host-only rule.
+
+## `--smooth`: drawn between steps
+
+`src/runtime/smooth.c`, both games, both hosts (the Linux one built but
+not yet run). Off unless `--smooth` is given.
+
+### Where an object is drawn
+
+Found with a trace of every indirect call in game (who calls what, how
+often, with which `this`): one object virtual was called about 50 times a
+frame, from one place.
+
+```
+the map view's tile pass (0x0060A8DF): for each visible tile
+  sub_00496470(tile, area, x, y + elevation, ...)   the object pass:
+      for each object on the tile the player can see (vtable +0x44),
+      its draw, vtable +0x70:
+    sub_0054AD10(area, x, y, colors)   RGE_Static_Object's draw: every object
+        class's (9 vtables) but one, vtable 0x006600E0, whose sub_00556040
+        ends in a direct call to it
+      sprite at x + [obj+0x34], y + [obj+0x36]; shadow at +0x38, +0x3A
+      the selection frame and hit-point bar (sub_0054B1B0, sub_00495BE0):
+        corners from the object's size, relative to the same x, y
+```
+
+`x, y` is the tile's place on screen; `[obj+0x34..0x3A]` is the object's
+offset in its tile, which the simulation sets when the object moves
+(`sub_0054DB30`, new_location). The position itself is `[obj+0x48]`,
+`+0x4C`, `+0x50`: floats, in tiles (x, y, height). A tile is
+`[map+0xBF40]` by `[map+0xBF3E]` pixels, by half (48 and 24 here), and a
+move of dx, dy, dz shows on screen as
+
+```
+sx = hw (dx + dy)      sy = hh (dy - dx - dz)
+```
+
+(new_location's arithmetic, and `sub_00495BE0`'s). `[world+0x20]` is the
+wall time of the world's last step (`0x0061ACC6`). Clone Campaigns has the
+same code at other addresses (`0x00496E80`, `0x0054C9E0`, `0x00557F60`;
+`tools/x1_addrs.py` matched each byte for byte, so the offsets are the
+same) and its step time at the same place (`0x0061E946`).
+
+### What `--smooth` does
+
+The object draw is an indirect call, so the host owns it
+(`recomp_lookup_manual`, as `widescreen.c` owns the screen's). When the
+caller is the object pass:
+
+1. Each object's last two positions are kept by the host, keyed by its
+   address and id (`[obj+0x10]`), one entry a world step.
+2. A frame at t, between steps at t0 and t1 = t0 + T (T the last
+   interval, about 50 ms), has f = (t - t1) / T, 0 to 1. An object that was
+   at p0 and is at p1 is drawn at p0 + f (p1 - p0): its screen offset is
+   (f - 1) times the step's move, through the formula above.
+3. `x, y` on the guest stack get that offset for the call and are put back
+   after it. Nothing else is written: not the object, not the world.
+
+So the picture is one step (about 50 ms) behind the simulation, and it
+never overshoots. A unit that stops is drawn up to where it stopped and
+stays; one that turns, starts attacking or dies is drawn along the
+straight line of its last step; a projectile is an object and is drawn the
+same way. An object with no history (it came into view, it was just made,
+its slot holds another object, a new game) or that moved more than 3 tiles
+in a step (a teleport) is drawn where it is. A paused game (no steps) is
+drawn where everything is.
+
+Not changed: sprite animation frames (they change when the world steps),
+the minimap, and the objects the object pass draws directly
+(`sub_0054B150`, objects remembered under the fog: they do not move).
+Clicks pick by the simulation, so a fast unit's drawn place is up to one
+step's move (a few pixels) from where a click finds it.
+
+### Measured
+
+`SWGB_SMOOTH_LOG=FILE` (with or without `--smooth`) logs every object the
+view draws, every frame: the time, the world's step, the object, its
+position, the game's own screen position and what `--smooth` adds.
+`tools/smooth_check.py FILE` reads it: for each object that moved, the
+largest change of its screen position from one frame to the next, and the
+share of frames it did not move, as the game draws it and as `--smooth`
+does. `--record-fps N` records at N frames a second (30 by default).
+
+The scripted skirmish (testing.md), a worker trained with a rally point and
+then box-selected and sent back, `--fps 240`, recorded at 120 frames a
+second, 2026-11-26, the walking workers of one run with and one without:
+
+| | a step's move | largest change a frame | 95% of frames | frames it stood still |
+|---|---|---|---|---|
+| plain draw | 3.0-6.0 px | 4.5-6.3 px | 4.5-6.3 px | 92-98% |
+| `--smooth` | 3.0-5.6 px | 1.4-2.2 px | 1.0-1.4 px | 52-91% |
+
+The plain draw moves a walking unit 3-7 px every sixth frame and leaves it
+still the other five; `--smooth` moves it 0-2 px every frame (a unit that
+moves 0.4 px a frame still rounds to the same pixel most frames). In the
+recordings (beside the build, not in git: `builds\smooth-motion\clips`,
+`off.mp4`, `on.mp4` and a side-by-side of a selected worker's walk at 120
+frames a second) the selection ellipse and hit-point bar move with the
+sprite.
+
+**The simulation is untouched.** `tools/mp_pair.py --activity busy
+--minutes 6 --extra-a=--smooth` (the host with `--smooth`, the joiner
+without), 2026-11-26: both ran to their watchdog, no out-of-sync message,
+86 sync records in each log over 43 turns, **all 86 the same**. The sync
+records are the game's own checksums of the world, compared turn by turn.
+
+**CPU.** `--fps 120 --profile`, the same skirmish: the game thread 15% of
+a core with and without; the hook (`smooth_lookup`, `entry`, `offset_for`,
+`draw`) 0.5% of the game thread's samples in game, under 0.1% of a core.
+Without `--smooth` the host does not ask it at all (`smooth_hooked`).
+
+`tests/unit/smooth_test.c` (`test.py`'s `unit/smooth`, `unit/smooth_cc`)
+compiles `smooth.c` with a fake clock and fake game objects: a walk at 5,
+7 and 8 ms frames moves at most 2 px a frame (the plain draw: 8 px at
+once, still 90% of frames), is never drawn ahead of the object, and stops
+exactly where it stopped; teleports, a new object in a slot, a new game
+and a pause are drawn where they are; another caller of the draw is left
+alone; the caller's argument slots and the object are as they were.
+`smooth/base` and `smooth/cc` (L2) play the walk at `--fps 120` and read
+the log: 95% of frames move 3 px or less, and fewer frames are still than
+in the plain draw.
 
 ## `--fps N`
 

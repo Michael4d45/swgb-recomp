@@ -153,13 +153,22 @@ what needs research or a new subsystem.
   caller), in `src/runtime/framerate.c`. Game speed unchanged at 60, 30
   and 10 (game clock and training progress); at 5 the 100 ms step cap
   halves it. `--fps 60` takes 9% of a core in game against 98%.
-- **Next:** more frames do not move units more smoothly: they move once a
-  step. Smooth motion needs interpolated drawing (objects drawn at their
-  position plus velocity times the time since the step: the view's object
-  pass, sync untouched) or a smaller minimum step (the `0x32` at
-  `0x0061ACAA`; single player only, and untested AI and pathing at small
-  steps). Both are changes to lifted code.
-- **Risk:** low for `--fps`; medium-high for smoother motion.
+- **Done (2026-11-26, `--smooth`, [docs/framerate.md](docs/framerate.md#--smooth-drawn-between-steps)):**
+  units move smoothly at high frame rates, with no change to lifted code.
+  The host owns the objects' draw (`sub_0054AD10`, vtable +0x70, called
+  from the view's object pass `sub_00496470`) and moves only the x, y it is
+  given: each object is drawn between its last two simulated positions, a
+  step (~50 ms) behind. At 120 frames a second a walking worker moves
+  0-2 px a frame instead of 3-7 px every sixth; its selection frame and bar
+  follow. `mp_pair.py` with `--smooth` on one side only: 86 of 86 sync
+  records the same. Under 0.1% of a core. Both games; the Linux host has
+  the switch (built, not run there yet). Off by default. Units in
+  `tests/unit/smooth_test.c`, L2 `smooth/*`; `SWGB_SMOOTH_LOG` and
+  `tools/smooth_check.py` measure it; `--record-fps N` records above 30.
+- **Next:** play it on the real screen, then make it the default. Sprite
+  animation frames still change once a step; a smaller minimum step (the
+  `0x32` at `0x0061ACAA`, single player only) is the other way, untried.
+- **Risk:** low for `--fps` and `--smooth` (drawing only, sync checked).
 
 ### 6. Cutscenes
 - **Done (branch `track/cutscenes`):** the films play, headless and in

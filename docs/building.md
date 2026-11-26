@@ -68,6 +68,8 @@ build\swgbrecomp.exe --run --headless --watchdog 60 --files   stop after 60 s, l
 build\swgbrecomp.exe --run --fps 60                           60 frames a second in game (default: the refresh)
 build\swgbrecomp.exe --run --fps off                          the game's own rate: ~900 a second, a whole core
 build\swgbrecomp.exe --run --headless --fps-log               frames, game clock, steps a second
+build\swgbrecomp.exe --run --smooth                           units drawn between steps (framerate.md)
+build\swgbrecomp.exe --run --headless --record out.mp4 --record-fps 120   record at 120 frames a second (default 30)
 build\swgbrecomp.exe --run --headless --profile p.txt         where the game thread's time goes (performance.md)
 build\swgbrecomp.exe --run --films "<Steam>\Game"            films the game cannot find, from there
 build\swgbrecomp.exe --run --fullscreen --filter integer      borderless fullscreen, whole-number scaling
