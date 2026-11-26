@@ -489,9 +489,14 @@ void recaudio_stream_write(int id, const int16_t* pcm, int frames, double plays_
     LeaveCriticalSection(&g_cs);
 }
 
+/* A pause or a close takes effect when it is called, not at the mixer's next
+ * tick: everything is mixed up to now first. */
+static void mix_to(int64_t end);
+
 void recaudio_stream_pause(int id, int paused) {
     if (id < 0 || id >= MAX_STREAMS) return;
     EnterCriticalSection(&g_cs);
+    if (g_st[id].used) mix_to(now_samples());
     g_st[id].paused = paused;
     LeaveCriticalSection(&g_cs);
 }
@@ -499,6 +504,7 @@ void recaudio_stream_pause(int id, int paused) {
 void recaudio_stream_close(int id) {
     if (id < 0 || id >= MAX_STREAMS) return;
     EnterCriticalSection(&g_cs);
+    if (g_st[id].used) mix_to(now_samples());
     g_st[id].used = 0;   /* what was not heard yet is dropped, as waveOutReset does */
     LeaveCriticalSection(&g_cs);
 }

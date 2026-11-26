@@ -235,8 +235,10 @@ int main(void) {
     double t_s = recaudio_clock_ms() - t0 + 300;
     recaudio_stream_write(s, chunk, 22050 / 5, 300);
     wait_until(t0, 2450);
+    double t_pause = recaudio_clock_ms() - t0;
     recaudio_stream_pause(s, 1);                                  /* held from 2.45 to 2.75 */
     wait_until(t0, 2750);
+    double t_resume = recaudio_clock_ms() - t0;
     recaudio_stream_pause(s, 0);
     wait_until(t0, 3200);
     recaudio_stream_close(s);
@@ -287,12 +289,15 @@ int main(void) {
     CHECK(rms(t_lp / 1000 + 0.02, t_rw / 1000 - 0.02, 2) > 0.3, "the looping buffer is quiet (it loops past its 250 ms)");
     CHECK(rms(t_rw / 1000 + 0.03, 2.05, 2) < 0.001, "the rewritten (silent) looping buffer is heard");
     double son = onset(2.2, 3.3, 0.05);
-    printf("  stream: due at %.3f s, heard from %.3f s; %.0f Hz\n", t_s / 1000, son, pitch(2.77, 2.87));
+    double left = 0.2 - (t_pause - t_s) / 1000, pw0 = t_resume / 1000 + 0.01, pw1 = pw0 + (left > 0.09 ? left - 0.04 : 0.05);
+    printf("  stream: due at %.3f s, heard from %.3f s; %.0f Hz\n", t_s / 1000, son, pitch(pw0, pw1));
     CHECK(son >= 0 && fabs(son - t_s / 1000) < 0.025, "the stream is heard at %.3f s, due at %.3f s", son, t_s / 1000);
-    CHECK(fabs(pitch(2.77, 2.87) - 1102.5) < 25, "the stream is at %.0f Hz, not 1102.5", pitch(2.77, 2.87));
-    CHECK(rms(2.47, 2.74, 2) < 0.001, "the paused stream is heard");
-    CHECK(rms(2.77, 2.77 + (t_s / 1000 + 0.2 - 2.45) - 0.04, 2) > 0.3, "the stream does not carry on after the pause");
-    CHECK(rms(3.05, 3.33, 2) < 0.001, "sound after the stream ended");
+    CHECK(fabs(pitch(pw0, pw1) - 1102.5) < 25, "the stream is at %.0f Hz, not 1102.5", pitch(pw0, pw1));
+    /* by the times the calls were made: a loaded machine wakes this thread late */
+    printf("  pause: at %.3f s, resumed at %.3f s, %.3f s left to play\n", t_pause / 1000, t_resume / 1000, left);
+    CHECK(rms(t_pause / 1000 + 0.01, t_resume / 1000 - 0.01, 2) < 0.001, "the paused stream is heard");
+    CHECK(left < 0.05 || rms(t_resume / 1000 + 0.01, t_resume / 1000 + left - 0.02, 2) > 0.3, "the stream does not carry on after the pause");
+    CHECK(rms(t_resume / 1000 + left + 0.02, 3.33, 2) < 0.001, "sound after the stream ended");
     DeleteFileA(wav);
     if (fails) { printf("%d FAILED\n", fails); return 1; }
     printf("OK\n");
