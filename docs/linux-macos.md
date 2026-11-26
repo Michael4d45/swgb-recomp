@@ -6,9 +6,10 @@ pcrecomp's `runtime/win32hle` instead of `runtime/native32`. This is how
 Tiberian Sun, Red Alert 2 and Civilization III run on Linux, and Red Alert 2
 on macOS (their `src/linux`). This page has the design, every gap with its
 fix, the build steps and the effort; [linux-bringup.md](linux-bringup.md) is
-the checklist for continuing on a Linux machine. **State (2026-11-22): linked and run on Linux (`-m32`). Main-menu GDI text
-works with pcrecomp `swgb-linux-palette` (8bpp TextOut). See
-[linux-bringup.md](linux-bringup.md).**
+the checklist for continuing on a Linux machine. **State (2026-11-26): runs on Linux (`-m32`, clang), set up by
+`./setup.sh` from a fresh clone (WSL2 Ubuntu 24.04). It needs pcrecomp's
+`swgb-linux-palette` branch of the fork, pinned in `tools/pcrecomp_pin.sh`
+(below). See [linux-bringup.md](linux-bringup.md).**
 
 ## The design
 
@@ -257,12 +258,40 @@ tools and Homebrew's `cmake ninja pkgconf sdl2 sdl2_ttf`.
 You need a lift (`run_lift.py`, on any OS with Python and capstone), and the
 game folder as `game/`.
 
-**Linux** (Debian or Ubuntu, including WSL2):
+**Linux, the easy way:** `./setup.sh` (Debian, Ubuntu, WSL2). It does
+everything below and asks before it installs anything: the packages (apt;
+on other distributions it prints the list), a virtual environment
+`work/venv` with capstone, pefile and cryptography, the pinned pcrecomp
+beside this folder, the game copied into `game/` (it looks in the Steam
+libraries, `~/.wine` and, on WSL, the Windows drives: the Steam Saga's
+`Battlegrounds.exe` is unwrapped, a disc install is updated to v1.1 with
+`BGUpdate1_1.exe` through cabextract), disc 2 (a mount point, or an
+`.iso`/`.cue` unpacked into `work/disc2`; the Steam release needs none),
+the catalog, the lift, the build and a dry run, then `./play.sh` (and,
+when asked, a menu entry). `--game-dir`, `--play-disc`, `--patch-exe` and
+`--yes` skip the questions; `SUDO_ASKPASS` answers sudo with no terminal.
+A rerun skips what is done; `--force` redoes it. The log is `setup.log`.
+On a new install the game opens New Player on the first Single Player
+(type a name, Enter).
+
+**pcrecomp.** The native host needs win32hle changes that are only on the
+fork so far: branch `swgb-linux-palette` of
+[Michael4d45/pcrecomp](https://github.com/Michael4d45/pcrecomp/tree/swgb-linux-palette).
+`tools/pcrecomp_pin.sh` names the commit (`sh tools/pcrecomp_pin.sh show`).
+`build-linux.sh` (and `build-macos.sh`) clone it beside this folder when
+there is no pcrecomp there, and stop when the one there lacks that commit:
+`sh tools/pcrecomp_pin.sh fetch ../pcrecomp` checks it out (detached; a
+checkout with changes is refused), and `SWGB_PCRECOMP_ANY=1` builds against
+whatever is there. A newer commit on top of the pin is fine. The pin moves
+to upstream main once the branch is merged there.
+
+**Linux by hand** (Debian or Ubuntu, including WSL2):
 
 ```
 sudo dpkg --add-architecture i386 && sudo apt update
-sudo apt install gcc-multilib cmake ninja-build pkg-config fonts-liberation \
+sudo apt install clang gcc-multilib cmake ninja-build pkg-config fonts-liberation \
                  libsdl2-dev:i386 libsdl2-ttf-dev:i386
+sh tools/pcrecomp_pin.sh fetch ../pcrecomp
 ./build-linux.sh
 build-linux/swgbrecomp --run --game game --cd /media/$USER/SWGB2
 ```
@@ -319,10 +348,53 @@ work/battlegrounds_x1.exe`, then pcrecomp's `disasm32.py`, 14 minutes),
   compiler into the cache: a regenerate then dropped the toolchain and built
   x86-64), `build-linux.sh`, `build-macos.sh`.
 
-Not done: music (gap 5), macOS (needs a Mac), `setup.sh`'s native path.
-Enter in New Player clears the name instead of accepting it (click OK;
-`HLE_EDIT_ENTER_CLICK=1` turns Enter into that click, but it also swallowed
-the chat's Enter, so it is off by default).
+- `./setup.sh` on Linux (above), tested end to end from a fresh clone of
+  the fork in WSL2 Ubuntu 24.04 with none of the tools installed: 48
+  minutes, 28 of them waiting for another build to finish (catalog and lift
+  6, the build of the whole lift 13 on 20 cores). A rerun after the pin
+  moved fetched the new pcrecomp commit and rebuilt the host alone.
+  `tools/bgupdate.py` unpacks the v1.1 update with cabextract off Windows.
+- Enter in text fields (2026-11-26), below.
+
+Not done: music (gap 5, the music track), macOS (needs a Mac).
+
+### Enter in a text field
+
+On Windows a single-line EDIT does nothing with Enter: its `WM_CHAR` `'\r'`
+beeps, and only a multi-line one in a dialog asks the dialog for its
+default button (`DM_GETDEFID`, unless `ES_WANTRETURN`). The game uses no
+dialogs (`IsDialogMessage` is not among its imports): it subclasses each
+EDIT it makes (`0x004C8E50`, the field panel's window procedure). On
+`WM_KEYDOWN` it offers the key to its parent panel first, then `VK_TAB`
+moves to the next field, `VK_RETURN` sends the parent panel the "enter"
+action (`[parent]->vtbl[0xD0](field, 0, 0, 0)`: New Player's OK, the
+chat's send, the save name's OK) and `VK_ESCAPE` the "cancel" one (then
+`EM_UNDO` if nobody took it). Its `WM_CHAR` filter (`0x004C9370`) swallows
+`'\r'` and `'\t'`. So Enter only has to arrive at the focused field as a
+`WM_KEYDOWN`, which is what win32hle does.
+
+The opt-in `HLE_EDIT_ENTER_CLICK=1` (a click 45 pixels under the field,
+where OK sits in the name dialogs) was a guess; it took the chat's Enter
+too. It is gone (pcrecomp `eb608a2`). The bug it worked around (Enter
+clearing New Player's name) does not reproduce on the pinned pcrecomp:
+not headless with `--keys`, not through SDL's real keyboard path (the host
+in a window on a private Xvfb display, keys typed by xdotool), and not on
+`7402e53` either. What `eb608a2` changes in win32hle's EDIT, from Windows'
+behaviour:
+
+- a control character other than Backspace (`'\r'`, Escape, Tab,
+  Ctrl+letter) typed nothing but first deleted the selection, which clears
+  a selected name; now it leaves the text and the selection, as Windows;
+- `WM_GETDLGCODE` is Windows' `DLGC_WANTARROWS | DLGC_HASSETSEL |
+  DLGC_WANTCHARS` (`DLGC_WANTALLKEYS` for `ES_MULTILINE`), not `WANTTAB`.
+
+pcrecomp's `edit_selftest.c` checks both, and that Enter reaches the field
+as one `WM_KEYDOWN` (it fails 4 of its checks before the fix). The Linux
+`--keys` now sends each key's scan code (bits 16-23, as the Windows host's
+`MapVirtualKeyA` and a keyboard through SDL do). `tools/test.py`'s
+`enter/base` and `enter/cc` check it in the game on both hosts: New Player
+(the folder's profile moved aside) accepted with Enter, then a skirmish
+won by the chat's Enter (`skywalker`).
 
 ### Found by the soak (2026-11-23)
 
@@ -375,7 +447,7 @@ the code. The first item needs the toolchain installed.
 | A skirmish played with the mouse and keys; sound | 3 to 5 |
 | Music: MCI `cdaudio` over Ogg, shared with Windows (gap 5) | 2 |
 | Movies, after Track 6 (gap 4) | 1 to 2 |
-| `setup.sh` native path, `conformance.py` and `docs/testing.md` on Linux | 2 |
+| `setup.sh` native path, `conformance.py` and `docs/testing.md` on Linux | 2 (done) |
 | **Linux, playable** | **about 3 to 4 weeks** |
 | macOS (64-bit based), with a Mac | 1 more week |
 

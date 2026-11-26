@@ -26,8 +26,10 @@ The CD check passes with disc 2 in the drive or your disc 2 image mounted.
    folder from another PC).
 2. Download this repository (the green **Code** button, then **Download
    ZIP**) and unzip it somewhere with 8 GB free.
-3. Windows: double-click **`Setup.cmd`**. Linux and macOS are not supported
-   yet; `./setup.sh` says so and stops.
+3. Windows: double-click **`Setup.cmd`**. Linux (Debian, Ubuntu, WSL2):
+   run **`./setup.sh`**; it takes the Steam Saga release too (unwrapped,
+   no disc 2 needed) and ends with `./play.sh`. macOS: by hand
+   ([docs/linux-macos.md](docs/linux-macos.md)).
 4. Play with **`Galactic Battlegrounds`** in that folder.
 
 The script checks for Python 3.10+, `capstone`, the pcrecomp toolkit (cloned
@@ -63,7 +65,8 @@ Not yet played to a finish.
 | Headless mode | `--headless --record out.mp4`: a private desktop (pcrecomp `native32_headless`), nothing on the user's screens, frames piped to ffmpeg; muted |
 | Conformance harness | **5/5** milestones: boot, `genie.dat` inflated, 800x600x8 with 100 frames, the main menu, the Exit button ([docs/testing.md](docs/testing.md)) |
 | Setup.cmd | tested from a fresh clone (2026-11-12): catalog, lift, the full build and the shortcut; the conformance harness 5/5 on that build |
-| Linux, macOS | not yet (`setup.sh` says so) |
+| Linux | **runs** natively on pcrecomp's `win32hle` (no Wine): `./setup.sh` from a fresh clone in WSL2 Ubuntu 24.04 (2026-11-26): tools, the Steam copy, catalog, lift, build, `play.sh`; `tools/test.py` there ([docs/linux-macos.md](docs/linux-macos.md)) |
+| macOS | designed (`build-macos.sh`), untried: needs a Mac |
 
 ## Screenshots
 
