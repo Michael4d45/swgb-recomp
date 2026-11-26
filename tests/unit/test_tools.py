@@ -155,6 +155,62 @@ class Runner(unittest.TestCase):
             self.assertEqual(runner.compare(ctx, r, png, 'k/menu', tol=0.02, region=(0, 50, 100, 100)), 0.0)
             self.assertEqual(r.status, 'PASS')
 
+    def test_hud_sides(self):
+        import numpy as np
+        from PIL import Image
+        self.assertEqual([runner.side_column(d, 3) for d in range(8)], [0, 1, 2, 2, 1, 0, 0, 1])
+        self.assertEqual(runner.hud_base(1920, 1080), (1280, 250))
+        self.assertEqual(runner.hud_base(1152, 864), (1024, 200))
+        self.assertEqual(runner.hud_base(1024, 600), (800, 170))
+        W, H, bw, bh = 1920, 1080, 1280, 250
+        dx, band = (W - bw) // 2, 12
+        rng = np.random.default_rng(1)
+        a = np.zeros((H, W, 3), np.uint8)
+        a[H - bh:, dx:dx + bw] = rng.integers(30, 255, (bh, bw, 3), dtype=np.uint8)   # the art
+        with tempfile.TemporaryDirectory() as d:
+            png = os.path.join(d, 'm.png')
+            Image.fromarray(a).save(png)
+            f = runner.hud_sides(png)                       # black sides
+            self.assertEqual(f['sides_black'], 1.0)
+            self.assertLess(f['sides_mirror'], 0.01)
+            for k in range(dx):                             # as widescreen.c fills them
+                a[H - bh:, dx - 1 - k] = a[H - bh:, dx + runner.side_column(k, band)]
+                a[H - bh:, dx + bw + k] = a[H - bh:, dx + bw - 1 - runner.side_column(k, band)]
+            Image.fromarray(a).save(png)
+            f = runner.hud_sides(png)
+            self.assertEqual(f['sides_mirror'], 1.0)
+            self.assertEqual(f['sides_black'], 0.0)
+            self.assertGreater(f['sides_mean'], 20)
+            a[H - bh:, :dx] = np.roll(a[H - bh:, :dx], 5, axis=1)   # the art 5 columns off
+            Image.fromarray(a).save(png)
+            self.assertLess(runner.hud_sides(png)['sides_mirror'], 0.9)
+            with Image.open(runner.sides_crop(png, os.path.join(d, 's.png'))) as c:
+                self.assertEqual(c.size, (W - bw, bh))
+
+    def test_view_marker_moved(self):
+        from PIL import Image, ImageDraw
+        with tempfile.TemporaryDirectory() as d:
+            shots = []
+            for i, x in enumerate((100, 300)):
+                im = Image.new('RGB', (400, 200), (20, 20, 20))
+                dr = ImageDraw.Draw(im)
+                dr.rectangle((5, 5, 30, 30), outline=(255, 255, 255))      # the art's own white: in both
+                dr.rectangle((x - 25, 80, x + 25, 110), outline=(255, 255, 255))
+                shots.append(os.path.join(d, '%d.png' % i))
+                im.save(shots[-1])
+            xa, xb = runner.view_marker_moved(shots[0], shots[1], 0, 0, 400, 200)
+            self.assertAlmostEqual(xa, 100, delta=1)
+            self.assertAlmostEqual(xb, 300, delta=1)
+            self.assertEqual(runner.view_marker_moved(shots[0], shots[0], 0, 0, 400, 200), (None, None))
+
+    def test_layout_text(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'dump.txt')
+            with open(p, 'w') as f:
+                f.write('08A50A88 vt 0065CE24  0,0 1920x1080\n  08A8F070 vt 00665088  320,830 240x250\n')
+            self.assertEqual(runner.layout_text(p), 'vt 0065CE24  0,0 1920x1080\n  vt 00665088  320,830 240x250\n')
+            self.assertIsNone(runner.layout_text(os.path.join(d, 'none.txt')))
+
     def test_levels_cumulative(self):
         class A:
             just = False

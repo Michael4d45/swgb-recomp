@@ -610,7 +610,7 @@ static void usage(void) {
            "                  [--shot S file.bmp] [--keys SCRIPT|@FILE] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
            "                  [--exe work/" GUEST_EXE "] [--game game] [--cd DIR] [--films DIR]\n"
            "                  [--args \"<game switches>\"] [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]\n"
-           "                  [--res WxH|desktop] [--fps N|off] [--fps-log]\n"
+           "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N|off] [--fps-log]\n"
            "                  [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log]\n"
            "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
            "                  [--trace]\n");
@@ -665,6 +665,7 @@ int main(int argc, char** argv) {
             res = argv[++i];
             if (strcasecmp(res, "desktop") && !widescreen_parse(res)) return 1;
         }
+        else if (!strcmp(argv[i], "--hud-sides") && i + 1 < argc) { if (!widescreen_sides_parse(argv[++i])) return 1; }
         else { usage(); return !strcmp(argv[i], "--help") || !strcmp(argv[i], "-h") ? 0 : 1; }
     }
     swgb_test_run = headless || g_nsteps || g_live_file[0] || g_watchdog_s;

@@ -6,6 +6,13 @@
 
 extern int widescreen_w, widescreen_h;   /* 0: --res not given */
 
+/* --hud-sides: beside the centred interface, black or the art's own edges. */
+enum { WIDESCREEN_SIDES_FILL, WIDESCREEN_SIDES_BLACK };
+extern int widescreen_sides;
+int widescreen_sides_parse(const char* s);   /* "black" or "fill"; 0 on a bad value */
+/* The art's column (0 = its edge) shown d columns out from it (widescreen.c). */
+int widescreen_side_column(int d, int band);
+
 /* "WxH" or "desktop"; 0 on a bad value. */
 int widescreen_parse(const char* s);
 

@@ -1003,11 +1003,12 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else if (!strcmp(argv[i], "--res") && i + 1 < argc) { if (!widescreen_parse(argv[++i])) return 1; }
+        else if (!strcmp(argv[i], "--hud-sides") && i + 1 < argc) { if (!widescreen_sides_parse(argv[++i])) return 1; }
         else {
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\" GUEST_EXE "] [--game game] [--cd E] [--films DIR]\n"
-                   "                  [--res WxH|desktop] [--fps N] [--fps-log]\n"
+                   "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N] [--fps-log]\n"
                    "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
                    "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
                    "                  [--refresh HZ] [--present-log] [--present gdi|d3d11]\n"

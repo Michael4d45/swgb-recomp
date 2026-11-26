@@ -84,8 +84,20 @@ what needs research or a new subsystem.
 - **Done (2026-11-21):** `--res WxH` / `--res desktop` (`src/runtime/widescreen.c`,
   `docs/building.md`). The 1280 x 1024 Screen Size becomes WxH; in a game
   the interface is laid out at the largest of the game's sizes that fits,
-  then sits at the bottom, centred, with black beside it, and the map view
-  takes the rest. Checked at 1024x600, 1280x720, 1366x768, 1600x900,
+  then sits at the bottom, centred, and the map view takes the rest.
+- **Done (2026-11-26, the sides):** beside the interface, `--hud-sides fill`
+  (the default) continues the art: each row goes on with its outermost 12
+  columns (10, 8 at the 1024 and 800 layouts) mirrored back and forth, so the
+  rims run across and the frame becomes a ribbed plate in the
+  civilization's colours ([screenshots](docs/screenshots/hud-sides-1920x1080.png)).
+  The art is one SLP per civilization and size (`INTERFAC.DRS` 51101-51146,
+  `interfac_x1.drs` 51107-51148) and no two are alike, so it is made from
+  whichever is loaded; the SLP's outline table says which rows' edges are
+  opaque (Clone Campaigns' 1024 art has 131 clear rows on top).
+  `--hud-sides black` keeps the old black. Checked headless at 1024x600,
+  1152x864, 1920x1080, 2560x1440 and 3440x1440, both games; `test.py`'s
+  `widescreen/*` checks the sides against the art in the same shot, the
+  minimap's clicks and the panel layout (the same with fill and black). Checked at 1024x600, 1280x720, 1366x768, 1600x900,
   1920x1080, 2560x1440 and 3440x1440: selection, command buttons, minimap,
   edge scrolling, menu and dialogs (centred on the whole screen), the
   Options label, quitting and playing again.
@@ -99,8 +111,7 @@ what needs research or a new subsystem.
   (`sub_005D5D00`) and the resource counters (`sub_005D4930`) pick their
   800/1024/1280 variants by exact widths. All of these are indirect calls,
   so the host takes them over; nothing in the lifted C changes.
-- **Left:** the sides of the interface are black (stretching or tiling the
-  art's edges would look better); panels hidden at layout time and placed
+- **Left:** panels hidden at layout time and placed
   when shown (some popups) may still use base-layout places; switching the
   viewed player (`sub_0042F880`, debug and scenario tests) reloads the art
   by the screen's real size; switching to WxH from the in-game Options is
