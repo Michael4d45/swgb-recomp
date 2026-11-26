@@ -162,11 +162,15 @@ In a game, the interface is laid out at the largest of the game's own
 sizes that fits (1280 x 1024 from 1280 wide and 720 high, else
 1024 x 768, else 800 x 600): its art and panels sit at the bottom,
 centred, with black at the sides, and the map view takes all the rest of
-the screen. Dialogs centre on the whole screen. Tested at 1024x600,
+the screen. Dialogs centre on the whole screen. Save Game and Load (the
+Saved Game screen), screens of their own, are the largest of the game's
+sizes that fits, centred, with black around them; the tech tree and the
+Scenario Editor use the whole screen. Tested at 1024x600,
 1280x720, 1366x768, 1600x900, 1920x1080, 2560x1440 and 3440x1440:
 selection, the command buttons, the minimap, scrolling at the right edge,
-the menu and its dialogs, switching to 1024 x 768 from the in-game
-Options, and quitting to the menus and playing again.
+the menu and its dialogs, switching between every size and WxH from the
+in-game Options, saving and loading, and quitting to the menus and playing
+again.
 
 ![A skirmish at 1920 x 1080, command center selected](screenshots/widescreen-1920x1080.png)
 

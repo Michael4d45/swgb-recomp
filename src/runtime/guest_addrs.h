@@ -48,6 +48,11 @@
 #define G_GAME_INTERFACE_VA   0x005E68B0u   /* game vtable 0x00668B10 + 0x14 */
 #define G_GAME_INTERFACE      sub_005E68B0
 #define G_PANEL_SET_RECT      0x004B5BB0u   /* TPanel vtable + 0x0C */
+#define G_PANEL_SIZE_VA       0x004B67B0u   /* TPanel vtable + 0x5C, handle_size (base 0x004B6260) */
+#define G_PANEL_SIZE          sub_004B67B0
+#define G_PANEL_IDEAL_VA      0x004B8AB0u   /* TEasy_Panel vtable + 0x110 (base 0x004B8590) */
+#define G_PANEL_IDEAL         sub_004B8AB0
+#define G_TECH_TREE_VTABLE    0x00659D4Cu   /* the tech tree screen (base 0x00656D24) */
 #define G_AREA_FILL           0x00474160u
 #define G_AREA_LOCK           0x00472A70u
 #define G_AREA_UNLOCK         0x00472B20u
@@ -80,6 +85,11 @@
 #define G_GAME_INTERFACE_VA   0x005E2C50u   /* game vtable 0x00665A20 + 0x14 */
 #define G_GAME_INTERFACE      sub_005E2C50
 #define G_PANEL_SET_RECT      0x004B5660u   /* TPanel vtable + 0x0C */
+#define G_PANEL_SIZE_VA       0x004B6260u   /* TPanel vtable + 0x5C, handle_size */
+#define G_PANEL_SIZE          sub_004B6260
+#define G_PANEL_IDEAL_VA      0x004B8590u   /* TEasy_Panel vtable + 0x110: the size it was made for (+0xF8, +0xFC) */
+#define G_PANEL_IDEAL         sub_004B8590
+#define G_TECH_TREE_VTABLE    0x00656D24u   /* the tech tree screen: draws at the draw area's size */
 #define G_AREA_FILL           0x004736C0u
 #define G_AREA_LOCK           0x00471FD0u
 #define G_AREA_UNLOCK         0x00472080u
