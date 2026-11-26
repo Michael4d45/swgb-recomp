@@ -26,6 +26,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define CINTERFACE
 #include <windows.h>
+#include <mmsystem.h>
 #include <ddraw.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -192,7 +193,8 @@ static FILE* g_rec;
 static DWORD g_rec_t0;
 static LONG  g_rec_written;
 static int   g_rec_w, g_rec_h;   /* the recording's size: the first mode's */
-#define REC_FPS 30
+#define REC_FPS softdd_record_fps
+int softdd_record_fps = 30;              /* --record-fps N */
 
 static void record_open(int w, int h) {
     char cmd[1024];
@@ -202,7 +204,7 @@ static void record_open(int w, int h) {
     g_rec_w = w, g_rec_h = h;
     g_rec = _popen(cmd, "wb");
     if (!g_rec) { fprintf(stderr, "[softdd] cannot start ffmpeg for %s\n", softdd_record); exit(5); }
-    g_rec_t0 = GetTickCount();
+    g_rec_t0 = timeGetTime();   /* to the ms: GetTickCount ticks in 15.6 ms, too coarse past 60 fps */
     fprintf(stderr, "[softdd] recording %dx%d at %d fps -> %s\n", w, h, REC_FPS, softdd_record);
 }
 
@@ -210,10 +212,10 @@ void softdd_finish(void) {
     if (g_rec) { _pclose(g_rec); g_rec = NULL; }
 }
 
-/* The video runs at a fixed 30 fps against the wall clock: a slow frame is
+/* The video runs at a fixed 30 fps (--record-fps) against the wall clock: a slow frame is
  * held, a fast one is dropped, so the mp4 plays at the game's real speed. */
 static void record_frame(Surf* s) {
-    LONG due = (LONG)((GetTickCount() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1;
+    LONG due = (LONG)((timeGetTime() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1;
     static uint16_t* row;
     static int row_w;
     int rw = g_rec_w, rh = g_rec_h;
@@ -399,7 +401,7 @@ static void present(Surf* s) { present_impl(s, 1); }
 
 /* A recording frame is due (30 fps by the wall clock, or the first one). */
 static int record_due(void) {
-    return !g_rec || (LONG)((GetTickCount() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1 > g_rec_written;
+    return !g_rec || (LONG)((timeGetTime() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1 > g_rec_written;
 }
 
 /* The game presents far more often than a display refreshes: a frame is

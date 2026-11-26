@@ -6,6 +6,7 @@
 extern int         softdd_headless;      /* present nowhere but --record */
 extern int         softdd_scale;         /* windowed client = mode x scale */
 extern const char* softdd_record;        /* mp4 path, or NULL */
+extern int softdd_record_fps;            /* its frame rate, 30 unless --record-fps */
 extern int         softdd_stop_after;    /* exit after N presents, 0 = never */
 extern volatile long softdd_frames;
 
