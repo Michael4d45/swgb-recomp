@@ -176,5 +176,87 @@ class Runner(unittest.TestCase):
         self.assertFalse(any(c.game == 'cc' for c in runner.select(a)))
 
 
+MP_LOG = """[dplay] CreatePlayer "michael" -> 0001D2A1 (flags 0, event 00000000)
+[dplay] player 0001D2A2 (michael) joined (45.9 s)
+[sync]  1: 00000002 00001167 0000000A 00001167 0A51D3CA 00009882 00000000 00060015 00005A41
+[sync]  2: 00000001 00001167 0000000A 00001167 0A51D3CA 00009882 00000000 00060015 00005A41
+[mp] chat from player 3 (0001D2A2) to 0001D2A1 (YYYNNNNN): "mpchatc1"
+[dplay] client 1 (127.0.0.1) gone (153.4 s)
+[dplay] player 0001D2A2 (michael) left (153.4 s)
+ICALL: unresolved VA 0x005648A0 from 0x00406E20
+[dplay] DestroyPlayer 0001D2A1 (200.5 s)
+[dplay] Close (client) (200.6 s)
+[dplay] the host is gone: session lost (201.0 s)
+"""
+
+
+class MpPair(unittest.TestCase):
+    def setUp(self):
+        import mp_pair
+        self.mp = mp_pair
+
+    def test_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'run.log')
+            with open(p, 'w') as f:
+                f.write(MP_LOG)
+            ev, chats, me, deps, left, started = self.mp.check(p)
+        self.assertEqual(len(ev), 1)
+        self.assertEqual(chats, {'mpchatc1': 3})
+        self.assertEqual(me, '0001D2A1')
+        self.assertEqual([(t, d_) for t, _, d_ in deps], [(153.4, '0001D2A2'), (201.0, 'host')])
+        self.assertEqual(left, 200.5)
+        self.assertTrue(started)
+
+    def test_compare_all(self):
+        r = [(1, (2, 4455, 10, 4455, 5, 6, 0, 7, 8)), (2, (1, 4455, 10, 4455, 5, 6, 0, 7, 8))]
+        bad_c = [(1, (2, 4455, 10, 4455, 5, 6, 0, 7, 9))]
+        shared, bad = self.mp.compare_all({'a': r, 'b': r, 'c': bad_c})
+        self.assertEqual(shared, [(1, 10), (2, 10)])
+        self.assertEqual(len(bad), 2)        # c against a, and against b
+        shared, bad = self.mp.compare_all({'a': r, 'b': r})
+        self.assertEqual(bad, [])
+        _, bad = self.mp.compare_all({'a': r + [(3, (3, 4455, 10, 4455, 5, 6, 0, 7, 1))]})
+        self.assertEqual(len(bad), 1)        # within one log: the players' records for a turn
+
+    def test_plans(self):
+        import argparse
+        import random
+        a = argparse.Namespace(players=3, minutes=4, activity='busy', chat=True, save=1.0, quit=None, resign=None,
+                               drop=('c', 2.0))
+        chats = self.mp.chat_times(3, 4)
+        self.assertEqual(len(chats), 6)
+        self.assertEqual([w for _, w, _ in chats], list('abcabc'))
+        plan = self.mp.game_plan(random.Random(1), 'b', 1, 3, a, 'out')
+        self.assertEqual(plan, sorted(plan, key=lambda s: s[0]))
+        steps = [s for _, s in plan]
+        self.assertIn('click:%d:%d' % self.mp.STATUS_CONTINUE, steps)        # b votes after c drops
+        t_chat = next(t for t, s in plan if s == 'enter')
+        near = [s for t, s in plan if t_chat - 2 <= t <= t_chat + 5 and s.startswith(('click', 'rclick'))]
+        self.assertEqual(near, [])          # no clicks while typing
+        plan_c = self.mp.game_plan(random.Random(1), 'c', 2, 3, a, 'out')
+        self.assertNotIn('click:%d:%d' % self.mp.STATUS_CONTINUE, [s for _, s in plan_c])
+        text, wd = self.mp.script('b', 1, 3, a, 'out')
+        self.assertTrue(text.startswith('on:%s\n' % self.mp.ON_MENU))
+        _, wd_a = self.mp.script('a', 0, 3, a, 'out')
+        self.assertEqual(wd_a - wd, self.mp.B_DELAY + self.mp.STEP)
+
+    def test_chat_shown(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest('no PIL')
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'x.png')
+            im = Image.new('RGB', (800, 600), (175, 126, 36))
+            for x in range(10, 100):
+                for y in range(160, 165):
+                    im.putpixel((x, y), self.mp.CHAT_RGB[2])
+            im.save(p)
+            self.assertTrue(self.mp.chat_shown(p, 2))
+            self.assertFalse(self.mp.chat_shown(p, 3))
+            self.assertFalse(self.mp.chat_shown(os.path.join(d, 'none.png'), 2))
+
+
 if __name__ == '__main__':
     unittest.main()

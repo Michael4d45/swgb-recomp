@@ -18,7 +18,11 @@ if(NOT CMAKE_C_COMPILER AND NOT DEFINED ENV{CC})
     set(CMAKE_C_COMPILER "${_SWGB_CLANG}")
   endif()
 endif()
-set(CMAKE_C_FLAGS_INIT "-m32")
+# SSE2 for doubles, as MSVC's x86 builds compute them: i386 gcc and clang use the
+# x87 by default, whose 80-bit registers round the lifted float code differently,
+# and a multiplayer game against a Windows host would go out of sync
+# (docs/multiplayer.md, "Windows and Linux"). No contraction into FMAs either.
+set(CMAKE_C_FLAGS_INIT "-m32 -msse2 -mfpmath=sse -ffp-contract=off")
 # Not position-independent: i386 PIC spends a register on the GOT, and the
 # host sits at 0x08048000, clear of the guest's 0x00400000..0x00A5A000.
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-m32 -no-pie")

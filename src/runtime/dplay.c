@@ -69,6 +69,7 @@ typedef int sock_len;
 #endif
 #include "dplay.h"
 #include "guest_addrs.h"
+#include "recomp_types.h"   /* the dispatch table: --mp-cross's stamp */
 
 typedef DWORD DPID;
 
@@ -136,8 +137,14 @@ static int  g_native;            /* --dplay native */
 static int  g_port = 2300;       /* --mp-port */
 static char g_join[256];         /* --mp-join a,b */
 static int  g_log;               /* --mp-log */
+static int  g_cross;             /* --mp-cross: the stamp is the lift's, so Windows and Linux can meet */
+
+/* seconds since the host started, on the lines tools/mp_pair.py times (joins, leaves, drops) */
+static DWORD g_t0;
+static double secs(void) { if (!g_t0) g_t0 = GetTickCount(); return (GetTickCount() - g_t0) / 1000.0; }
 
 int dplay_arg(int argc, char** argv, int i) {
+    if (!g_t0) g_t0 = GetTickCount();
     if (!strcmp(argv[i], "--dplay") && i + 1 < argc) {
         g_native = !_stricmp(argv[i + 1], "native");
 #ifdef SWGB_WIN32HLE
@@ -148,6 +155,7 @@ int dplay_arg(int argc, char** argv, int i) {
     if (!strcmp(argv[i], "--mp-port") && i + 1 < argc) { g_port = atoi(argv[i + 1]); return 2; }
     if (!strcmp(argv[i], "--mp-join") && i + 1 < argc) { lstrcpynA(g_join, argv[i + 1], sizeof g_join); return 2; }
     if (!strcmp(argv[i], "--mp-log")) { g_log = 1; return 1; }
+    if (!strcmp(argv[i], "--mp-cross")) { g_cross = 1; return 1; }
     return 0;
 }
 
@@ -442,16 +450,34 @@ static void send_all(const wbuf* w, int except) {
 
 /* This build, for the join handshake: lockstep needs the same code on every machine (the same
  * lift, compiler and CRT; docs/multiplayer.md), and a different build would only show later, as an
- * out-of-sync game. The host exe's link time and size, and the guest exe's link time. */
+ * out-of-sync game. The host exe's link time and size, and the guest exe's link time.
+ * --mp-cross (on every side) is the lift's stamp instead: the guest exe's link time and every
+ * address in the dispatch table. A Windows and a Linux host of the same lift then meet; whether they
+ * compute the same is what the game's sync records tell (tools/mp_pair.py --wsl). */
+static DWORD lift_stamp(void) {
+    uint32_t h = 2166136261u;   /* FNV-1a over the lifted functions' addresses */
+    for (uint32_t i = 0; i < recomp_dispatch_count; i++) {
+        uint32_t a = recomp_dispatch_table[i].address;
+        for (int k = 0; k < 4; k++) { h ^= (a >> (8 * k)) & 0xFF; h *= 16777619u; }
+    }
+#ifdef SWGB_WIN32HLE
+    uint32_t guest = MEM32(0x00400000u + MEM32(0x0040003Cu) + 8);
+#else
+    const IMAGE_NT_HEADERS* g = (const IMAGE_NT_HEADERS*)(uintptr_t)(0x00400000u + *(const DWORD*)(uintptr_t)0x0040003Cu);
+    uint32_t guest = g->FileHeader.TimeDateStamp;
+#endif
+    return h ^ guest ^ 0x58504C54u;   /* "XPLT": never a single build's stamp by chance */
+}
 static DWORD build_stamp(void) {
     static DWORD stamp;
+    if (!stamp && g_cross) stamp = lift_stamp();
     if (!stamp) {
 #ifdef SWGB_WIN32HLE
         /* the host's file (its time and size: an ELF has no link stamp) and the guest's PE stamp */
         struct stat st;
         uint32_t host = stat("/proc/self/exe", &st) == 0 ? (uint32_t)st.st_mtime ^ ((uint32_t)st.st_size * 0x9E3779B1u) : 0;
         uint32_t guest = MEM32(0x00400000u + MEM32(0x0040003Cu) + 8);
-        stamp = host ^ guest ^ 0x4C4E5800u;   /* never equal to a Windows host's: they cannot play together */
+        stamp = host ^ guest ^ 0x4C4E5800u;   /* never equal to a Windows host's (but with --mp-cross) */
 #else
         const uint8_t* h = (const uint8_t*)GetModuleHandleA(NULL);
         const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(h + ((const IMAGE_DOS_HEADER*)h)->e_lfanew);
@@ -477,7 +503,7 @@ static void drop_player(int i, int tell) {
         send_all(&w, p.owner);
         free(w.b);
     }
-    LOG("player %08lX (%s) left", p.id, u8(p.shortname));
+    LOG("player %08lX (%s) left (%.1f s)", p.id, u8(p.shortname), secs());
 }
 
 static void host_frame(int c, int type, rbuf* r) {
@@ -487,7 +513,9 @@ static void host_frame(int c, int type, rbuf* r) {
         GUID inst;
         rb_get(r, &inst, sizeof inst);
         DWORD theirs = rb_u32(r), mine = build_stamp();
-        if (theirs != mine) LOG("a client with another build (%08lX; this one is %08lX): refused", theirs, mine);
+        if (theirs != mine)
+            LOG("a client with another build (%08lX; this one is %08lX%s): refused", theirs, mine,
+                g_cross ? ", --mp-cross" : "; the same lift on another system needs --mp-cross on both");
         int ok = theirs == mine && IsEqualGUID(&inst, &g_sd.guidInstance) &&
                  !(g_sd.dwFlags & (DPSESSION_JOINDISABLED | DPSESSION_NEWPLAYERSDISABLED)) &&
                  (!g_sd.dwMaxPlayers || g_sd.dwCurrentPlayers < g_sd.dwMaxPlayers);
@@ -518,7 +546,7 @@ static void host_frame(int c, int type, rbuf* r) {
             wb_begin(&w, T_PADD); wb_player(&w, &p); wb_u32(&w, g_sd.dwCurrentPlayers); wb_end(&w);
             send_all(&w, c);
             sys_player(DPSYS_CREATEPLAYERORGROUP, &p);
-            LOG("player %08lX (%s) joined", p.id, u8(p.shortname));
+            LOG("player %08lX (%s) joined (%.1f s)", p.id, u8(p.shortname), secs());
         }
         break;
     }
@@ -567,7 +595,7 @@ static void client_frame(int type, rbuf* r) {
         if (!find_player(p.id) && g_npl < MAXP) g_pl[g_npl++] = p;
         g_sd.dwCurrentPlayers = cur;
         sys_player(DPSYS_CREATEPLAYERORGROUP, &p);
-        LOG("player %08lX (%s) joined", p.id, u8(p.shortname));
+        LOG("player %08lX (%s) joined (%.1f s)", p.id, u8(p.shortname), secs());
         break;
     }
     case T_PDEL: {
@@ -630,10 +658,10 @@ static void conn_close(int i) {
     c->rx = NULL;
     c->rxn = c->rxcap = 0;
     if (g_role == 1) {
-        LOG("client %d (%s) gone", i, inet_ntoa(c->peer.sin_addr));
+        LOG("client %d (%s) gone (%.1f s)", i, inet_ntoa(c->peer.sin_addr), secs());
         for (int k = g_npl - 1; k >= 0; k--) if (g_pl[k].owner == i) drop_player(k, 1);
     } else if (g_role == 2) {
-        LOG("the host is gone: session lost");
+        LOG("the host is gone: session lost (%.1f s)", secs());
         for (int k = g_npl - 1; k >= 0; k--) if (g_pl[k].owner >= 0) g_pl[k] = g_pl[--g_npl];
         sys_simple(DPSYS_SESSIONLOST);
         InterlockedExchange(&g_reply_type, -1);
@@ -795,7 +823,7 @@ static DWORD WINAPI net_thread(LPVOID unused) {
             conn_t* c = &g_conn[i];
             if (c->s == INVALID_SOCKET) continue;
             if (now - c->last_tx > 1000) { wbuf w = { 0 }; wb_begin(&w, T_PING); wb_end(&w); conn_send(c, &w); free(w.b); }
-            if (now - c->last_rx > 30000) { LOG("connection %d silent for 30 s: dropped", i); conn_close(i); }
+            if (now - c->last_rx > 30000) { LOG("connection %d silent for 30 s: dropped (%.1f s)", i, secs()); conn_close(i); }
         }
         unlock();
         struct timeval tv = { 0, 50000 };
@@ -997,7 +1025,7 @@ static HRESULT __stdcall dp_Close(dpobj* o) {
     DPM(4);
     g_async = 0;
     if (g_owner != o) return DP_OK;
-    LOG("Close (%s)", g_role == 1 ? "host" : g_role == 2 ? "client" : "-");
+    LOG("Close (%s) (%.1f s)", g_role == 1 ? "host" : g_role == 2 ? "client" : "-", secs());
     net_stop();
     lock();
     g_role = 0;
@@ -1093,7 +1121,7 @@ static HRESULT __stdcall dp_DestroyPlayer(dpobj* o, DPID id) {
         free(w.b);
     }
     unlock();
-    LOG("DestroyPlayer %08lX", id);
+    LOG("DestroyPlayer %08lX (%.1f s)", id, secs());
     return DP_OK;
 }
 
@@ -1344,6 +1372,20 @@ static HRESULT __stdcall dp_Open(dpobj* o, SD2* sd, DWORD flags) {
     return DPERR_INVALIDFLAGS;
 }
 
+/* A chat line the game takes in, for the log (tools/mp_pair.py --chat checks every player got
+ * every line). The game's own message: 'C', 2, ..., the sender's player number (a word at 12),
+ * "Y"/"N" for each of the eight players it goes to (14-21), the text at 29 up to a 0. */
+static void chat_seen(DPID from, DPID to, const uint8_t* d, DWORD n) {
+    if (n < 31 || d[0] != 'C' || d[1] != 2) return;
+    for (int i = 14; i < 22; i++) if (d[i] != 'Y' && d[i] != 'N') return;
+    char text[128];
+    int k = 0;
+    for (DWORD i = 29; i < n && d[i] && k < (int)sizeof text - 5; i++)
+        k += d[i] >= 0x20 && d[i] < 0x7F && d[i] != '"' && d[i] != '\\' ? (text[k] = (char)d[i], 1) : _snprintf(text + k, 5, "\\x%02X", d[i]);
+    text[k] = 0;
+    printf("[mp] chat from player %u (%08lX) to %08lX (%.8s): \"%s\"\n", d[12] | d[13] << 8, from, to, (const char*)d + 14, text);
+}
+
 static HRESULT __stdcall dp_Receive(dpobj* o, DPID* from, DPID* to, DWORD flags, void* data, DWORD* size) {
     DPM(25);
     (void)o;
@@ -1362,13 +1404,16 @@ static HRESULT __stdcall dp_Receive(dpobj* o, DPID* from, DPID* to, DWORD flags,
     *size = m->size;
     if (from) *from = m->from;
     if (to) *to = m->to;
-    if (!(flags & DPRECEIVE_PEEK)) {
+    DPID mfrom = m->from, mto = m->to;
+    int taken = !(flags & DPRECEIVE_PEEK);
+    if (taken) {
         if (prev) prev->next = m->next; else g_qhead = m->next;
         if (g_qtail == m) g_qtail = prev;
         g_qn--;
         free(m);
     }
     unlock();
+    if (taken && mfrom) chat_seen(mfrom, mto, (const uint8_t*)data, *size);
     return DP_OK;
 }
 
@@ -1859,7 +1904,8 @@ void dplay_init(void) {
         g_reply_ev = CreateEventA(NULL, TRUE, FALSE, NULL);
         g_inited = 1;
     }
-    LOG("the host's DirectPlay: TCP/IP on port %d%s%s", g_port, g_join[0] ? ", also probing " : "", g_join);
+    LOG("the host's DirectPlay: TCP/IP on port %d%s%s%s", g_port, g_join[0] ? ", also probing " : "", g_join,
+        g_cross ? "; --mp-cross: the lift's stamp" : "");
 #else
     void* dp[53] = {
         dp_QueryInterface, dp_AddRef, dp_Release, dp_AddPlayerToGroup, dp_Close, dp_CreateGroup, dp_CreatePlayer,
@@ -1899,7 +1945,8 @@ void dplay_init(void) {
     native32_redirect("DirectPlayEnumerateA", my_DirectPlayEnumerateA);
     native32_redirect("DirectPlayLobbyCreateA", my_DirectPlayLobbyCreateA);
     native32_redirect("CoCreateInstance", my_CoCreateInstance);
-    LOG("the host's DirectPlay: TCP/IP on port %d%s%s", g_port, g_join[0] ? ", also probing " : "", g_join);
+    LOG("the host's DirectPlay: TCP/IP on port %d%s%s%s", g_port, g_join[0] ? ", also probing " : "", g_join,
+        g_cross ? "; --mp-cross: the lift's stamp" : "");
 #endif
 }
 
