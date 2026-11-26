@@ -11,6 +11,7 @@ Battlegrounds.exe and Common\\Game\\Data\\GENIE.DAT are the two files that
 change, plus the readmes.
 
     py -3 tools/bgupdate.py BGUpdate1_1.exe work/patch
+    python3 tools/bgupdate.py BGUpdate1_1.exe work/patch    (Linux: needs cabextract)
 """
 import os
 import struct
@@ -51,13 +52,17 @@ def main():
     os.makedirs(out, exist_ok=True)
     cab = os.path.join(out, 'BGUpdate1_1.cab')
     open(cab, 'wb').write(decode(exe))
-    expand = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'expand.exe')
-    r = subprocess.run([expand, '-F:*', cab, out], capture_output=True, text=True)
+    if os.name == 'nt':
+        expand = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'expand.exe')
+        cmd = [expand, '-F:*', cab, out]
+    else:   # cabextract (its own package): the same folders, with / in them
+        cmd = ['cabextract', '-q', '-d', out, cab]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
-        sys.exit('expand failed: %s' % r.stdout + r.stderr)
-    for rel in (r'Eng\Game\Battlegrounds.exe', r'Common\Game\Data\GENIE.DAT'):
-        if not os.path.exists(os.path.join(out, rel)):
-            sys.exit('%s is not in the update' % rel)
+        sys.exit('%s failed: %s' % (os.path.basename(cmd[0]), r.stdout + r.stderr))
+    for rel in (('Eng', 'Game', 'Battlegrounds.exe'), ('Common', 'Game', 'Data', 'GENIE.DAT')):
+        if not os.path.exists(os.path.join(out, *rel)):
+            sys.exit('%s is not in the update' % '\\'.join(rel))
     print('unpacked the v1.1 update into %s' % out)
 
 
