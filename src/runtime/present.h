@@ -53,6 +53,7 @@ void present_fs_keep(HWND wnd, UINT msg, WPARAM w, LPARAM l);
  * latest at the next slot. */
 int  present_due(HWND wnd);          /* 1: show this one */
 void present_painted(void);          /* a frame was shown */
+extern long long (*present_test_clock_us)(void);   /* tests only: the pacing's clock in place of QPC */
 void present_defer(HWND wnd);        /* not shown: arm the timer */
 int  present_dirty(void);
 int  present_damaged(void);          /* since asked: resized, uncovered... (clears) */

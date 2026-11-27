@@ -334,8 +334,11 @@ void present_set_client_size(HWND wnd, int w, int h) {
 static int64_t g_qpf, g_next_us, g_interval_us = 16667;   /* g_next_us: when the next frame is due */
 static int     g_hz_known, g_dirty, g_armed;
 
+long long (*present_test_clock_us)(void);
+
 static int64_t now_us(void) {
     LARGE_INTEGER t;
+    if (present_test_clock_us) return present_test_clock_us();
     if (!g_qpf) { QueryPerformanceFrequency(&t); g_qpf = t.QuadPart; }
     QueryPerformanceCounter(&t);
     /* split: seconds * 1e6 would overflow after days of uptime at a 10 MHz counter */

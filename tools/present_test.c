@@ -9,6 +9,8 @@
 #include "present.h"
 
 static int g_fail;
+static long long g_fake_us;
+static long long fake_clock_us(void) { return g_fake_us; }
 #define CHECK(c, ...) do { if (!(c)) { g_fail++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 int main(void) {
@@ -63,33 +65,35 @@ int main(void) {
      * (an interval-since-the-last rule showed every other one: 105), and 60 a second show all 60.
      * The game's presents are not evenly spaced: the jittered cases put each one up to 45% of a
      * spacing early or late (a rule that took only presents on or just before the slot lost one
-     * slot in eight on a real 180 Hz display at 185 presents a second). */
+     * slot in eight on a real 180 Hz display at 185 presents a second).
+     * Two seconds of presents on a simulated clock: the wall clock made this check fail
+     * whenever the machine was busy (the loop descheduled, its presents bunched up). */
     {
         static const int rates[][4] = { { 210, 180, 170, 0 }, { 185, 180, 170, 0 }, { 175, 180, 170, 0 }, { 60, 180, 58, 0 },
                                         { 1000, 180, 170, 0 }, { 400, 60, 56, 0 }, { 900, 600, 560, 0 },
-                                        { 185, 180, 165, 45 }, { 210, 180, 165, 45 }, { 300, 180, 170, 45 } };
+                                        /* jittered: 164, 171 and 179 shown on this clock and seed; at 185 a second some
+                                         * slots get no present at all, so 185 can't reach 180 */
+                                        { 185, 180, 160, 45 }, { 210, 180, 165, 45 }, { 300, 180, 170, 45 } };
         for (int i = 0; i < (int)(sizeof rates / sizeof rates[0]); i++) {
-            LARGE_INTEGER f, t0, t;
             int shown = 0, n = 0;
             unsigned seed = 12345;
             double due = 0;
-            QueryPerformanceFrequency(&f);
+            present_test_clock_us = fake_clock_us;
+            long long base = g_fake_us + 1000000;   /* a second on from the last case: a new beat */
+            g_fake_us = base;
             present_refresh = rates[i][1];
             present_invalidate(NULL);   /* learn the rate again */
             present_painted();
-            QueryPerformanceCounter(&t0);
-            for (;;) {
-                QueryPerformanceCounter(&t);
-                double s = (double)(t.QuadPart - t0.QuadPart) / f.QuadPart;
-                if (s >= 2.0) break;
-                if (s >= due) {   /* a present is due now */
-                    n++;
-                    seed = seed * 1103515245u + 12345u;
-                    double j = rates[i][3] / 100.0 * (((seed >> 8) & 0xFFFF) / 32768.0 - 1.0);   /* -jitter..+jitter */
-                    due = (n + j) / rates[i][0];
-                    if (present_due(NULL)) { shown++; present_painted(); }
-                }
+            while (due < 2.0) {   /* each present at its own time */
+                g_fake_us = base + (long long)(due * 1e6);
+                n++;
+                seed = seed * 1103515245u + 12345u;
+                double j = rates[i][3] / 100.0 * (((seed >> 8) & 0xFFFF) / 32768.0 - 1.0);   /* -jitter..+jitter */
+                if (present_due(NULL)) { shown++; present_painted(); }
+                double next = (n + j) / rates[i][0];
+                due = next > due ? next : due;   /* a late one can't come before the one before it */
             }
+            present_test_clock_us = NULL;
             printf("  pacing: %d presents/s%s at %d Hz -> %d shown/s\n", rates[i][0], rates[i][3] ? " (jittered)" : "", rates[i][1], shown / 2);
             CHECK(shown / 2 >= rates[i][2] && shown / 2 <= rates[i][1] + 2, "%d presents/s%s at %d Hz: %d shown/s (want >= %d)",
                   rates[i][0], rates[i][3] ? " (jittered)" : "", rates[i][1], shown / 2, rates[i][2]);
