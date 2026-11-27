@@ -399,7 +399,8 @@ def launch(args, who, k, game, out, keys, live, wd):
     else:
         run = args.run_b if who == 'b' and args.run_b else args.run
         cmd = [run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
-               '--watchdog', str(wd), '--keys', '@' + keys, '--keys-live', live, '--mp-port', str(args.port)] +             args.extra.split() + own_switches(args, who).split()
+               '--watchdog', str(wd), '--keys', '@' + keys, '--keys-live', live, '--mp-port', str(args.port)]
+        cmd += args.extra.split() + own_switches(args, who).split()
     env = dict(os.environ)
     if args.run_b and os.path.abspath(args.run_b) != os.path.abspath(args.run):
         env['SWGB_MP_ANY_BUILD'] = '1'   # dplay.c: the join lets another build in

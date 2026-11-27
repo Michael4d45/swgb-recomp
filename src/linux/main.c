@@ -633,10 +633,8 @@ static void usage(void) {
            "                  [--shot S file.bmp] [--keys SCRIPT|@FILE] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
            "                  [--exe work/" GUEST_EXE "] [--game game] [--cd DIR] [--films DIR]\n"
            "                  [--args \"<game switches>\"] [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]\n"
-           "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N|off] [--fps-log] [--smooth]
-"
-           "                  [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log] [--music off|DIR]
-"
+           "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N|off] [--fps-log] [--smooth]\n"
+           "                  [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log] [--music off|DIR]\n"
            "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
            "                  [--trace]\n");
 }
