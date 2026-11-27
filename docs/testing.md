@@ -17,7 +17,7 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 | L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
 | L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, `--res 1920x1080` from Options, `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, and the frame-rate check (below) | as L1, ffmpeg |
-| L3 | `soak` | about 2 h at 5 games at once (8 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat); Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns. `--soak-scale 0.2` for a shorter trial. | as L2 |
+| L3 | `soak` | about 4 h at 5 games at once (20 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat), every campaign's missions past the first (`missions`: OOM-9 6-7, Boss Nass, Chewbacca, Darth Vader, Princess Leia, Basic Training), the in-game Load, the monkey at 1024x768 and 1280x1024; Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns from mission 1 and past it, the in-game Load. `--soak-scale 0.2` for a shorter trial. | as L2 |
 | L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
 
 A level runs the levels below it (`--just`: only its own). Clone Campaigns is
@@ -250,10 +250,12 @@ lands.
 ## Long games: `tools/soak.py`
 
 ```
-py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed|defeat|allied|victory|chain|load|fight]
+py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed|defeat|allied|victory|chain|missions|
+                            load|ingame-load|fight]
                      [--runs N] [--minutes M] [--jobs J] [--seed S] [--run EXE] [--game DIR]
-                     [--speed fast|normal] [--no-save] [--out DIR]
-                     [--after M] [--allies N] [--first K] [--last K] [--row R]
+                     [--speed fast|normal] [--no-save] [--out DIR] [--screen 800|1024|1280]
+                     [--campaign NAME] [--first K] [--last K] [--unlocked]
+                     [--after M] [--allies N] [--row R]
                      [--ewoks N] [--dwell S] [--wave-every S] [--extra "HOST OPTIONS"]
 ```
 
@@ -271,8 +273,10 @@ track's build (`A:\Games\star\builds\coverage`) and game folder; pass
 | `defeat` | Alone against two Hardest computers on one team, a Tiny map, no defence: the computers win. |
 | `allied` | Me and `--allies` Hardest computers (team 1) against one (team 2), the idle player: meant as a victory nobody types. |
 | `victory` | A varied skirmish played for `--minutes` with the save, then won with the chat cheat `skywalker` (Enter, the word, Enter), the score screen's six tabs, Main Menu, Single Player -> Saved Game -> that save -> OK, and `--after` more minutes of the loaded game. |
-| `chain` | OOM-9's missions `--first`..`--last` in a row (1-5), each: its box on the campaign screen, the briefing, the monkey for `--minutes`, `skywalker`, the score screen, Scenario Menu. A mission's box appears once the one before is won, in that game folder's player profile. |
+| `missions` | `--campaign`'s missions `--first`..`--last` in a row (default: to the campaign's last; OOM-9 when no campaign is named, Confederacy with `--cc`). Each: its box on the campaign screen, the briefing, Escape for the Objectives, Fast, the monkey for `--minutes` with a save 40% of the way in, `skywalker`, the end briefing, the score screen's tabs, Scenario Menu. A box shows once the mission before it is won, in that game folder's player profile, so the missions before `--first` are passed through first (each started and won at once, about three minutes); `--unlocked` starts at `--first` in a profile that has them open already. Mission 1's first start asks for the difficulty: its OK (Easy). Any of the six base campaigns (`Attichitcuk` is Basic Training, whose seven are open from the start) and, with `--cc`, `Confederacy` and `Galactic Republic`. |
+| `chain` | `missions` under its old name (OOM-9 by default). |
 | `load` | Single Player -> Saved Game -> the `--row`th save (the list is alphabetical) -> OK, then the monkey. |
+| `ingame-load` | A varied skirmish (or `--campaign`'s mission `--first`, which must be open) with the monkey, a save 30% of the way in, the monkey on, then at 55% the game menu's Load, Yes ("quit and load a new game?"), the save from the list, OK, and the monkey in the loaded game to the end. Base game and `--cc` (its saves are `.ga1`). |
 | `fight` | A victory won by combat, declared by the game. Me and `--allies` computers (team 1) against one (team 2), a Large Savannah map, Easiest (one setting for every computer), Reveal Map: All Visible. Waves of Simon the Killer Ewok (`simonsays` typed 3 s apart; the game stops at nine alive), each box-selected around the command center and made a control group (`ctrl+N`). Then a live controller (`--keys-live`): every `--dwell` seconds a shot, the densest cluster of the enemy's colour on the minimap (player `allies + 2`: magenta with 4 allies, yellow with 2), each group sent there with a right-click on the minimap, a new wave every `--wave-every` seconds. At the victory (or defeat) music it shoots the score screen and its tabs, then ends the run. |
 
 The setup screen's Team buttons step to the next team on each click. A click
@@ -301,9 +305,34 @@ the end) and `summary.json`. The summary prints each run's outcome and every
 | 3 | a fault |
 | 5 | an unresolved indirect call (`coverage.c`; docs/lifting.md) |
 
-The clicks are 800x600 game pixels: run it in a game folder whose Screen Size
-is 800 (it warns if the first `SetDisplayMode` is not 800x600). `--keys` takes
-up to 16,384 steps; a 30-minute monkey run is about 2,500.
+The clicks are 800x600 game pixels unless `--screen` says otherwise: run it
+in a game folder whose Screen Size is 800 (it warns if the game sets another
+mode). `--screen 1024|1280` (base game) picks that Screen Size on the main
+menu's Options panel first and moves every in-game click to that size: the
+HUD is the game's own art per width (`HUD_LAYOUTS`, read off shots of each:
+the map view, the command grid, the minimap and its buttons, the four icons
+above the panel, the buttons on the right), the game menu and its Options
+dialog are centred, the Save and Load screens are the 800x600 one scaled. The
+menus, the setup screen and the score screen stay 800x600. A run that did not
+get the size it asked for counts as a problem. The game stores the Screen
+Size only when it exits normally, and a soak run is ended by its watchdog, so
+the folder keeps its own size. `--keys` takes up to 16,384 steps; a 30-minute
+monkey run is about 2,500.
+
+The monkey leaves the last 8 seconds before a scripted save or load to keys:
+its panels and the game menu end with Escapes 5-6 seconds later, and one
+such Escape closed the Save screen of the first in-game Load run (no save was
+written, and the Load read an older game).
+
+**The mission boxes** (`MISSION_BOXES`) were found by winning each mission in
+turn with a live script (`--keys-live`) and diffing the campaign screen before
+and after: the new box is the largest change. Every campaign has seven
+missions except Princess Leia's eight. A won mission opens its end briefing,
+`campaign\media\<campaign>s<N>_end.mm` (`xc1s5_end.mm`: OOM-9's fifth;
+`1c1s3_end.mm`: Clone Campaigns' Confederacy's third); the summary's
+`missions_won` lists them, and `test.py` counts them, since Basic Training
+plays no victory music. Its score screen is skipped too: after the cheat it
+goes straight back to its campaign screen.
 
 An unresolved address from any run (or from a player's log) goes into a seed
 with `py -3 tools\seeds_from_logs.py --merge` (docs/lifting.md).
@@ -369,11 +398,51 @@ Hardest allies against an Easiest enemy is not possible: the game has one
 difficulty for every computer, so it is Easiest for all. The
 Ewoks win the game alone.
 
-Not yet covered: missions 6
-and later and the other five campaigns past mission 1, the in-game Load
-(the main menu's Saved Game is covered), and multiplayer. In a campaign the
-monkey can scroll the view into unexplored black and stay there (`H` has no
-command center to return to).
+Every campaign's later missions, the in-game Load and the larger Screen Sizes
+came next: "Every campaign" below. In a campaign the monkey can scroll the
+view into unexplored black and stay there (`H` has no command center to
+return to).
+
+### Every campaign (2026-11-26)
+
+On main's shared lift (`swgb_gen.lib` of 2026-11-22) and the integration
+build's Clone Campaigns lift, at Fast speed, up to four games at once beside
+other tracks' games:
+
+| What | Runs | Result |
+|---|---|---|
+| Finding the mission boxes | one live game per campaign: every mission started and won at once with the cheat, in order (Boss Nass, Chewbacca, Darth Vader, Princess Leia, OOM-9 1-4, Confederacy, Galactic Republic) | 47 missions loaded and won: each briefing, the mission, its end briefing and score screen, the next box; after a campaign's last mission the game is back on the list of campaigns |
+| OOM-9 5-7 | `missions`, 4 and 10 minutes each | all won; with mission 5 before it, OOM-9 is now played to its end |
+| Boss Nass 2-7, Chewbacca 2-7 | `missions`, 10 minutes each (one long game each, before the game-per-mission change) | all won, the full 80 minutes, a save in each mission |
+| Darth Vader 2-7 | `missions`, 10 minutes each | 2, 3, 5, 6 won; 4 (An Empire's Fury) lost twice and 7 once, about 3.5 minutes in, then 4 won in a 2-minute run (and 7 in the box-finding run). In the first, one-game run the script then clicked on out of step, started mission 6 itself and at last quit the game with an Enter (exit 0). Hence a game per mission, ended at a defeat |
+| Princess Leia 1-8 | `missions --first 2`, 10 minutes each, in a profile that had finished the campaign: mission 1 replayed to pass through | 1-5, 7, 8 won, 6 lost |
+| Basic Training 1-7 | `missions`, 3 and 10 minutes each | all seven open from the start; won (no victory music, no score screen: back on its campaign screen) |
+| Confederacy 2-7, Galactic Republic 2-7 | `missions --cc`, 10 minutes each | Confederacy all won; Republic all won but 3 (lost). Galactic Republic's planet does nothing until Confederacy is won in that profile |
+| In-game Load | `ingame-load`: a skirmish at 800x600, one at 1024x768, Basic Training's mission 5, and two Clone Campaigns skirmishes | at 800x600, in the mission and in Clone Campaigns' second run: the save written, then read back after the game menu's Load, Yes, the row and OK, and the game played on. At 1024x768 the Load screen and the load worked, but the save had not been written (the monkey's Escape, below). Clone Campaigns' first run loaded a recorded game (below), its third (before the Easiest setup) met a defeat before the Load |
+| The monkey at 1024x768 and 1280x1024 | `monkey --screen`, 25 minutes each | both ran their full time at their size; both ended in a defeat by Hardest computers and played on through the score screen into a second game |
+
+In all, 57 missions won at least once: every mission of the six base
+campaigns (OOM-9, Boss Nass, Darth Vader, Chewbacca: 7; Princess Leia: 8;
+Basic Training: 7) and of both Episode II campaigns (7 each). 13.5 hours of
+soak games and 5 of box-finding games.
+
+No run met an unresolved indirect call, a not-lifted stub, an eh32 funclet
+miss or a fault: nothing for `seeds_from_logs.py`, so no seed was added and
+no re-lift was needed.
+
+What the tool got wrong, and fixed:
+
+- The monkey's panels and game menu end with Escapes 5-6 s after they open;
+  one landed on the Save screen of the first in-game Load and closed it (no
+  save, and the Load read an older game). The monkey now leaves the last 8
+  seconds before a scripted save or load to keys.
+- Clone Campaigns' Saved Game list shows its recorded games (`.mg1`) among
+  the saves: the first `--cc` in-game Load picked the row above and played a
+  recorded game back. The row now counts both (`saved_names`).
+- A mission lost while the monkey plays: see Darth Vader above.
+- Hardest computers defeat the monkey in 11-20 minutes; then it wanders the
+  score screen and the menus (into a second game, or the main menu's Exit).
+  `ingame-load` now plays 1-3 Easiest computers so the Load comes first.
 
 `tools/coverage_test.c` checks the host's unresolved-call stop without the
 game (build line in the file): exit code 5 and the line the seed tool reads;

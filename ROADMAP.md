@@ -254,12 +254,28 @@ what needs research or a new subsystem.
   three and a half minutes at Fast speed. The game declared each victory itself (`won1.mp3`, the score
   screen crowning the player). No fault and no unresolved call. `--keys` gained
   drags (`ldown`/`lup`: box select) and `ctrl+`/`shift+`.
+- **Every campaign (2026-11-26, docs/testing.md "Every campaign"):**
+  `soak.py --mode missions` plays any campaign's missions in a row from a
+  table of each campaign's mission boxes (found by winning each mission and
+  diffing the campaign screen), one game per mission, a defeat ending its
+  game; `ingame-load` saves, then loads from the game menu; `--screen
+  1024|1280` sets the Screen Size and moves the monkey's HUD clicks to that
+  layout. Played and won: every mission of the six base campaigns (OOM-9
+  to its 7th, Princess Leia's eight, Basic Training's seven) and of both
+  Episode II campaigns, each at least once (most for 10 minutes with the
+  monkey and a save; Darth Vader's 4 and 7, Princess Leia's 6 and Galactic
+  Republic's 3 were also lost to the monkey once or twice). The in-game Load
+  in both games and in a mission, the monkey at 1024x768 and 1280x1024.
+  13.5 game-hours of soak and 5 of mission-by-mission wins: no unresolved
+  call, fault or stub, so no seed was added. Galactic Republic opens only once Confederacy
+  is won in the profile. `test.py --level soak` runs the new modes.
 - **pcrecomp (for its maintainers):** a vtable run in a data section should
   outrank a decoded body, and switch index tables should be data
   (docs/lifting.md).
-- **Left:** missions 6 and later, and the other
-  campaigns past mission 1; the in-game Load; the 1024 and 1280 HUDs under
-  the monkey (its clicks are 800x600); the pcrecomp fixes above.
+- **Left:** `--screen` for Clone Campaigns (its main menu's Options are
+  elsewhere); a monkey that defends itself (Hardest computers defeat it in
+  11-20 minutes, and after a game over it wanders the menus); multiplayer
+  under the monkey; the pcrecomp fixes above.
 - **Risk:** medium: each miss is cheap to fix once seen, but only play
   finds them.
 
