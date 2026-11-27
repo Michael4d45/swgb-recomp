@@ -12,7 +12,8 @@
                             skirmish shot each, no ICALL, no fault; the lift's function
                             count, errors and byte-identical C against its baseline
   functional  L2  ~20 min   + present_check's five groups, the game's three resolutions,
-                            --res 1920x1080, the films, a short skirmish per set of
+                            --res 1920x1080, the films, --record with its sound (a film,
+                            a skirmish, a victory), a short skirmish per set of
                             civilizations with a save and a load, the frame-rate figures
                             (CPU and presents a second) of a fixed skirmish against
                             thresholds, menu shots against stored baselines
@@ -485,6 +486,9 @@ UNITS = {
              'the --keys parser: every step kind, @FILE, drags, modifiers, live steps'),
     'cdaudio': (['tests/unit/cdaudio_test.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['winmm.lib'], [],
                 'the CD music: Ogg decode and seek, the disc tracks and positions, play/notify/stop, the CD line volume'),
+    'recaudio': (['tests/unit/recaudio_test.c', RT + 'recaudio.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib', 'ole32.lib'], [],
+                 '--record\'s sound: the DirectSound proxy over a fake one (a one-shot\'s time and pitch, volume, pan, '
+                 'a looping buffer rewritten), the stream tap (its time, resampling, a pause), the length cut to the video\'s'),
 }
 
 
@@ -1160,6 +1164,116 @@ def music_fn(kind):
 
 # Clone Campaigns: the farm's profile has its music at zero, so the game never opens the CD.
 CHECKS.append(Check('music/base', 'functional', music_fn('base'), 'base', 3.6))
+
+
+def mp4_streams(mp4):
+    """ffprobe's streams of a file: {'video': {...}, 'audio': {...}} (the first of each)."""
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', mp4],
+                         capture_output=True, text=True).stdout
+    streams = {}
+    for s in json.loads(out or '{}').get('streams', []):
+        streams.setdefault(s.get('codec_type'), s)
+    return streams
+
+
+def audio_db_per_second(mp4, rate=8000):
+    """The sound of a file as RMS dBFS per second (mono, decoded by ffmpeg); -99 for silence."""
+    import array
+    import math
+    raw = subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-i', mp4, '-map', '0:a:0', '-ac', '1', '-ar', str(rate),
+                          '-f', 's16le', '-'], capture_output=True).stdout
+    a = array.array('h', raw[:len(raw) // 2 * 2])
+    out = []
+    for i in range(0, len(a), rate):
+        w = a[i:i + rate]
+        r = math.sqrt(sum(x * x for x in w) / max(1, len(w))) / 32768
+        out.append(round(20 * math.log10(r), 1) if r > 0 else -99.0)
+    return out
+
+
+def record_fn(kind):
+    def fn(ctx, r):
+        if not WIN:
+            return r.skip('--record has no sound on the win32hle host yet (docs/recording.md, "Not done")')
+        if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+            return r.skip('no ffmpeg or ffprobe on PATH: --record needs them')
+        g = GAMES[kind]
+        out = r.dir
+        os.makedirs(out, exist_ok=True)
+        x = '' if kind == 'base' else 'x'
+        films = any(os.path.exists(os.path.join(r.game, f)) for f in ('xlogo1.avi', 'xintro.avi'))
+        # the logo film played through, the intro skipped (Esc), then as skirmish_steps: Single
+        # Player, Standard Game, Start; the command center clicked and its hotkey (unit sounds);
+        # the win cheat, and the victory music over the score screen
+        s = ['on:%slogo1' % x, 'on:%sintro' % x, '3:esc'] if films else []
+        t = 12 if films else 18
+        s += ['%g:shot=%s' % (t, os.path.join(out, 'menu.bmp')),
+              '%g:move:%d:%d' % ((t + 2,) + MAIN_SINGLE), '%g:click:%d:%d' % ((t + 3,) + MAIN_SINGLE),
+              '%g:move:%d:%d' % ((t + 17,) + g['sp_standard']), '%g:click:%d:%d' % ((t + 18,) + g['sp_standard']),
+              '%g:move:%d:%d' % ((t + 37,) + SETUP_START), '%g:click:%d:%d' % ((t + 38,) + SETUP_START),
+              '%g:shot=%s' % (t + 82, os.path.join(out, 'map.bmp')),
+              '%g:move:400:170' % (t + 84), '%g:click:400:170' % (t + 85), '%g:h' % (t + 88),
+              '%g:click:400:170' % (t + 90), '%g:h' % (t + 92), '%g:enter' % (t + 94)]
+        for k, ch in enumerate('skywalker'):
+            s.append('%g:%s' % (t + 95 + 0.3 * k, ch))
+        s += ['%g:enter' % (t + 98.7), '%g:shot=%s' % (t + 110, os.path.join(out, 'score.bmp'))]
+        keys = os.path.join(out, 'run_keys.txt')
+        with open(keys, 'w', newline='\n') as f:
+            f.write('\n'.join(s) + '\n')
+        mp4 = os.path.join(out, 'record.mp4')
+        cmd = [ctx.host(kind), '--run', '--multi', '--headless', '--files', '--exe', ctx.exe(kind), '--game', r.game,
+               '--watchdog', '160', '--record', mp4, '--keys', '@' + keys] + (['--films', r.game] if films else [])
+        rc, text = run(ctx, r, cmd, 300, 'run.log')
+        expect_exit(r, rc)
+        events(r, text)
+        if not os.path.exists(mp4):
+            return r.fail('no %s' % os.path.basename(mp4))
+        st = mp4_streams(mp4)
+        v, a = st.get('video'), st.get('audio')
+        if not a:
+            return r.fail('the recording has no sound stream (%s)' % ', '.join(st) or 'no streams')
+        vd, ad = float(v.get('duration', 0)) if v else 0, float(a.get('duration', 0))
+        r.metrics.update(video_s=vd, audio_s=ad)
+        r.log('video %.3f s, sound %.3f s (%s, %s Hz, %s channels)' % (vd, ad, a.get('codec_name'), a.get('sample_rate'), a.get('channels')))
+        if abs(vd - ad) > 2 / 30:
+            r.fail('the sound is %.3f s, the video %.3f s: more than two frames apart' % (ad, vd))
+        m = re.search(r'\[recaudio\] ([0-9.]+) s of sound, (\d+) buffers \((\d+) plays\), (\d+) streams', text)
+        if m:
+            r.metrics.update(buffers=int(m.group(2)), plays=int(m.group(3)), streams=int(m.group(4)))
+            r.log('recaudio: %s buffers, %s plays, %s streams' % m.group(2, 3, 4))
+            if int(m.group(3)) < 5:
+                r.fail('only %s DirectSound plays recorded: the clicks and units make more' % m.group(3))
+        else:
+            r.fail('no [recaudio] summary in the log')
+        if '[recaudio] muxed into' not in text:
+            r.fail('the sound was not muxed in')
+        db = audio_db_per_second(mp4)
+        loud = [d for d in db if d > -60]
+        r.metrics['rms_db'] = max(db) if db else -99
+        r.log('sound dBFS per 10 s (loudest second): ' + ' '.join('%d:%.0f' % (i * 10, max(db[i * 10:i * 10 + 10]))
+                                                                   for i in range((len(db) + 9) // 10)))
+        if len(loud) < len(db) // 4:
+            r.fail('the sound is silent most of the time (%d of %d seconds above -60 dBFS)' % (len(loud), len(db)))
+        if films:
+            if not re.search(r'\[movie\] playing .*xlogo1\.avi', text):
+                r.fail('the logo film did not play')
+            elif max(db[:12] or [-99]) < -30:
+                r.fail('the logo film is silent in the recording (loudest %.0f dBFS in its first 12 s)' % max(db[:12] or [-99]))
+        won = re.search(r'stream\\won\d\.mp3 -> ok', text, re.I)
+        if not won:
+            r.fail('no victory music: the cheat did not end the game')
+        elif max(db[-15:] or [-99]) < -30 or sorted(db[-15:])[len(db[-15:]) // 2] < -40:
+            r.fail('the victory music is silent in the recording (its last 15 s: %s)' % db[-15:])
+        for n, cap in (('map', 'the map'), ('score', 'the score screen')):
+            p = png_of(os.path.join(out, n + '.bmp'))
+            r.image(p, cap)
+    fn.__doc__ = ('--record with its sound: the logo film, a skirmish (clicks, hotkeys), the win cheat\'s victory music; '
+                  'a sound stream as long as the video, loud where they play (%s)' % GAMES[kind]['title'])
+    return fn
+
+
+for _k in GAMES:
+    CHECKS.append(Check('record/' + _k, 'functional', record_fn(_k), _k, 3.2))
 
 
 def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):

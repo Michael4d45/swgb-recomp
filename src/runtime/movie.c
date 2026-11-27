@@ -41,6 +41,7 @@
 
 #include "movie.h"
 #include "softdd.h"
+#include "recaudio.h"
 
 const char* movie_dir;
 
@@ -164,6 +165,7 @@ typedef struct {
     /* the clock: the sound's position while it plays, else the wall clock
      * from base_ms at base_tick (less the time paused) */
     HWAVEOUT wo;
+    int rec;                      /* --record: the recording's stream (recaudio), or -1 */
     int audio_on;                 /* the sound is the clock */
     double base_ms;
     DWORD base_tick, pause_tick, pause_total;
@@ -200,6 +202,18 @@ static void clock_to_wall(Movie* m) {
     LeaveCriticalSection(&m->cs);
 }
 
+/* --record: the same PCM goes to the recording, with when it will be heard
+ * (what is queued before it, by waveOut's position). */
+static void tap(Movie* m, HWAVEOUT wo, const char* pcm, DWORD bytes, int64_t* sent) {
+    MMTIME t = { TIME_SAMPLES };
+    double played = 0;
+    if (m->rec < 0) return;
+    if (waveOutGetPosition(wo, &t, sizeof t) == MMSYSERR_NOERROR)
+        played = t.wType == TIME_SAMPLES ? (double)t.u.sample : t.wType == TIME_BYTES ? t.u.cb / 4.0 : t.u.ms * (AUDIO_RATE / 1000.0);
+    recaudio_stream_write(m->rec, (const int16_t*)pcm, (int)(bytes / 4), ((double)*sent - played) * 1000.0 / AUDIO_RATE);
+    *sent += bytes / 4;
+}
+
 static DWORD WINAPI audio_thread(LPVOID arg) {
     Movie* m = (Movie*)arg;
     static WAVEHDR hdr[AUDIO_BUFS];   /* one film at a time */
@@ -208,6 +222,7 @@ static DWORD WINAPI audio_thread(LPVOID arg) {
     HANDLE ev = CreateEventA(NULL, FALSE, FALSE, NULL);
     HWAVEOUT wo;
     int queued = 0, eof = 0;
+    int64_t sent = 0;
     /* m->wo changes only under the lock: movie_pause uses it from the game's thread */
     if (waveOutOpen(&wo, WAVE_MAPPER, &wf, (DWORD_PTR)ev, 0, CALLBACK_EVENT) != MMSYSERR_NOERROR) {
         fprintf(stderr, "[movie] no audio device: the wall clock times the film\n");
@@ -224,6 +239,9 @@ static DWORD WINAPI audio_thread(LPVOID arg) {
         m->apipe = spawn(args, &m->aproc);
     }
     if (!m->apipe) goto none;
+    EnterCriticalSection(&m->cs);
+    m->rec = recaudio_stream_open(AUDIO_RATE, 2);
+    LeaveCriticalSection(&m->cs);
     waveOutPause(wo);   /* until the buffers are queued */
     for (int i = 0; i < AUDIO_BUFS && !eof; i++) {
         int n = read_all(m->apipe, buf[i], AUDIO_BUF);
@@ -240,7 +258,10 @@ static DWORD WINAPI audio_thread(LPVOID arg) {
     EnterCriticalSection(&m->cs);
     m->audio_on = 1;
     if (!m->paused) waveOutRestart(wo);
+    recaudio_stream_pause(m->rec, m->paused);
     LeaveCriticalSection(&m->cs);
+    for (int i = 0; i < queued; i++)   /* heard from now (the restart), not from when they were read */
+        tap(m, wo, buf[i], hdr[i].dwBufferLength, &sent);
     SetEvent(m->aready);
     while (!m->stop && queued) {
         WaitForSingleObject(ev, 50);
@@ -254,6 +275,7 @@ static DWORD WINAPI audio_thread(LPVOID arg) {
             hdr[i].dwBufferLength = (DWORD)n & ~3u;
             hdr[i].dwFlags = 0;
             waveOutPrepareHeader(wo, &hdr[i], sizeof hdr[i]);
+            tap(m, wo, buf[i], hdr[i].dwBufferLength, &sent);
             waveOutWrite(wo, &hdr[i], sizeof hdr[i]);
             queued++;
         }
@@ -261,6 +283,8 @@ static DWORD WINAPI audio_thread(LPVOID arg) {
     clock_to_wall(m);
     EnterCriticalSection(&m->cs);
     m->wo = NULL;
+    recaudio_stream_close(m->rec);   /* what waveOutReset drops, the recording drops */
+    m->rec = -1;
     LeaveCriticalSection(&m->cs);
     waveOutReset(wo);
     for (int i = 0; i < AUDIO_BUFS; i++)
@@ -273,6 +297,8 @@ none:
     EnterCriticalSection(&m->cs);
     wo = m->wo;
     m->wo = NULL;
+    recaudio_stream_close(m->rec);
+    m->rec = -1;
     LeaveCriticalSection(&m->cs);
     if (wo) waveOutClose(wo);
     m->done_audio = 1;
@@ -374,7 +400,7 @@ static void movie_pause(Movie* m, int pause) {
         if (pause) m->pause_tick = GetTickCount();
         else m->pause_total += GetTickCount() - m->pause_tick;
         m->paused = pause;
-        if (m->wo) { if (pause) waveOutPause(m->wo); else waveOutRestart(m->wo); }
+        if (m->wo) { if (pause) waveOutPause(m->wo); else waveOutRestart(m->wo); recaudio_stream_pause(m->rec, pause); }
     }
     LeaveCriticalSection(&m->cs);
 }
@@ -573,6 +599,7 @@ HWND movie_create(HWND parent, DWORD style, const char* file) {
     if (!file || !ffmpeg_found()) return NULL;
     if (GetFileAttributesA(file) == INVALID_FILE_ATTRIBUTES && movie_find(file, path, MAX_PATH)) file = path;
     m = (Movie*)calloc(1, sizeof *m);
+    m->rec = -1;
     GetFullPathNameA(file, MAX_PATH, m->path, NULL);
     if (!avi_probe(m->path, &m->ai)) {
         fprintf(stderr, "[movie] %s: missing or not an AVI, skipped\n", m->path);

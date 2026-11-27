@@ -34,6 +34,7 @@
 #include "softdd.h"
 #include "softdd_int.h"
 #include "present.h"
+#include "recaudio.h"
 
 int         softdd_headless;
 int         softdd_scale = 0;   /* --scale N; 0: fit the screen */
@@ -189,8 +190,13 @@ static void surf_free(Surf* s) {
 /* ------------------------------------------------------------- present */
 
 static FILE* g_rec;
-static DWORD g_rec_t0;
+static double g_rec_t0;            /* recaudio_clock_ms: the sound is timed by the same clock */
 static LONG  g_rec_written;
+/* softdd_finish closes the recording for good (the watchdog, a fault, the
+ * exit): a frame the game presents after it opens no new one over the mp4
+ * the sound is being muxed into, and none is written while it closes. */
+static volatile LONG g_rec_done;
+static SRWLOCK g_rec_lock = SRWLOCK_INIT;
 static int   g_rec_w, g_rec_h;   /* the recording's size: the first mode's */
 #define REC_FPS 30
 
@@ -202,18 +208,23 @@ static void record_open(int w, int h) {
     g_rec_w = w, g_rec_h = h;
     g_rec = _popen(cmd, "wb");
     if (!g_rec) { fprintf(stderr, "[softdd] cannot start ffmpeg for %s\n", softdd_record); exit(5); }
-    g_rec_t0 = GetTickCount();
+    g_rec_t0 = recaudio_clock_ms();
+    recaudio_start(g_rec_t0, softdd_record);
     fprintf(stderr, "[softdd] recording %dx%d at %d fps -> %s\n", w, h, REC_FPS, softdd_record);
 }
 
 void softdd_finish(void) {
-    if (g_rec) { _pclose(g_rec); g_rec = NULL; }
+    int locked = 0;
+    if (InterlockedExchange(&g_rec_done, 1)) return;
+    for (int i = 0; i < 100 && !(locked = TryAcquireSRWLockExclusive(&g_rec_lock)); i++) Sleep(10);
+    if (g_rec) { _pclose(g_rec); g_rec = NULL; recaudio_finish(g_rec_written, REC_FPS); }
+    if (locked) ReleaseSRWLockExclusive(&g_rec_lock);
 }
 
 /* The video runs at a fixed 30 fps against the wall clock: a slow frame is
  * held, a fast one is dropped, so the mp4 plays at the game's real speed. */
 static void record_frame(Surf* s) {
-    LONG due = (LONG)((GetTickCount() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1;
+    LONG due = (LONG)((recaudio_clock_ms() - g_rec_t0) * REC_FPS / 1000) + 1;
     static uint16_t* row;
     static int row_w;
     int rw = g_rec_w, rh = g_rec_h;
@@ -399,7 +410,7 @@ static void present(Surf* s) { present_impl(s, 1); }
 
 /* A recording frame is due (30 fps by the wall clock, or the first one). */
 static int record_due(void) {
-    return !g_rec || (LONG)((GetTickCount() - g_rec_t0) * (DWORD)REC_FPS / 1000) + 1 > g_rec_written;
+    return !g_rec || (LONG)((recaudio_clock_ms() - g_rec_t0) * REC_FPS / 1000) + 1 > g_rec_written;
 }
 
 /* The game presents far more often than a display refreshes: a frame is
@@ -426,9 +437,13 @@ static void present_impl(Surf* s, int from_game) {
     if (softdd_on_present) softdd_on_present(s->bits, s->w, s->h, s->pitch, n);
     if (g_shot_due) { write_shot(s); InterlockedExchange(&g_shot_due, 0); }
     if (present_wshot_pending()) present_wshot_write(win, s->bits, s->w, s->h, s->pitch, s->bpp, screen_palette());
-    if (softdd_record && (s->bpp == 16 || s->bpp == 8)) {
-        if (!g_rec) record_open(s->w, s->h);
-        record_frame(s);
+    if (softdd_record && !g_rec_done && (s->bpp == 16 || s->bpp == 8)) {
+        AcquireSRWLockExclusive(&g_rec_lock);
+        if (!g_rec_done) {
+            if (!g_rec) record_open(s->w, s->h);
+            record_frame(s);
+        }
+        ReleaseSRWLockExclusive(&g_rec_lock);
     }
     if (paint) {
         if ((!softdd_headless || present_headless_paint()) && win) present_paint(win, s->bits, s->w, s->h, s->pitch, s->bpp, screen_palette());

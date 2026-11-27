@@ -208,7 +208,17 @@ what needs research or a new subsystem.
   intro's last frame 20 ms after its time over 70.7 s.
 - **Left:** disc 2's own films (`logo1`, `intro`, and the campaigns'
   `INTRO` and `celebration`): untested without the disc, though the path and
-  format are the same. `--record` has no sound.
+  format are the same.
+- **Done (branch `track/record-sound`):** `--record` has the sound
+  ([docs/recording.md](docs/recording.md)), muted or not: a proxy over
+  DirectSound (`src/runtime/recaudio.c`) shadows every buffer the game plays,
+  following the real play cursors (the streamed music), and mixes it again
+  with the films' waveOut PCM (a stream tap the CD music can use too) on the
+  clock softdd times its frames by; at the end the sound is cut to the
+  video's exact length and muxed in as AAC. Tested: `record/base` and
+  `record/cc` (a film, a skirmish, the victory music: sound and video equal
+  to the millisecond), the `recaudio` unit (timing, gains, a looping buffer
+  rewritten, 3% clock drift held within 60 ms).
 - **Risk:** low now.
 
 ### 7. Linux and macOS
