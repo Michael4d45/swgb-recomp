@@ -38,6 +38,7 @@
 #include "keyscript.h"
 #include "coverage.h"
 #include "widescreen.h"
+#include "smooth.h"
 #include "dplay.h"
 #include "cdaudio.h"
 #include "profile.h"
@@ -621,12 +622,18 @@ static void cd_pick(const char* dir) {
     printf("  play disc: D: = %s\n", full);
 }
 
+/* The host's own indirect-call targets: --res (widescreen.c), then --smooth (smooth.c). */
+static recomp_func_t lookup_hooks(uint32_t va) {
+    recomp_func_t f = widescreen_w ? widescreen_lookup(va) : NULL;
+    return f ? f : smooth_lookup(va);
+}
+
 static void usage(void) {
     printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
            "                  [--shot S file.bmp] [--keys SCRIPT|@FILE] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
            "                  [--exe work/" GUEST_EXE "] [--game game] [--cd DIR] [--films DIR]\n"
            "                  [--args \"<game switches>\"] [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]\n"
-           "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N|off] [--fps-log]
+           "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N|off] [--fps-log] [--smooth]
 "
            "                  [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log] [--music off|DIR]
 "
@@ -671,6 +678,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--cd") && i + 1 < argc) cd = argv[++i];
         else if (!strcmp(argv[i], "--args") && i + 1 < argc) snprintf(guest_args, sizeof guest_args, " %s", argv[++i]);
         else if (!strcmp(argv[i], "--trace")) win32hle_trace = 1;
+        else if (!strcmp(argv[i], "--smooth")) smooth_on = 1;
         else if (framerate_arg(argc, argv, i)) i += framerate_arg(argc, argv, i) - 1;
         else if (dplay_arg(argc, argv, i)) i += dplay_arg(argc, argv, i) - 1;
         else if (cdaudio_arg(argc, argv, i)) i += cdaudio_arg(argc, argv, i) - 1;
@@ -765,10 +773,9 @@ int main(int argc, char** argv) {
     if (hle_screen_open(GAME_TITLE, fullscreen, headless) != 0) return 1;
     if (res && !strcasecmp(res, "desktop") && !widescreen_parse(res)) return 1;
     framerate_start(headless);
-    if (widescreen_w) {                                   /* --res: the game's 1280x1024 is WxH (widescreen.c) */
-        hle_lookup_manual_hook = widescreen_lookup;
-        printf("  --res: the 1280 x 1024 screen size is %dx%d\n", widescreen_w, widescreen_h);
-    }
+    if (widescreen_w) printf("  --res: the 1280 x 1024 screen size is %dx%d\n", widescreen_w, widescreen_h);
+    smooth_init();                                        /* --smooth: objects drawn between steps (smooth.c) */
+    if (widescreen_w || smooth_hooked) hle_lookup_manual_hook = lookup_hooks;
     hle_on_exit = on_exit_close;
     if (getenv("SWGB_MSG_TRACE")) hle_proc_hook = msg_trace;
     g_prev_primary_hook = hle_dd_primary_hook;

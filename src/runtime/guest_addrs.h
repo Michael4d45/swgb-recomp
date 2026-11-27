@@ -56,6 +56,15 @@
 #define G_AREA_FILL           0x00474160u
 #define G_AREA_LOCK           0x00472A70u
 #define G_AREA_UNLOCK         0x00472B20u
+#define G_OBJ_PASS            0x00496E80u   /* base 0x00496470 */
+#define G_OBJ_DRAW_VA         0x0054C9E0u   /* base 0x0054AD10 */
+#define G_OBJ_DRAW            sub_0054C9E0
+#define G_OBJ_DRAW2_VA        0x00557F60u   /* base 0x00556040 (vtable 0x0066311C) */
+#define G_OBJ_DRAW2           sub_00557F60
+#define G_OBJ_ID              0x10
+#define G_WORLD_STEP_T        0x20          /* the world update's step, 0x0061E946 */
+#define G_MAP_HALF_W          0xBF40        /* new_location (0x0054F820) matches the base byte for byte */
+#define G_MAP_HALF_H          0xBF3E
 #else
 /* ---- Battlegrounds.exe v1.1 (2001-11-28) ---- */
 #define G_GAME              0x006A0FD4u
@@ -93,4 +102,14 @@
 #define G_AREA_FILL           0x004736C0u
 #define G_AREA_LOCK           0x00471FD0u
 #define G_AREA_UNLOCK         0x00472080u
+/* --smooth (smooth.c): the map view's object pass and the objects' draw. */
+#define G_OBJ_PASS            0x00496470u   /* per tile: each object's vtable +0x70 */
+#define G_OBJ_DRAW_VA         0x0054AD10u   /* RGE_Static_Object draw(area, x, y, colors) */
+#define G_OBJ_DRAW            sub_0054AD10
+#define G_OBJ_DRAW2_VA        0x00556040u   /* vtable 0x006600E0's draw, which ends in the one above */
+#define G_OBJ_DRAW2           sub_00556040
+#define G_OBJ_ID              0x10          /* the object's id */
+#define G_WORLD_STEP_T        0x20          /* timeGetTime of the world's last step */
+#define G_MAP_HALF_W          0xBF40        /* a tile's half width and half height, pixels */
+#define G_MAP_HALF_H          0xBF3E
 #endif

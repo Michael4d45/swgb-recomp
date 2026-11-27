@@ -26,6 +26,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define CINTERFACE
 #include <windows.h>
+#include <mmsystem.h>
 #include <ddraw.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -198,7 +199,8 @@ static LONG  g_rec_written;
 static volatile LONG g_rec_done;
 static SRWLOCK g_rec_lock = SRWLOCK_INIT;
 static int   g_rec_w, g_rec_h;   /* the recording's size: the first mode's */
-#define REC_FPS 30
+#define REC_FPS softdd_record_fps
+int softdd_record_fps = 30;              /* --record-fps N */
 
 static void record_open(int w, int h) {
     char cmd[1024];
@@ -221,7 +223,7 @@ void softdd_finish(void) {
     if (locked) ReleaseSRWLockExclusive(&g_rec_lock);
 }
 
-/* The video runs at a fixed 30 fps against the wall clock: a slow frame is
+/* The video runs at a fixed 30 fps (--record-fps) against the wall clock: a slow frame is
  * held, a fast one is dropped, so the mp4 plays at the game's real speed. */
 static void record_frame(Surf* s) {
     LONG due = (LONG)((recaudio_clock_ms() - g_rec_t0) * REC_FPS / 1000) + 1;

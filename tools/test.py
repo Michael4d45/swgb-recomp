@@ -480,6 +480,10 @@ UNITS = {
                '--fps pacing: passes a second, the 16/17 ms gate, the refresh default, no catch-up, the menus'),
     'pacing_cc': (['tests/unit/pacing_test.c'], FLAT + ['/DSWGB_CC'], ['user32.lib', 'winmm.lib'] + HIGH, [],
                   '--fps pacing at Clone Campaigns\' addresses'),
+    'smooth': (['tests/unit/smooth_test.c'], FLAT, ['user32.lib', 'winmm.lib'] + HIGH, [],
+               '--smooth: drawn between steps, never ahead, stops, teleports, other callers, nothing written'),
+    'smooth_cc': (['tests/unit/smooth_test.c'], FLAT + ['/DSWGB_CC'], ['user32.lib', 'winmm.lib'] + HIGH, [],
+                  "--smooth at Clone Campaigns' addresses"),
     'films': (['tests/unit/films_test.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib', 'gdi32.lib', 'winmm.lib', 'shlwapi.lib'], [],
               'the films: AVI headers, --films names, the film palette, dithering, drawing into 8 bits'),
     'keys': (['tests/unit/keys_test.c', RT + 'keyscript.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib'], [],
@@ -569,7 +573,7 @@ def unit_check(name):
             return r.fail('the build failed (%s)' % os.path.join(os.path.basename(r.dir), 'build.log'))
         rc, out = run(ctx, r, [exe] + args, 300, 'run.log')
         for l in out.splitlines():
-            if l.startswith(('FAIL', '  pacing', '  --fps', '  refresh', '  hitch')) or 'FAILED' in l:
+            if l.startswith(('FAIL', '  pacing', '  --fps', '  refresh', '  hitch', '  plain', '  --smooth', '  stopping')) or 'FAILED' in l:
                 r.log(l.rstrip())
         if rc or not re.search(r'^OK\s*$', out, re.M):
             r.fail('%s: exit %d' % (name, rc))
@@ -1449,6 +1453,76 @@ def perf_fn(kind):
 
 for _k in GAMES:
     CHECKS.append(Check('perf/' + _k, 'functional', perf_fn(_k), _k, 4.8))
+
+
+def smooth_fn(kind):
+    def fn(ctx, r):
+        """--smooth: a worker walks to a rally point at --fps 120; drawn between steps"""
+        import soak
+        import smooth_check
+        out = r.dir
+        os.makedirs(out, exist_ok=True)
+        g = GAMES[kind]
+        s = soak.Script()
+        t = 20
+        s.click(t, MAIN_SINGLE)
+        s.click(t + 15, g['sp_standard'])
+        t += 33
+        t = soak.pick(soak.DD_OTHERS, 0, s, t)          # one computer
+        t = soak.pick(soak.DD_LOCATION, 13, s, t)       # Savannah
+        t = soak.pick(soak.DD_SIZE, 0, s, t)            # Tiny
+        t = soak.pick(soak.DD_DIFFICULTY, 0, s, t)      # Easiest
+        s.click(t + 2, SETUP_START)
+        start = t + 72
+        s.at(start, 'h')                                 # the command center, the view on it
+        for k in range(3):
+            s.click(start + 1 + k, soak.COMMAND_GRID[0])   # a worker, three times
+        s.at(start + 4, 'move:660:110')
+        s.at(start + 4.5, 'rclick:660:110')             # its rally point
+        s.at(start + 5, 'move:400:300')                 # off the screen's edges: the view stays
+        # whoever stands at the rally point, selected, walks back and forth (its frame and bar too)
+        for k, (x, y) in enumerate([(250, 330), (660, 110), (250, 330)]):
+            t0 = start + 40 + 12 * k
+            if k == 0:
+                s.at(t0, 'move:560:40')
+                s.at(t0 + 0.5, 'ldown:560:40')
+                s.at(t0 + 1, 'move:770:190')
+                s.at(t0 + 1.5, 'lup:770:190')
+            s.at(t0 + 2, 'move:%d:%d' % (x, y))
+            s.at(t0 + 2.5, 'rclick:%d:%d' % (x, y))
+            s.at(t0 + 3, 'move:400:300')
+        s.at(start + 70, 'shot=%s' % os.path.join(out, 'end.bmp'))
+        end = start + 75
+        log = os.path.join(out, 'draw.log')
+        env = dict(os.environ, SWGB_SMOOTH_LOG=log)
+        rc, text = run_host(ctx, r, kind, s.steps, end, extra=['--smooth', '--fps', '120'], env=env)
+        expect_exit(r, rc)
+        events(r, text)
+        r.image(png_of(os.path.join(out, 'end.bmp')), "the walk's end")
+        if '[smooth] first object drawn between steps' not in text:
+            r.fail('no object was drawn between steps')
+        res = smooth_check.analyse(log) if os.path.exists(log) else []
+        if not res:
+            return r.fail('no object moved (draw.log)')
+        m = res[0]
+        r.metrics.update({k: m[k] for k in ('steps', 'frames', 'plain_max', 'plain_still', 'smooth_max', 'smooth_p95', 'smooth_still')})
+        r.log('the longest walk: %d steps, %d frames; plain: up to %.1f px a frame, still %.0f%% of frames; '
+              '--smooth: up to %.1f px (95%%: %.1f), still %.0f%%' % (
+                  m['steps'], m['frames'], m['plain_max'], 100 * m['plain_still'],
+                  m['smooth_max'], m['smooth_p95'], 100 * m['smooth_still']))
+        if m['steps'] < 10:
+            r.fail('the longest walk is %d steps' % m['steps'])
+        if m['smooth_p95'] > 3.0:
+            r.fail('--smooth: 95%% of frames move up to %.1f px (want 3 or less)' % m['smooth_p95'])
+        if m['smooth_still'] >= m['plain_still']:
+            r.fail('--smooth: still in %.0f%% of frames, the plain draw %.0f%%' % (100 * m['smooth_still'], 100 * m['plain_still']))
+        os.remove(log)   # tens of MB
+    fn.__doc__ = '--smooth: a worker walks at --fps 120, drawn between the steps (%s)' % GAMES[kind]['title']
+    return fn
+
+
+for _k in GAMES:
+    CHECKS.append(Check('smooth/' + _k, 'functional', smooth_fn(_k), _k, 3.5))
 
 
 # ==== L3: soak ===================================================================================

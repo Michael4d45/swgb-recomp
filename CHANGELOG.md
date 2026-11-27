@@ -47,6 +47,9 @@ versions follow [SemVer](https://semver.org/).
 - `docs/parallel-work.md` and `tools/worktree_env.ps1`: several worktrees on
   one machine, linking one prebuilt `swgb_gen.lib`; `--multi`.
 
+- `--smooth`: units drawn between simulation steps, so they glide at high
+  frame rates instead of moving once a step; drawing only, multiplayer sync
+  unchanged. `--record-fps N`; `SWGB_SMOOTH_LOG` and `tools/smooth_check.py`.
 ### Changed
 - The README's status brought up to date (the lift, campaigns, Linux,
   multiplayer, tests) and its documentation list completed.

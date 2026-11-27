@@ -33,6 +33,7 @@
 #include "softdd.h"
 #include "softdd_int.h"
 #include "widescreen.h"
+#include "smooth.h"
 #include "framerate.h"
 #include "profile.h"
 #include "resolve.h"
@@ -898,6 +899,7 @@ static int mute_process(void) {
 /* ---- reports ---------------------------------------------------------------- */
 recomp_func_t recomp_lookup_manual(uint32_t va) {
     recomp_func_t f = widescreen_lookup(va);
+    if (!f && smooth_hooked) f = smooth_lookup(va);
     return f ? f : resolve_cached(va);
 }
 
@@ -1000,6 +1002,7 @@ int main(int argc, char** argv) {
             softdd_record = rec;
             recaudio_init();   /* the sound too (recaudio.c) */
         }
+        else if (!strcmp(argv[i], "--record-fps") && i + 1 < argc) { softdd_record_fps = atoi(argv[++i]); if (softdd_record_fps < 1 || softdd_record_fps > 1000) softdd_record_fps = 30; }
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) softdd_stop_after = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) softdd_scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
@@ -1031,11 +1034,12 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else if (!strcmp(argv[i], "--res") && i + 1 < argc) { if (!widescreen_parse(argv[++i])) return 1; }
         else if (!strcmp(argv[i], "--hud-sides") && i + 1 < argc) { if (!widescreen_sides_parse(argv[++i])) return 1; }
+        else if (!strcmp(argv[i], "--smooth")) smooth_on = 1;
         else {
-            printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--frames N] [--sound]\n"
+            printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--record-fps N] [--frames N] [--sound]\n"
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\" GUEST_EXE "] [--game game] [--cd E] [--films DIR]\n"
-                   "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N] [--fps-log]\n"
+                   "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N] [--fps-log] [--smooth]\n"
                    "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
                    "                  [--scale N] [--filter sharp|smooth|nearest|integer] [--fullscreen]\n"
                    "                  [--refresh HZ] [--present-log] [--present gdi|d3d11]\n"
@@ -1084,6 +1088,7 @@ int main(int argc, char** argv) {
     printf("  audio: %s\n", sound ? "on" : m == 2 ? "muted (no audio device)" : "muted (a test run; --sound to hear it)");
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     framerate_start();
+    smooth_init();
     profile_start();
     if (g_shots) CloseHandle(CreateThread(NULL, 0, shot_thread, NULL, 0, NULL));
     g_file_seen = CreateEventA(NULL, FALSE, FALSE, NULL);

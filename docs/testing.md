@@ -186,6 +186,7 @@ Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
 | `pacing`, `pacing_cc` | `tests/unit/pacing_test.c` | `framerate.c` itself with a fake clock: `--fps 60/30/144/1000` passes a second, the 16/17 ms gate, the refresh default held to 30-1000, no catch-up burst after a 250 ms hitch, the menus untouched, `--fps` arguments; at the base and Clone Campaigns addresses |
 | `films` | `tests/unit/films_test.c` | `movie.c` itself: AVI headers, `--films` names (`NAME.avi`, then `xNAME.avi`), the film palette, the ordered dither (flat colours stay flat, the level holds on average), drawing into an 8-bit DC (the film palette and a foreign one) |
 | `recaudio` | `tests/unit/recaudio_test.c` | `recaudio.c` over a fake DirectSound: a one-shot heard when it was played and at its pitch, volume -10000 silent, pan to one side, a looping buffer rewritten while it plays, the stream tap's time, resampling and pause, a 3%-fast player held within 60 ms, the WAV cut to the video's exact length |
+| `smooth`, `smooth_cc` | `tests/unit/smooth_test.c` | `smooth.c` (`--smooth`) itself with a fake clock and fake objects: a walk moves at most 2 px a frame and is never drawn ahead of the object, a stop ends where it stopped, teleports, new objects, a new game and a pause are drawn where they are, other callers are left alone, nothing is written; at the base and Clone Campaigns addresses |
 | `keys` | `tests/unit/keys_test.c` | `keyscript.c`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
 | `cdaudio` | `tests/unit/cdaudio_test.c` | `cdaudio.c`'s core: `tests/data/tone.ogg` decoded (length, rate, tones, level) and seeked (the same samples as from the start); a disc of three copies: MCI_STATUS's counts, lengths and positions in ms, MSF and TMSF; a play from track 2 to 3 puts exactly that track on the output and notifies; the CD line's volume halves it, other lines are WINMM's; stop, pause and a second play abort or supersede the notification; no tracks or `--music off` fail the open ([music.md](music.md)) |
 | `tools` | `tests/unit/test_tools.py` | the Python side, as above |
@@ -234,6 +235,15 @@ the skirmish. Each checks:
 - the layout: `SWGB_RES_DUMP`'s panel tree (every panel's vtable and rect,
   so every clickable place) against `test-baselines\<game>\layout_<WxH>.txt`.
   `base` and `base_black` share theirs: the sides never move a panel.
+
+### Smooth motion (L2): `smooth/base`, `smooth/cc`
+
+A fixed skirmish (as the frame-rate check's) at `--smooth --fps 120` with
+`SWGB_SMOOTH_LOG`: three workers trained with a rally point, then whoever
+stands there box-selected and sent back and forth. `tools/smooth_check.py`
+reads the log; it passes when the longest walk is 10 steps or more, 95% of
+its frames move 3 px or less, and fewer of them are still than in the
+game's own draw ([framerate.md](framerate.md#--smooth-drawn-between-steps)).
 
 ### The frame-rate check (L2)
 
@@ -469,7 +479,11 @@ for `seeds_from_logs.py --cc`.
 
 ```
 py -3 tools\mp_pair.py [--minutes 20] [--activity idle|habits|busy] [--seed S] [--run EXE] [--game DIR]
+                       [--port N] [--extra SWITCHES] [--extra-a=SWITCHES] [--extra-b=SWITCHES]
 ```
+
+`--extra-a` and `--extra-b` give one player switches the other does not
+have (`--extra-a=--smooth`: the sync records stay the same, framerate.md).
 
 Two headless `--multi` runs on this machine: one hosts, one joins over
 127.0.0.1, both start a two-player game and play `--minutes`. It passes when

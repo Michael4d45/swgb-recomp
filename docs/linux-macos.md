@@ -322,7 +322,7 @@ build-macos/swgbrecomp --run --game game
 The command line is the Windows host's: `--headless`, `--record`,
 `--frames`, `--shot`, `--keys` (inline or `@FILE`), `--keys-live`,
 `--watchdog`, `--files`, `--multi`, `--exe`, `--game`, `--args`, `--res`,
-`--hud-sides`, `--fps`, `--fps-log`, `--films`, `--profile` (`--profile-window`,
+`--hud-sides`, `--fps`, `--fps-log`, `--smooth` (built, not yet run here), `--films`, `--profile` (`--profile-window`,
 `--profile-hz`), `--mp-port`, `--mp-join`, `--mp-log`, `--music off|DIR`, plus `--cd DIR` (a
 folder, not a letter), `--fullscreen` and
 `--scale sharp|smooth|crt|nearest|integer` (F11 and F12 in the window). The
