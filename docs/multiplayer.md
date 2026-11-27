@@ -237,6 +237,62 @@ Both instances run the same machine code, so nothing should differ. Specifically
 
 Measured: no differences in any run (Tests below).
 
+### Windows and Linux
+
+The Windows host (MSVC, `/fp:precise`, SSE2, its static CRT) and the Linux
+host (`src/linux`, clang `-m32` on win32hle, glibc's libm) run the same lift,
+but they are different builds, so the build stamp keeps them apart. With
+`--mp-cross` on both sides the stamp is the lift's instead (every address in
+the dispatch table, and the guest exe's link time), and they meet; a side
+without it refuses the other ("... needs --mp-cross on both").
+
+Whether they then compute the same is the question. Measured on 200,000
+random inputs each (a small C program built both ways, comparing the bits):
+
+| | sin | cos | tan | atan2 | pow | fmod | sqrt |
+|---|---|---|---|---|---|---|---|
+| MSVC `/O2` against `/O1` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| clang `-m32 -msse2 -mfpmath=sse`, glibc | 472 | 403 | 742 | 14 | 308 | 0 | 0 |
+| clang `-m32` (the x87), glibc | 76,602 | 75,414 | 75,331 | 67,374 | 104,694 | 82,359 | 32,512 |
+
+So the Linux host's build now asks for SSE2 doubles
+(`cmake/linux-i386.cmake`: `-msse2 -mfpmath=sse -ffp-contract=off`): with the
+x87 every operation could round differently, even `fmod` and `sqrt`. What is
+left is the transcendental functions, about one input in 300: MSVC's CRT and
+glibc are each within an ulp, not the same ulp. The lift calls them at 12
+`fsin`, 12 `fcos`, 7 `fptan`, 28 `fpatan` and 4 `pow` sites; whether any of
+them feeds the simulation (and not only drawing) is what a long game tells.
+If one does, the fix is one implementation for both (a portable libm, e.g.
+FreeBSD's msun, compiled into both hosts and the lift's calls pointed at it),
+which needs the Windows lift rebuilt.
+
+Played on one machine through WSL (Tests below): Windows hosting with a Linux
+player for 15 minutes (three players, busy, chat: 285 records in each log, 95
+turns, none differ), and Linux hosting a Windows player for 5 (80 records,
+none differ). So far, no difference has reached the simulation.
+
+```
+set WSL_CHECKOUT=/home/me/swgb-recomp      the WSL checkout, with build-linux/, game/ and work/
+py -3 tools\mp_pair.py --players 3 --wsl b --extra=--mp-cross --minutes 15 --activity busy --chat ...
+```
+
+`--wsl b` runs player b's Linux host through `wsl.exe`, in a game folder of
+its own under the WSL checkout's `work/games/` (hard links to its `game/`:
+win32hle's `LoadLibraryA` does not find `language.dll` on a `/mnt` drive),
+with stderr merged into stdout inside Linux (through `wsl.exe` the two reached
+the log with their own file positions and overwrote each other).
+
+Found on the Linux host, not in `dplay.c` (left for the Linux track):
+
+- **Chat lines and the Multiplayer Status dialog are not drawn.** The game
+  takes every line in (`[mp] chat from ...` in its log) and its vote counts,
+  but no shot shows the text or the dialog; the same game on Windows draws
+  both. The panel there also shows `UNIT-WORKERA1` where Windows shows the
+  unit's name, so a string lookup may be what is missing.
+- **Two Linux hosts cannot start a game without the play disc.** The setup
+  screen shows their version as `1.1` where a Windows host shows `CD 1.1`,
+  and Start Game does nothing. With a Windows player in the game it starts.
+
 ### Recomp against the original
 
 Not possible yet, and not tested:
@@ -417,6 +473,10 @@ at the soak level.
 | `--players 2 --minutes 1.5 --activity busy --save 0.75 --restore` | base | PASS: the save in both `SaveGame\Multi`; the restored game starts at world time 93.2 s; 50 records after, none differ |
 | the same, `--cc` | Clone Campaigns | PASS: restored at 93.6 s; 50 records, none differ |
 | before the host migration: `--drop a@1` | base | the clients got `DPSYS_SESSIONLOST` and sat in Multiplayer Status, "Waiting For Vote", to the end |
+| `--players 3 --minutes 15 --activity busy --chat --wsl b --extra=--mp-cross --seed 5` | base, b on Linux (WSL) | sync PASS: 285 records in each log, 95 turns, none differ; 12 of 12 chat lines received; the 4 to b not drawn (Linux, above) |
+| `--players 2 --minutes 5 --activity busy --chat --wsl a --extra=--mp-cross --seed 6` | base, the host on Linux | sync PASS: 80 records, none differ; 4 of 4 chat lines received; the 2 to a not drawn |
+| `--players 2 --minutes 2 --chat --wsl ab` | base, both on Linux | the game does not start (no play disc, above) |
+| `tools/test.py --level functional --cc --prefix mp-coverage` | both | PASS: 37 of 37, `mp/base-3p` and `mp/cc-restore` among them |
 
 ## What's left
 
@@ -435,20 +495,24 @@ at the soak level.
   path?), real latency and loss, a pulled cable (the 30 s drop).
 
 **Clone Campaigns.** Same code: `swgbrecomp_cc.exe` links `dplay.c` too, and
-the comm handler's address is in `guest_addrs.h`. Its screens differ (Create is
-beside a new Restore button; `mp_pair.py --cc` knows). Restore, which loads a
-saved multiplayer game, is untried.
+the comm handler's address is in `guest_addrs.h`. Its main menu's Multiplayer
+button is elsewhere (`mp_pair.py --cc` knows). Restore works in both games.
 
 **No `dplayx.dll` on disk.** Our DirectPlay never calls dplayx, but two
 things still need the file. native32 resolves the game's imports by ordinal
 (`DPLAYX.dll#1`) through the DLL's export names, and the game's startup check
 reads the file's version. A machine without the DirectPlay component, or
 Linux, needs both answered by the host: shims by ordinal, and a version answer
-for that one file.
+for that one file. (The Linux host already answers both: win32hle's shims by
+ordinal, `src/linux/shims.c`.)
 
-**The game itself:** chat, more than two players, computer players in a
-multiplayer game, a client dropping mid-game, saved multiplayer games, a game
-played to its end (the score screen on both sides).
+**The game itself:** computer players in a multiplayer game, chat in the
+setup screen, a game played to its end (the score screen on every side), a
+host migration in the setup screen, restoring with a player missing.
+
+**Windows and Linux:** a long game across them, to see whether the CRT's and
+glibc's `sin`, `cos`, `tan`, `atan2` and `pow` ever differ where the
+simulation reads them (above); if they do, one libm for both.
 
 **The original exe** (above): `--dplay native`, a dplaysvr that can own
 47624, the screen, and the sync comparison with one log from the original.

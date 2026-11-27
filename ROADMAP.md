@@ -310,9 +310,15 @@ what needs research or a new subsystem.
   the save in sync. `tools/mp_pair.py` does all of it (`--players`, `--chat`,
   `--drop`, `--quit`, `--resign`, `--save --restore`, `--wsl`); `tools/test.py`
   runs a short pair at the functional level and long ones at the soak level.
+  A Windows and a Linux host (WSL) play together with `--mp-cross`: 15
+  minutes of three players in sync. The Linux host now computes doubles in
+  SSE2 like MSVC (with the x87 they rounded differently); MSVC's CRT and glibc
+  still differ in the last bit of `sin`/`cos`/`tan`/`atan2`/`pow` for about
+  one input in 300, which has not reached the simulation so far.
 - **Left:** two real machines (a firewall Allow rule on the host's exe); a
-  Windows and a Linux host together (`--mp-cross`, `--wsl`; see
-  docs/multiplayer.md "Windows and Linux"); computer players in a multiplayer
+  long Windows-Linux game, and one libm for both if it ever goes out of sync;
+  the Linux host's missing chat lines and Multiplayer Status dialog, and its
+  "1.1" without "CD" (two Linux hosts can't start a game); computer players in a multiplayer
   game; answering the startup version check and the ordinal imports without
   dplayx.dll on disk; playing the original exe (`--dplay native`, a working
   dplaysvr, the x87 transcendentals).

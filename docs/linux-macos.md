@@ -238,7 +238,12 @@ a player's event is the game's own win32hle event (`hle_set_event`).
 `hle_com_register_class`. 32-bit only (the game's pointers are the host's).
 `shims.c` still answers VERSION with 4.06.03.0516 for the boot check. A
 Linux build's join stamp differs from a Windows build's, so the two refuse
-to play each other (lockstep needs the same code).
+to play each other (lockstep needs the same code), unless both run with
+`--mp-cross` (the lift's stamp). They have played in sync that way, through
+WSL ([multiplayer.md](multiplayer.md), "Windows and Linux"). For that the
+build computes doubles in SSE2 as MSVC does (`cmake/linux-i386.cmake`:
+`-msse2 -mfpmath=sse -ffp-contract=off`; i386 clang and gcc use the x87 by
+default, which rounds differently).
 
 ### 9. macOS
 
