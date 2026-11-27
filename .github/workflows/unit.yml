@@ -1,6 +1,7 @@
 # L0, the unit level of tools/test.py (docs/testing.md, "Test levels"): the host's C units
-# and the tools' own tests. No game files and no lift: nothing of the game is ever
-# downloaded, built or uploaded here. Only pcrecomp's headers are needed (public, pinned).
+# and the tools' own tests; and both hosts compiled, so a bad merge of a host source fails
+# here. No game files and no lift: nothing of the game is ever downloaded, built or
+# uploaded here. Only pcrecomp is needed (public), at the commit tools/pcrecomp_pin.sh names.
 name: unit
 
 on:
@@ -18,12 +19,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: pcrecomp (headers), at the commit the host builds against
+      - name: pcrecomp, at tools/pcrecomp_pin.sh's commit
         shell: bash
-        run: |
-          git init -q pcrecomp && cd pcrecomp
-          git fetch -q --depth 1 https://github.com/sp00nznet/pcrecomp a67767bed6ee1085fc6614f34c80ebfc25908f72
-          git checkout -q FETCH_HEAD
+        run: sh tools/pcrecomp_pin.sh fetch pcrecomp
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -41,3 +39,38 @@ jobs:
             test-results/report.md
             test-results/report.html
             test-results/*/*.log
+
+  # Every object of swgbrecomp.exe and swgbrecomp_cc.exe, as build.cmd compiles them
+  # (MSVC x86, the 64-bit-hosted compiler), not linked (tools/compile_hosts.sh).
+  windows-host:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: pcrecomp, at tools/pcrecomp_pin.sh's commit
+        shell: bash
+        run: sh tools/pcrecomp_pin.sh fetch pcrecomp
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_x86
+      - name: compile both hosts
+        shell: bash
+        run: sh tools/compile_hosts.sh out/hosts -DPCRECOMP=pcrecomp
+
+  # The same for the native Linux host (src/linux on win32hle), as build-linux.sh
+  # compiles it: i386, clang. The packages are docs/linux-macos.md's.
+  linux-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: pcrecomp, at tools/pcrecomp_pin.sh's commit
+        run: sh tools/pcrecomp_pin.sh fetch pcrecomp
+      - name: the i386 packages
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -q
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            clang gcc-multilib ninja-build pkg-config libsdl2-dev:i386 libsdl2-ttf-dev:i386
+      - name: compile both hosts
+        run: sh tools/compile_hosts.sh out/hosts -DCMAKE_TOOLCHAIN_FILE=cmake/linux-i386.cmake -DPCRECOMP=pcrecomp
