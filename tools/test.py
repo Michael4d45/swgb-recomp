@@ -318,7 +318,7 @@ def run(ctx, r, cmd, timeout, log_name, cwd=None, env=None):
     return rc, open(log, encoding='utf-8', errors='replace').read()
 
 
-def run_host(ctx, r, kind, steps, watchdog, tag='run', extra=()):
+def run_host(ctx, r, kind, steps, watchdog, tag='run', extra=(), env=None):
     """The host, headless and --multi, in the check's game folder, with a --keys script
     (a list of (seconds, step)). Returns (exit code, log text)."""
     os.makedirs(r.dir, exist_ok=True)
@@ -327,7 +327,7 @@ def run_host(ctx, r, kind, steps, watchdog, tag='run', extra=()):
         f.write('\n'.join('%g:%s' % s for s in sorted(steps, key=lambda s: s[0])) + '\n')
     cmd = [ctx.host(kind), '--run', '--multi', '--headless', '--files', '--exe', ctx.exe(kind),
            '--game', r.game, '--watchdog', str(int(watchdog)), '--keys', '@' + keys] + list(extra)
-    rc, text = run(ctx, r, cmd, watchdog + 90, tag + '.log')
+    rc, text = run(ctx, r, cmd, watchdog + 90, tag + '.log', env=env)
     r.log('%s: exit %d (%s), %s' % (tag, rc, EXIT.get(rc, '?'), os.path.join(os.path.basename(r.dir), tag + '.log')))
     return rc, text
 
@@ -785,58 +785,201 @@ for _k, _args, _tag in (('base', ['--size', '1024'], '1024'), ('base', ['--res',
         'res_check.py popups at %s: menu, Objectives, Chat, Diplomacy, About centred; the tech tree; Save and '
         'Load screens at the size that fits, centred (%s)' % (_tag, GAMES[_k]['title'])), _k, 3.5))
 
+# The interface's layout at each base size (widescreen.c): its width, and the rows under the map.
+HUD_BASE = {1280: 250, 1024: 200, 800: 170}
 
-def widescreen_fn(kind):
+
+def hud_base(w, h):
+    """widescreen.c's choice of the base layout for --res WxH: (base width, interface rows)."""
+    bw = 1280 if w >= 1280 and h >= 720 else 1024 if w >= 1024 and h >= 700 else 800
+    return bw, HUD_BASE[bw]
+
+
+def side_column(d, band):
+    """widescreen_side_column: the art's column (0 = its edge) shown d columns out from it."""
+    k = d % (2 * band)
+    return k if k < band else 2 * band - 1 - k
+
+
+def hud_sides(png):
+    """The interface band of a --res shot: its mean grey, the sides' mean grey, their share of
+    black pixels, and the share of side pixels equal to the art's pixel that --hud-sides fill
+    mirrors there (1.0: every side pixel is the art's own)."""
+    import numpy as np
+    from PIL import Image
+    a = np.asarray(Image.open(png).convert('RGB'), dtype=np.int16)
+    h, w, _ = a.shape
+    bw, bh = hud_base(w, h)
+    dx, band = (w - bw) // 2, bw // 100
+    rows = a[h - bh:]
+    hud, left, right = rows[:, dx + 10:dx + bw - 10], rows[:, :dx], rows[:, dx + bw:]
+    grey = rows.mean(axis=2)
+    sides = np.concatenate([grey[:, :dx], grey[:, dx + bw:]], axis=1)
+    lsrc = [dx + side_column(d, band) for d in range(dx)][::-1]            # the left side, x = 0..dx-1
+    rsrc = [dx + bw - 1 - side_column(d, band) for d in range(w - dx - bw)]
+    match = np.concatenate([(left == rows[:, lsrc]).all(axis=2), (right == rows[:, rsrc]).all(axis=2)], axis=1)
+    return {'hud_mean': round(float(hud.mean()), 1), 'sides_mean': round(float(sides.mean()), 1),
+            'sides_black': round(float((sides < 8).mean()), 4), 'sides_mirror': round(float(match.mean()), 4),
+            'base': bw, 'rows': bh, 'dx': dx}
+
+
+def sides_crop(png, out):
+    """The two sides of the interface band side by side, as a PNG."""
+    from PIL import Image
+    im = Image.open(png).convert('RGB')
+    w, h = im.size
+    bw, bh = hud_base(w, h)
+    dx = (w - bw) // 2
+    c = Image.new('RGB', (w - bw, bh))
+    c.paste(im.crop((0, h - bh, dx, h)), (0, 0))
+    c.paste(im.crop((dx + bw, h - bh, w, h)), (dx, 0))
+    c.save(out)
+    return out
+
+
+def view_marker_moved(png_a, png_b, x0, y0, x1, y1):
+    """The minimap's view frame (its white outline, and the cursor beside it) in two shots: the
+    mean x of the white pixels only shot A has, and of those only shot B has (the art's own white
+    is in both). None for a shot with fewer than 20."""
+    import numpy as np
+    from PIL import Image
+    wa, wb = [(np.asarray(Image.open(p).convert('RGB'), dtype=np.int16)[y0:y1, x0:x1] > 220).all(axis=2) for p in (png_a, png_b)]
+    out = []
+    for m in (wa & ~wb, wb & ~wa):
+        xs = np.nonzero(m)[1]
+        out.append(float(xs.mean()) + x0 if len(xs) >= 20 else None)
+    return tuple(out)
+
+
+def layout_text(path):
+    """SWGB_RES_DUMP's panel tree without the panels' addresses: vtable and rect per panel."""
+    if not path or not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return ''.join(re.sub(r'^(\s*)[0-9A-F]{8} ', r'\1', l.rstrip()) + '\n' for l in f if l.strip())
+
+
+def read_text(path):
+    with open(path) as f:
+        return f.read()
+
+
+# The minimap at the 1280 base layout: its box, and two points to click (left and right of it).
+MINIMAP_1280 = (775, 822, 1170, 1020)
+MINIMAP_CLICKS = ((850, 921), (1090, 921))
+
+
+def widescreen_fn(kind, res='1920x1080', sides='fill'):
     def fn(ctx, r):
-        """--res 1920x1080: Options -> the third Screen Size, a skirmish at 1920x1080"""
         g = GAMES[kind]
+        W, H = map(int, res.split('x'))
         rx, ry = OPTIONS_RADIO[1280]
         out = r.dir
         os.makedirs(out, exist_ok=True)
+        bw, bh = hud_base(W, H)
+        dx, dy = (W - bw) // 2, H - {1280: 1024, 1024: 768, 800: 600}[bw]
+        ma, mb = [(x + dx, y + dy) for x, y in MINIMAP_CLICKS]
         s = [(12, 'move:%d:%d' % MAIN_OPTIONS), (13, 'click:%d:%d' % MAIN_OPTIONS),
              (18, 'shot=%s' % os.path.join(out, 'options.bmp')),
              (19, 'move:%d:%d' % (rx, ry)), (20, 'click:%d:%d' % (rx, ry)),
              (24, 'move:%d:%d' % MAIN_SINGLE), (25, 'click:%d:%d' % MAIN_SINGLE),
              (38, 'move:%d:%d' % g['sp_standard']), (39, 'click:%d:%d' % g['sp_standard']),
              (52, 'move:%d:%d' % SETUP_START), (53, 'click:%d:%d' % SETUP_START),
-             (110, 'shot=%s' % os.path.join(out, 'map.bmp'))]
-        rc, text = run_host(ctx, r, kind, s, 118, extra=['--res', '1920x1080'])
+             (110, 'shot=%s' % os.path.join(out, 'map.bmp')),
+             (112, 'shot=%s' % os.path.join(out, 'map2.bmp')),
+             (113, 'move:%d:%d' % ma), (114, 'click:%d:%d' % ma), (116, 'shot=%s' % os.path.join(out, 'mini_a.bmp')),
+             (117, 'move:%d:%d' % mb), (118, 'click:%d:%d' % mb), (120, 'shot=%s' % os.path.join(out, 'mini_b.bmp'))]
+        dump = os.path.join(out, 'layout_dump.txt')
+        env = dict(os.environ, SWGB_RES_DUMP=dump)
+        extra = ['--res', res] + (['--hud-sides', sides] if sides != 'fill' else [])
+        rc, text = run_host(ctx, r, kind, s, 124, extra=extra, env=env)
         expect_exit(r, rc)
         events(r, text)
         modes = ['%sx%s' % m for m in re.findall(r'SetDisplayMode\((\d+)(?:, |x)(\d+)', text)]
         r.log('SetDisplayMode: ' + ', '.join(modes))
-        if '1920x1080' not in modes:
-            r.fail('no SetDisplayMode(1920, 1080)')
-        opt, mp = png_of(os.path.join(out, 'options.bmp')), png_of(os.path.join(out, 'map.bmp'))
-        r.image(opt, 'Options: the third size reads 1920 x 1080')
-        r.image(mp, 'a skirmish at 1920x1080')
-        compare(ctx, r, opt, '%s/options_1920' % kind, tol=0.03)
-        if mp:
-            from PIL import Image
-            w, h = Image.open(mp).size
-            if (w, h) != (1920, 1080):
-                r.fail('the shot is %dx%d' % (w, h))
-            elif blank(mp):
-                r.fail('the map is blank')
-            else:
-                # the HUD at the bottom, centred: its 1280-wide art from x 320, black either side
-                import numpy as np
-                a = np.asarray(Image.open(mp).convert('L'), dtype=np.int16)
-                hud, left, right = a[1080 - 200:, 330:1590], a[1080 - 200:, :300], a[1080 - 200:, 1620:]
-                r.metrics['hud_mean'] = round(float(hud.mean()), 1)
-                r.metrics['sides_mean'] = round(float(max(left.mean(), right.mean())), 1)
-                if hud.mean() < 20:
-                    r.fail('no HUD at the bottom (mean grey %.0f)' % hud.mean())
-                if max(left.mean(), right.mean()) > 8:
-                    r.fail('the HUD is not centred: the sides are not black (mean grey %.0f)' % max(left.mean(), right.mean()))
-        else:
+        if res not in modes:
+            r.fail('no SetDisplayMode(%d, %d)' % (W, H))
+        opt = png_of(os.path.join(out, 'options.bmp'))
+        shots = [png_of(os.path.join(out, n + '.bmp')) for n in ('map', 'map2', 'mini_a', 'mini_b')]
+        mp = shots[0]
+        r.image(opt, 'Options: the third size reads %s' % res.replace('x', ' x '))
+        r.image(mp, 'a skirmish at %s, --hud-sides %s' % (res, sides))
+        compare(ctx, r, opt, '%s/options_%s' % (kind, '1920' if res == '1920x1080' else res), tol=0.03)
+        if not mp:
             r.fail('no shot of the map')
-    fn.__doc__ = '--res 1920x1080: Options names it, a skirmish at that size with the HUD centred (%s)' % GAMES[kind]['title']
+            return
+        from PIL import Image
+        if Image.open(mp).size != (W, H):
+            r.fail('the shot is %dx%d' % Image.open(mp).size)
+            return
+        if blank(mp):
+            r.fail('the map is blank')
+            return
+        # the HUD at the bottom, centred; beside it the art's own edges, mirrored (or black). The
+        # civilization (so the art) is random each game: the sides are checked against the art
+        # in the same shot, not against a stored picture.
+        f = hud_sides(mp)
+        r.metrics.update({k: f[k] for k in ('hud_mean', 'sides_mean', 'sides_black', 'sides_mirror')})
+        r.log('interface: base %d, mean grey %.0f; sides: mean grey %.0f, %.1f%% black, %.1f%% the art mirrored'
+              % (f['base'], f['hud_mean'], f['sides_mean'], f['sides_black'] * 100, f['sides_mirror'] * 100))
+        if f['hud_mean'] < 20:
+            r.fail('no HUD at the bottom (mean grey %.0f)' % f['hud_mean'])
+        if sides == 'black':
+            if f['sides_mean'] > 8:
+                r.fail('--hud-sides black: the sides are not black (mean grey %.0f)' % f['sides_mean'])
+        else:
+            if f['sides_black'] > 0.3 or f['sides_mean'] < 20:   # the art's own outlines: 7-12% black
+                r.fail('--hud-sides fill: the sides are black (%.0f%% black, mean grey %.0f)' % (f['sides_black'] * 100, f['sides_mean']))
+            if f['sides_mirror'] < 0.97:   # a panel drawn over the art's last columns (800 wide: 2%)
+                r.fail('--hud-sides fill: only %.1f%% of the sides are the art mirrored' % (f['sides_mirror'] * 100))
+        # steady: the sides the same two seconds later
+        if shots[1]:
+            import numpy as np
+            a1 = np.asarray(Image.open(sides_crop(mp, os.path.join(out, 'sides1.png'))))
+            a2 = np.asarray(Image.open(sides_crop(shots[1], os.path.join(out, 'sides2.png'))))
+            same = float((a1 == a2).all(axis=2).mean())
+            r.metrics['sides_steady'] = round(same, 4)
+            if same < 0.999:
+                r.fail('the sides changed between two frames (%.2f%% the same)' % (same * 100))
+        else:
+            r.fail('no second shot of the map')
+        # the minimap answers where it is drawn: its view frame follows a click left, then right
+        if bw == 1280:
+            if shots[2] and shots[3]:
+                x0, y0, x1, y1 = MINIMAP_1280
+                box = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+                xa, xb = view_marker_moved(shots[2], shots[3], *box)
+                r.image(shots[3], 'the minimap clicked right of its centre')
+                r.log('minimap view frame: x %s after the click at x %d, %s after the click at x %d'
+                      % (xa and round(xa), ma[0], xb and round(xb), mb[0]))
+                if xa is None or xb is None or abs(xa - ma[0]) > 30 or abs(xb - mb[0]) > 30:
+                    r.fail('the minimap view frame is not where it was clicked (x %s for %d, %s for %d)' % (xa, ma[0], xb, mb[0]))
+            else:
+                r.fail('no shots after the minimap clicks')
+        # every panel's place (so every click): the same with --hud-sides fill and black
+        lay = layout_text(dump)
+        key = os.path.join(ctx.baselines, kind, 'layout_%s.txt' % res)
+        if lay is None:
+            r.fail('no layout dump (SWGB_RES_DUMP)')
+        elif ctx.a.update_baselines or not os.path.exists(key):
+            os.makedirs(os.path.dirname(key), exist_ok=True)
+            with open(key, 'w') as fo:
+                fo.write(lay)
+            r.log('layout recorded as the baseline (%s)' % key)
+        elif read_text(key) != lay:
+            r.fail('the panels are not where the baseline has them (%s against %s)' % (dump, key))
+        else:
+            r.log('layout: %d panels, as the baseline' % lay.count('\n'))
+    fn.__doc__ = '--res %s --hud-sides %s: Options names it, the HUD centred, %s beside it, the minimap answers, the layout (%s)' % (
+        res, sides, 'the art mirrored' if sides == 'fill' else 'black', GAMES[kind]['title'])
     return fn
 
 
 for _k in GAMES:
-    CHECKS.append(Check('widescreen/' + _k, 'functional', widescreen_fn(_k), _k, 2.0))
+    CHECKS.append(Check('widescreen/' + _k, 'functional', widescreen_fn(_k), _k, 2.1))
+CHECKS.append(Check('widescreen/base_black', 'functional', widescreen_fn('base', '1920x1080', 'black'), 'base', 2.1))
+CHECKS.append(Check('widescreen/base_3440', 'functional', widescreen_fn('base', '3440x1440'), 'base', 2.1))
+CHECKS.append(Check('widescreen/cc_2560', 'functional', widescreen_fn('cc', '2560x1440'), 'cc', 2.1))
 
 
 def films_fn(kind):

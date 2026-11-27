@@ -161,11 +161,18 @@ rounded down to a multiple of 4 (1366 becomes 1364); sizes from 800 x 600 to
 In a game, the interface is laid out at the largest of the game's own
 sizes that fits (1280 x 1024 from 1280 wide and 720 high, else
 1024 x 768, else 800 x 600): its art and panels sit at the bottom,
-centred, with black at the sides, and the map view takes all the rest of
-the screen. Dialogs centre on the whole screen. Save Game and Load (the
-Saved Game screen), screens of their own, are the largest of the game's
-sizes that fits, centred, with black around them; the tech tree and the
-Scenario Editor use the whole screen. Tested at 1024x600,
+centred, and the map view takes all the rest of the screen. Beside the
+interface, `--hud-sides fill` (the default) continues the interface art
+itself: each row goes on with the art's outermost 12 columns (10 at the
+1024 layout, 8 at 800), mirrored back and forth, so its top and bottom rims
+run across the screen and the frame becomes a ribbed plate in the
+civilization's own colours, with no seam and no copied button.
+`--hud-sides black` leaves the sides black, as before. Neither moves a
+panel: the map's clickable area and the minimap are the same either way.
+Dialogs centre on the whole screen. Save Game and Load (the Saved Game
+screen), screens of their own, are the largest of the game's sizes that
+fits, centred, with black around them; the tech tree and the Scenario
+Editor use the whole screen. Tested at 1024x600,
 1280x720, 1366x768, 1600x900, 1920x1080, 2560x1440 and 3440x1440:
 selection, the command buttons, the minimap, scrolling at the right edge,
 the menu and its dialogs, switching between every size and WxH from the

@@ -45,6 +45,7 @@
 #endif
 
 int widescreen_w, widescreen_h;
+int widescreen_sides = WIDESCREEN_SIDES_FILL;
 static int g_base_w, g_base_h;
 static int g_fit_w, g_fit_h;   /* the largest of the game's sizes within WxH: full screens */
 static uint32_t g_screen;   /* the game screen laid out at WxH */
@@ -85,6 +86,13 @@ int widescreen_parse(const char* s) {
     g_base_h = g_base_w == 1280 ? 1024 : g_base_w == 1024 ? 768 : 600;
     g_fit_w = w >= 1280 && h >= 1024 ? 1280 : w >= 1024 && h >= 768 ? 1024 : 800;
     g_fit_h = g_fit_w == 1280 ? 1024 : g_fit_w == 1024 ? 768 : 600;
+    return 1;
+}
+
+int widescreen_sides_parse(const char* s) {
+    if (!STRICMP(s, "fill")) widescreen_sides = WIDESCREEN_SIDES_FILL;
+    else if (!STRICMP(s, "black")) widescreen_sides = WIDESCREEN_SIDES_BLACK;
+    else { fprintf(stderr, "--hud-sides %s: black or fill\n", s); return 0; }
     return 1;
 }
 
@@ -349,6 +357,73 @@ AT_BASE_SIZE(hook_resources_draw, G_RESOURCES_DRAW)
  * size). */
 AT_BASE_SIZE(hook_game_interface, G_GAME_INTERFACE)
 
+/* ---- the sides beside the interface (--hud-sides fill) -----------------------
+ * The interface art is base_w wide (one SLP per civilization and size,
+ * INTERFAC.DRS 51101-51146 and interfac_x1.drs 51107-51148), and no two
+ * civilizations' art is alike, so the sides are made from the art itself:
+ * each row continues with the art's outermost band columns (12, 10 or 8 at
+ * 1280, 1024 or 800), mirrored back and forth: a fold at the art's edge,
+ * another every band columns.
+ * The rims along the top and the bottom run on across the screen, the frame
+ * becomes a ribbed plate in the civilization's own colours, and no button or
+ * screen of the art is copied. Every seam is a mirror fold, so nothing jumps.
+ *
+ * It copies palette indices, after the screen has drawn its art and before
+ * its panels draw over it: the sides are the screen's alone (no panel
+ * reaches them), and the map's clickable area and the minimap are not moved.
+ * A row of the art whose edge is transparent (Clone Campaigns' 1024 art has
+ * 131 clear rows on top; they are above the interface band) stays black:
+ * the SLP's outline table (left and right margins per row) says which.
+ *
+ * The draw area (TDrawArea): +0x08 the bits, +0x18 width, +0x1C height,
+ * +0x20 the pitch, +0x24 1 when the rows run top-down (else bottom-up), as
+ * the area's fill (sub_004736C0; Clone Campaigns' sub_00474160) reads them. */
+#define AREA_W(a)     MEM32((a) + 0x18)
+#define AREA_H(a)     MEM32((a) + 0x1C)
+#define AREA_PITCH(a) MEM32((a) + 0x20)
+#define AREA_TOPDOWN(a) (MEM32((a) + 0x24) == 1)
+
+static uint8_t* area_row(uint32_t area, int y) {
+    int h = (int)AREA_H(area);
+    int row = AREA_TOPDOWN(area) ? y : h - 1 - y;
+    return (uint8_t*)GUEST_PTR(AREA_BITS(area) + (uint32_t)row * AREA_PITCH(area));
+}
+
+/* The column of the art (0 = its edge, counting inwards) shown at distance d
+ * (0 = the column next to the art) out from it: a fold every band columns. */
+int widescreen_side_column(int d, int band) {
+    int k = d % (2 * band);
+    return k < band ? k : 2 * band - 1 - k;
+}
+
+static void sides_fill(uint32_t area, uint32_t shape, int top) {
+    int W = widescreen_w, H = widescreen_h;
+    if (!shape || !MEM8(shape + 0x14)) return;
+    /* The SLP the game loaded: inside the screen's paint (art_shift still on)
+     * the shape holds the copy with moved hotspots. */
+    uint32_t slp = g_art_depth && g_art_shape[0] == shape && g_art_slp[0] ? g_art_slp[0] : MEM32(shape + 0x0C);
+    if (!slp || MEM32(slp + 4) == 0 || (int)AREA_W(area) < W || (int)AREA_H(area) < H) return;
+    uint32_t fr = slp + 32;   /* frame 0 */
+    uint32_t outline = slp + MEM32(fr + 0x04);
+    int fw = (int)MEM32(fr + 0x10), fh = (int)MEM32(fr + 0x14);
+    int hx = (int)MEM32(fr + 0x18), hy = (int)MEM32(fr + 0x1C);
+    int dx = (W - g_base_w) / 2, dy = H - g_base_h;
+    int x0 = dx - hx, x1 = x0 + fw - 1;   /* the art's first and last columns on the screen */
+    int band = g_base_w / 100;            /* 12, 10, 8 at 1280, 1024, 800 */
+    if (fw < 2 * band || x0 < 0 || x1 >= W) return;
+    for (int y = top < 0 ? 0 : top; y < H; y++) {
+        int r = y - dy + hy;              /* the art's row */
+        if (r < 0 || r >= fh) continue;
+        int16_t l = (int16_t)MEM16(outline + (uint32_t)r * 4), rt = (int16_t)MEM16(outline + (uint32_t)r * 4 + 2);
+        if (l == (int16_t)0x8000 || rt == (int16_t)0x8000) continue;   /* an empty row */
+        uint8_t* p = area_row(area, y);
+        if (l == 0)
+            for (int d = 0; d < x0; d++) p[x0 - 1 - d] = p[x0 + widescreen_side_column(d, band)];
+        if (rt == 0)
+            for (int d = 0; d < W - 1 - x1; d++) p[x1 + 1 + d] = p[x1 - widescreen_side_column(d, band)];
+    }
+}
+
 /* vtable 0x0065CE24 + 0x60, sub_004F6A70: the screen paints itself and its
  * panels. */
 static void hook_game_screen_paint(void) {
@@ -372,7 +447,7 @@ static void hook_game_screen_draw(void) {
     base_size_off();
     art_restore();
 
-    /* Beside the interface: black, under the map view. */
+    /* Beside the interface: the art's own edges (--hud-sides fill) or black. */
     uint32_t area = MEM32(screen + 0x20);
     int top = H - (g_base_h - g_map_h);
     if (area && dx > 0 && top < H) {
@@ -383,6 +458,8 @@ static void hook_game_screen_draw(void) {
         if (g_eax && AREA_BITS(area)) {
             fill(area, 0, top, dx - 1, H - 1, 0);
             fill(area, dx + g_base_w, top, W - 1, H - 1, 0);
+            if (widescreen_sides == WIDESCREEN_SIDES_FILL)
+                sides_fill(area, MEM32(screen + G_SCREEN_ART0), top);
             guest_thiscall(G_AREA_UNLOCK, area, 1, lk);
         }
         g_esp = esp_after;

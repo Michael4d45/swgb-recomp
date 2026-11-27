@@ -16,7 +16,7 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 |---|---|---|---|---|
 | L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
-| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res 1920x1080` from Options, `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, and the frame-rate check (below) | as L1, ffmpeg |
+| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, and the frame-rate check (below) | as L1, ffmpeg |
 | L3 | `soak` | about 2 h at 5 games at once (8 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat); Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns. `--soak-scale 0.2` for a shorter trial. | as L2 |
 | L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
 
@@ -186,6 +186,28 @@ without a body, a lower function count, or any changed or vanished function
 (new ones pass: seeds add them). After an intended re-lift, record the new
 baseline with `--save` (`test.py --update-baselines`). The baseline holds
 hashes only.
+
+### The widescreen checks (L2)
+
+`widescreen/base`, `cc`, `base_black`, `base_3440`, `cc_2560`: Options ->
+the third Screen Size (it must name the size), Standard Game, then shots of
+the skirmish. Each checks:
+
+- the interface at the bottom, centred (its mean grey);
+- beside it, with `--hud-sides fill` (the default), at least 97% of the side
+  pixels equal to the art's pixel that `widescreen.c` mirrors there
+  (`hud_sides`: the art's outer 12 columns folded back and forth; a panel
+  drawn later over the art's last columns accounts for the rest at the 800
+  layout), and not black; with `--hud-sides black`, black. The civilization
+  (so the art) is random each game, so the sides are checked against the art
+  in the same shot rather than a stored picture;
+- the sides the same in two shots two seconds apart;
+- the minimap answers where it is drawn: a click left of its centre, then
+  right, and its view frame (the white pixels one shot has and the other
+  has not) must be within 30 pixels of each click;
+- the layout: `SWGB_RES_DUMP`'s panel tree (every panel's vtable and rect,
+  so every clickable place) against `test-baselines\<game>\layout_<WxH>.txt`.
+  `base` and `base_black` share theirs: the sides never move a panel.
 
 ### The frame-rate check (L2)
 
