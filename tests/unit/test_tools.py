@@ -155,6 +155,61 @@ class Runner(unittest.TestCase):
             self.assertEqual(runner.compare(ctx, r, png, 'k/menu', tol=0.02, region=(0, 50, 100, 100)), 0.0)
             self.assertEqual(r.status, 'PASS')
 
+    def test_retry_keeps_both_tries(self):
+        """--retry: the retry runs in <check>-retry1, so the first try's run.log and shots stay;
+        the report has both tries' lines and shots, each under its folder."""
+        with tempfile.TemporaryDirectory() as d:
+            class A:
+                jobs = 2
+
+            class C:
+                a, cancelled, results = A(), False, d
+
+            def fake(passes_on):
+                def run(c, attempt):
+                    r = runner.Result(c, d, attempt)
+                    os.makedirs(r.dir, exist_ok=True)
+                    with open(os.path.join(r.dir, 'run.log'), 'w') as f:
+                        f.write('try %d' % (attempt + 1))
+                    with open(os.path.join(r.dir, 'map.png'), 'wb') as f:
+                        f.write(b'png')
+                    r.image(os.path.join(r.dir, 'map.png'), 'map')
+                    if attempt < passes_on:
+                        r.fail('no shot: map')
+                    return r
+                return run
+
+            def text(*p):
+                with open(os.path.join(d, *p)) as f:
+                    return f.read()
+
+            flaky = runner.Check('skirmish/base', 'functional', None, game='base', doc='x')
+            solid = runner.Check('films/base', 'functional', None, game='base', doc='x')
+            run = fake(passes_on=1)
+            results = [run(flaky, 0), fake(0)(solid, 0)]
+            runner.retry_failed(C(), results, 1, run)
+            r = results[0]
+            self.assertEqual((r.status, results[1].status), ('FLAKY', 'PASS'))
+            self.assertEqual(text('skirmish_base', 'run.log'), 'try 1')
+            self.assertEqual(text('skirmish_base-retry1', 'run.log'), 'try 2')
+            self.assertEqual(r.lines[0], 'try 1: FAIL, in skirmish_base/')
+            self.assertIn('try 2: PASS, in skirmish_base-retry1/', r.lines)
+            self.assertEqual(r.images, [('skirmish_base/map.png', 'try 1: map'),
+                                        ('skirmish_base-retry1/map.png', 'try 2: map')])
+            self.assertEqual([t['dir'] for t in r.as_dict()['tries']], ['skirmish_base', 'skirmish_base-retry1'])
+            self.assertFalse(os.path.exists(os.path.join(d, 'films_base-retry1')))   # a pass is not retried
+
+            # failing every time: --retry 2 keeps three folders, and it stays a FAIL
+            run = fake(passes_on=9)
+            results = [run(runner.Check('res/1024', 'functional', None, game='base', doc='x'), 0)]
+            runner.retry_failed(C(), results, 2, run)
+            r = results[0]
+            self.assertEqual(r.status, 'FAIL')
+            self.assertEqual([t['try'] for t in r.as_dict()['tries']], [1, 2, 3])
+            self.assertEqual(sum(l.startswith('try ') for l in r.lines), 3)
+            for k, sub in enumerate(['res_1024', 'res_1024-retry1', 'res_1024-retry2']):
+                self.assertEqual(text(sub, 'run.log'), 'try %d' % (k + 1))
+
     def test_levels_cumulative(self):
         class A:
             just = False

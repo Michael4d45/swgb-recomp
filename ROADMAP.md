@@ -1,8 +1,11 @@
 # Roadmap
 
 ## Next
-- Play a skirmish for real: train workers, build, a few minutes against the AI.
-- Campaign 1 mission 1.
+- Play a skirmish for real by hand: train workers, build, a few minutes
+  against the AI (headless, games to the end already play: Stability /
+  coverage below).
+- Campaigns past their first missions (OOM-9's 1-5 are won; Stability /
+  coverage).
 - The mouse cursor (the game draws its own from `mcursors`) in recordings.
 - netlab QA on a test VM (it reports SKIP without game data).
 
@@ -314,6 +317,11 @@ what needs research or a new subsystem.
   use.
 - Text fields: the game's EDIT controls composed into softdd's frames, with
   the caret; no ghost box; focus kept across a trip to another window.
+- `tools/test.py --retry` keeps every try: each retry in a folder of its own
+  (`<check>-retry1`), the report listing each try's folder, lines and shots
+  (2026-11-26).
+- The README's status table and documentation list brought up to date with
+  what is merged (2026-11-26).
 
 ## Out of scope
 - Shipping any game file or generated source.
