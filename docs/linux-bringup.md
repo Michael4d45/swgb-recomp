@@ -172,9 +172,9 @@ pull request upstream) is your call.
    active. If it pauses, filter `WM_ACTIVATEAPP` there.
 5. **A skirmish with the mouse and keys, and sound** (the scripted
    skirmish in `docs/testing.md` works headless too).
-6. **CD music:** MCI `cdaudio` over `game/Music/TrackNN.ogg` with
-   stb_vorbis. It replaces `s_mciSendCommandA` in `shims.c`, and Windows
-   can use the same core. Gap 5 in linux-macos.md lists the MCI calls.
+6. **CD music:** done (2026-11-26): `src/runtime/cdaudio.c`, MCI `cdaudio`
+   over `game/Music/TrackNN.ogg` with stb_vorbis, the same on both hosts
+   ([music.md](music.md)).
 7. **Movies:** once Track 6's player is on `main`, its decoder core with
    frames into `hle_dd_frame_hook` and sound into `hle_audio_stream_*`
    (gap 4).

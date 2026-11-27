@@ -483,6 +483,8 @@ UNITS = {
               'the films: AVI headers, --films names, the film palette, dithering, drawing into 8 bits'),
     'keys': (['tests/unit/keys_test.c', RT + 'keyscript.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib'], [],
              'the --keys parser: every step kind, @FILE, drags, modifiers, live steps'),
+    'cdaudio': (['tests/unit/cdaudio_test.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['winmm.lib'], [],
+                'the CD music: Ogg decode and seek, the disc tracks and positions, play/notify/stop, the CD line volume'),
 }
 
 
@@ -495,6 +497,7 @@ UNITS_POSIX = {
     'keys': ([], []),
     'inflate': (HLE + ['-w'], []),
     'coverage': (HLE, []),
+    'cdaudio': (HLE, ['-lpthread', '-lm']),
 }
 
 
@@ -1083,6 +1086,80 @@ def enter_fn(kind):
 
 for _k in GAMES:
     CHECKS.append(Check('enter/' + _k, 'functional', enter_fn(_k), _k, 2.0))
+
+
+MUSIC_TRACK_S = 2.0      # tests/data/tone.ogg
+
+
+def music_fn(kind):
+    def fn(ctx, r):
+        # A disc of 2-second tracks (tests/data/tone.ogg as Track02..Track50), so the game's
+        # one long play, tracks 2-49, ends inside the check and its notification is seen.
+        disc = os.path.join(r.dir, 'disc')
+        os.makedirs(disc, exist_ok=True)
+        tone = os.path.join(ROOT, 'tests', 'data', 'tone.ogg')
+        for t in range(2, 51):
+            shutil.copyfile(tone, os.path.join(disc, 'Track%02d.ogg' % t))
+        steps, _ = skirmish_steps(kind, r.dir)
+        rc, text = run_host(ctx, r, kind, steps, 200, extra=('--music', disc))
+        expect_exit(r, rc)
+        events(r, text)
+        lines = [l.strip() for l in text.splitlines() if l.startswith('[cdaudio]')]
+        r.metrics['cdaudio_lines'] = len(lines)
+        if not any(l.startswith('[cdaudio] disc: tracks 1-50') for l in lines):
+            return r.fail('the disc was not read as tracks 1-50: %s' % (lines[:2],))
+        if '[cdaudio] status item 3 -> 0x32' not in lines:
+            r.fail('the game did not get 50 tracks from MCI_STATUS')
+        if not any(l.startswith('[cdaudio] output: ') for l in lines):
+            r.fail('no output was opened')
+        if not any(l.startswith('[cdaudio] volume ') for l in lines):
+            r.fail('the game never set the CD line\'s volume')
+        plays = [(i, float(m.group(1))) for i, l in enumerate(lines)
+                 for m in [re.match(r'\[cdaudio\] play from track 2 0:00 to track 50 0:00, notify at ([\d.]+) s', l)] if m]
+        if not plays:
+            return r.fail('the game never played tracks 2-49: %s' % '; '.join(l for l in lines if ' play ' in l)[:300])
+        i0, t0 = plays[0]
+        r.log('in game: tracks 2-49 from %.1f s (the menus play none: the game\'s own MP3s)' % t0)
+        if t0 < 40:
+            r.fail('the play began at %.1f s, before Start Game' % t0)
+        tracks = []
+        for l in lines[i0 + 1:]:
+            m = re.match(r'\[cdaudio\] track (\d+) \(audio\) at ([\d.]+) s', l)
+            if m:
+                tracks.append((int(m.group(1)), float(m.group(2))))
+            if l.startswith('[cdaudio] played to'):
+                break
+        nums = [n for n, _ in tracks]
+        if nums != list(range(2, 50)):
+            r.fail('tracks played %s, not 2-49 in order' % nums[:60])
+        gaps = [b - a for (_, a), (_, b) in zip(tracks[1:], tracks[2:])]
+        if gaps:
+            r.metrics['track_gap_min'], r.metrics['track_gap_max'] = round(min(gaps), 2), round(max(gaps), 2)
+            r.log('tracks 3-49 each %.2f-%.2f s apart (each is %.1f s)' % (min(gaps), max(gaps), MUSIC_TRACK_S))
+            if min(gaps) < MUSIC_TRACK_S - 0.3 or max(gaps) > MUSIC_TRACK_S + 0.5:
+                r.fail('a track did not last %.1f s: %.2f-%.2f s between them' % (MUSIC_TRACK_S, min(gaps), max(gaps)))
+        end = [(i, float(m.group(1))) for i, l in enumerate(lines)
+               for m in [re.match(r'\[cdaudio\] played to track 50 0:00 at ([\d.]+) s', l)] if m and i > i0]
+        if not end:
+            return r.fail('the play never reached track 50')
+        i1, t1 = end[0]
+        r.metrics['play_seconds'] = round(t1 - t0, 1)
+        r.log('played 48 tracks in %.1f s (%.1f s of audio)' % (t1 - t0, 48 * MUSIC_TRACK_S))
+        if abs((t1 - t0) - 48 * MUSIC_TRACK_S) > 3:
+            r.fail('48 tracks took %.1f s, not %.0f' % (t1 - t0, 48 * MUSIC_TRACK_S))
+        if '[cdaudio] notify successful' not in lines[i1:i1 + 3]:
+            r.fail('no MM_MCINOTIFY successful after the play\'s end')
+        if not [p for p in plays if p[0] > i1]:
+            r.fail('the game did not play tracks 2-49 again after the notification')
+        else:
+            r.log('then the notification, and the game played tracks 2-49 again')
+    fn.__doc__ = 'the CD music: tracks 2-49 from Start Game, each on time, the end\'s notify, the game\'s repeat (%s)' % \
+        GAMES[kind]['title']
+    return fn
+
+
+# Clone Campaigns: the farm's profile has its music at zero, so the game never opens the CD.
+CHECKS.append(Check('music/base', 'functional', music_fn('base'), 'base', 3.6))
 
 
 def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):

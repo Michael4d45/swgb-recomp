@@ -67,6 +67,7 @@ add_executable(swgb
   src/runtime/coverage.c
   src/runtime/keyscript.c
   src/runtime/dplay.c
+  src/runtime/cdaudio.c
   third_party/miniz/miniz.c
   ${PCRECOMP}/runtime/native32/native32.c
   ${PCRECOMP}/runtime/recomp32/image_loader.c
@@ -98,7 +99,7 @@ if(GEN_SOURCES)
     set_source_files_properties("${GEN_DIR}/${f}" PROPERTIES COMPILE_OPTIONS "/w;${GEN_HOT_OPT}")
   endforeach()
 endif()
-set_source_files_properties(src/runtime/host.c src/runtime/softdd.c src/runtime/present.c src/runtime/scaler.c src/runtime/present_d3d.c src/runtime/framerate.c src/runtime/profile.c src/runtime/resolve.c src/runtime/inflate.c src/runtime/widescreen.c src/runtime/movie.c src/runtime/keyscript.c src/runtime/dplay.c PROPERTIES COMPILE_OPTIONS "/W3")
+set_source_files_properties(src/runtime/host.c src/runtime/softdd.c src/runtime/present.c src/runtime/scaler.c src/runtime/present_d3d.c src/runtime/framerate.c src/runtime/profile.c src/runtime/resolve.c src/runtime/inflate.c src/runtime/widescreen.c src/runtime/movie.c src/runtime/keyscript.c src/runtime/dplay.c src/runtime/cdaudio.c PROPERTIES COMPILE_OPTIONS "/W3")
 set_source_files_properties(third_party/miniz/miniz.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
 target_link_libraries(swgb PRIVATE user32 gdi32 kernel32 ole32 uuid dxguid winmm ws2_32 shlwapi advapi32 d3d11 dxgi)
 

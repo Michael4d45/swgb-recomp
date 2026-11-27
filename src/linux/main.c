@@ -39,6 +39,7 @@
 #include "coverage.h"
 #include "widescreen.h"
 #include "dplay.h"
+#include "cdaudio.h"
 #include "profile.h"
 #include "swgb_linux.h"
 
@@ -625,8 +626,10 @@ static void usage(void) {
            "                  [--shot S file.bmp] [--keys SCRIPT|@FILE] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
            "                  [--exe work/" GUEST_EXE "] [--game game] [--cd DIR] [--films DIR]\n"
            "                  [--args \"<game switches>\"] [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]\n"
-           "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N|off] [--fps-log]\n"
-           "                  [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log]\n"
+           "                  [--res WxH|desktop] [--hud-sides fill|black] [--fps N|off] [--fps-log]
+"
+           "                  [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log] [--music off|DIR]
+"
            "                  [--profile FILE] [--profile-window A:B] [--profile-hz N]\n"
            "                  [--trace]\n");
 }
@@ -670,6 +673,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--trace")) win32hle_trace = 1;
         else if (framerate_arg(argc, argv, i)) i += framerate_arg(argc, argv, i) - 1;
         else if (dplay_arg(argc, argv, i)) i += dplay_arg(argc, argv, i) - 1;
+        else if (cdaudio_arg(argc, argv, i)) i += cdaudio_arg(argc, argv, i) - 1;
         else if (profile_arg(argc, argv, i)) i += profile_arg(argc, argv, i) - 1;
         else if (!strcmp(argv[i], "--films") && i + 1 < argc) {
             static char films[PATH_MAX];
