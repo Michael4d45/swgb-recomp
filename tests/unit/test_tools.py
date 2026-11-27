@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 
 import lift_check  # noqa: E402
+import res_check  # noqa: E402
 import soak  # noqa: E402
 import test as runner  # noqa: E402
 
@@ -105,6 +106,57 @@ class LiftCheck(unittest.TestCase):
             funcs, dispatch, _ = lift_check.scan(d)
             self.assertEqual(list(funcs), ['sub_0062343B'])
             self.assertEqual(dispatch, ['sub_0062343B'])
+
+
+class ResCheck(unittest.TestCase):
+    def test_fit(self):
+        self.assertEqual(res_check.fit(1920, 1080), (1280, 1024))
+        self.assertEqual(res_check.fit(2560, 1440), (1280, 1024))
+        self.assertEqual(res_check.fit(1364, 768), (1024, 768))
+        self.assertEqual(res_check.fit(1280, 720), (800, 600))
+        self.assertEqual(res_check.fit(1024, 768), (1024, 768))
+
+    def test_hud_button(self):
+        # the game's own sizes: the art's places; WxH: the 1280 layout at the bottom, centred
+        self.assertEqual(res_check.hud_button(800, 600, 0), (768, 480))
+        self.assertEqual(res_check.hud_button(1024, 768, 4), (983, 732))
+        self.assertEqual(res_check.hud_button(1920, 1080, 0), (1230 + 320, 852 + 56))
+        self.assertEqual(res_check.hud_button(1364, 768, 0), (1230 + 42, 852 - 256))
+
+    def _shots(self, w, h):
+        import numpy as np
+        before = np.full((h, w), 90, dtype=np.int16)       # the map
+        before[h - 150:, :] = 60                            # the HUD
+        return before
+
+    def test_popup_box(self):
+        before = self._shots(1920, 1080)
+        after = before.copy()
+        after[390:690, 810:1110] = 10                       # a dialog in the middle
+        after[1000:1020, 1540:1560] = 200                   # the button's highlight
+        after[100:104, 300:304] = 0                         # a unit walking
+        self.assertEqual(res_check.popup_box(before, after), (810, 390, 1109, 689))
+        self.assertIsNone(res_check.popup_box(before, before))
+        rep = res_check.Report(quiet=True)
+        self.assertTrue(res_check.check_centred(rep, before, after, 'dialog'))
+        off = before.copy()
+        off[150:450, 250:550] = 10                          # where an 800x600 layout put it
+        self.assertFalse(res_check.check_centred(rep, before, off, 'dialog at 800x600'))
+        self.assertFalse(res_check.check_centred(rep, before, before, 'nothing opened'))
+        self.assertEqual(rep.fails, 2)
+
+    def test_full_screen(self):
+        import numpy as np
+        rep = res_check.Report(quiet=True)
+        good = np.zeros((1080, 1920), dtype=np.int16)
+        good[28:1052, 320:1600] = 40                        # 1280x1024, centred
+        self.assertTrue(res_check.check_full_screen(rep, good, 'save'))
+        bad = np.zeros((1080, 1920), dtype=np.int16)
+        bad[0:1024, 0:1280] = 40                            # the art at 0,0
+        self.assertFalse(res_check.check_full_screen(rep, bad, 'save at 0,0'))
+        own = np.full((768, 1024), 40, dtype=np.int16)      # the game's own size: no margins
+        self.assertTrue(res_check.check_full_screen(rep, own, 'save at 1024x768'))
+        self.assertEqual(rep.fails, 1)
 
 
 class Runner(unittest.TestCase):

@@ -744,6 +744,48 @@ for _s in (800, 1024, 1280):
     CHECKS.append(Check('res/%d' % _s, 'functional', res_fn(_s), 'base', 4.0))
 
 
+def res_mode_fn(kind, what, args, shots, doc):
+    """res_check.py ingame or popups: its PASS and FAIL lines, its shots in the report."""
+    def fn(ctx, r):
+        cmd = [sys.executable, os.path.join(HERE, 'res_check.py'), what, '--out', r.dir, '--game', r.game,
+               '--exe', ctx.exe(kind), '--run', ctx.host(kind)] + list(args) + (['--cc'] if kind == 'cc' else [])
+        rc, out = run(ctx, r, cmd, 600, 'res_check.log', cwd=ROOT)
+        lines = re.findall(r'^(PASS|FAIL): (.*)$', out, re.M)
+        for s, l in lines:
+            r.log('%s: %s' % (s, l))
+            if s == 'FAIL':
+                r.fail(l)
+        r.metrics['passed'] = sum(1 for s, _ in lines if s == 'PASS')
+        if rc or not lines:
+            r.fail('res_check.py %s: exit %d' % (what, rc))
+        log = os.path.join(r.dir, 'run.log')
+        if os.path.exists(log):
+            events(r, open(log, encoding='utf-8', errors='replace').read())
+        for f in os.listdir(r.dir) if os.path.isdir(r.dir) else []:
+            if f.endswith('.bmp') and os.path.exists(os.path.join(r.dir, f[:-4] + '.png')):
+                os.remove(os.path.join(r.dir, f))
+        for name in shots:
+            r.image(os.path.join(r.dir, name + '.png'), name)
+    fn.__doc__ = doc
+    return fn
+
+
+# In-game switches (the Menu button after each), and every window over the map at sizes where
+# the game places it itself (1024x768) and where the host does (--res: widescreen.c).
+for _k in GAMES:
+    CHECKS.append(Check('res/ingame/' + _k, 'functional', res_mode_fn(
+        _k, 'ingame', ['--res', '1920x1080'],
+        ['01_1024x768_menu', '02_1920x1080_menu', '03_800x600_menu', 'i_score'],
+        'res_check.py ingame: Options in the game to 1024x768, 1920x1080, 800x600; the Menu button '
+        'answers after each, its menu centred (%s)' % GAMES[_k]['title']), _k, 3.5))
+for _k, _args, _tag in (('base', ['--size', '1024'], '1024'), ('base', ['--res', '2560x1440'], '2560x1440'),
+                        ('cc', ['--res', '1920x1080'], '1920x1080')):
+    CHECKS.append(Check('popups/%s-%s' % (_k, _tag), 'functional', res_mode_fn(
+        _k, 'popups', _args, ['b_menu', 'b_objectives', 'b_chat', 'b_diplomacy', 'b_techtree', 'c_save_typed', 'd_load', 'e_about'],
+        'res_check.py popups at %s: menu, Objectives, Chat, Diplomacy, About centred; the tech tree; Save and '
+        'Load screens at the size that fits, centred (%s)' % (_tag, GAMES[_k]['title'])), _k, 3.5))
+
+
 def widescreen_fn(kind):
     def fn(ctx, r):
         """--res 1920x1080: Options -> the third Screen Size, a skirmish at 1920x1080"""

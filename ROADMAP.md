@@ -42,11 +42,18 @@ what needs research or a new subsystem.
   proportional (`to_game`).
 - **Not checked:** a real window (headless only: no screen was used), so the
   `fit_window` change and a real mouse through `to_game` at 1280x1024 are
-  untested on screen; the shots are not compared with the original. The
-  scripted cursor is in game pixels, so `to_game` is not exercised by
-  `--keys`. A drag box-select (`--keys` cannot drag), and a map larger
-  than the starting area, were not tried. The skirmish map and
+  untested on screen; the shots are not compared with the original. A map
+  larger than the starting area was not tried. The skirmish map and
   civilization are random per run.
+- **Switching in a game (2026-11-26, headless):** the game menu's Options
+  changes the size in a game, both games, at every pair of 800x600, 1024x768,
+  1280x1024 and `--res` WxH; the HUD's Menu button answers after each, its
+  menu centred. "After an in-game switch to 1024x768 the menu button no longer
+  answers" (track 3's lead) did not come back, on main or on the host built at
+  the widescreen merge: with game-pixel clicks and with window pixels through a
+  1600x900 window. `tools/res_check.py ingame` (`test.py`: `res/ingame/*`).
+  A script must move the cursor after OK: left past the edge of a smaller
+  screen, it edge-scrolls the view to the bottom of the map (a black map).
 - **Risk:** low.
 
 ### 2. Presentation: scaling, fullscreen, pacing
@@ -102,13 +109,22 @@ what needs research or a new subsystem.
   (`sub_005D5D00`) and the resource counters (`sub_005D4930`) pick their
   800/1024/1280 variants by exact widths. All of these are indirect calls,
   so the host takes them over; nothing in the lifted C changes.
-- **Left:** the sides of the interface are black (stretching or tiling the
-  art's edges would look better); panels hidden at layout time and placed
-  when shown (some popups) may still use base-layout places; switching the
-  viewed player (`sub_0042F880`, debug and scenario tests) reloads the art
-  by the screen's real size; switching to WxH from the in-game Options is
-  untested, because after an in-game switch to 1024x768 the menu button no
-  longer answers, with or without `--res` (a track 1 lead).
+- **Done (2026-11-26):** switching to WxH (and from it) in a game, from the
+  game menu's Options, both games (`res_check.py ingame`). The windows over
+  the map, shot at 1024x768, 1280x1024, 1366x768, 1920x1080 and 2560x1440:
+  the game menu, Objectives, Chat, Diplomacy and About were already centred
+  (the game centres a dialog on its parent, the WxH screen). Save Game and Load
+  (the Saved Game screen) were not: screens of their own, laid out in
+  proportion to the whole screen over 1280x1024 art drawn at 0,0. They are now
+  the largest of the game's sizes that fits, centred, black around them
+  (`widescreen.c`: TPanel's `handle_size`, sub_004B6260, for a panel without a
+  parent). The tech tree keeps the whole screen (it lays out at any size; made
+  smaller it drew past its panel). The Scenario Editor has its own layout and
+  is unchanged. `res_check.py popups` (`test.py`: `popups/*`).
+- **Left:** the sides of the interface are black (track `hud-sides`);
+  switching the viewed player (`sub_0042F880`, debug and scenario tests)
+  reloads the art by the screen's real size; full screens not opened in these
+  checks (a campaign's, multiplayer's) may need a look at WxH.
 - **Risk:** done; low for the rest.
 
 ### 4. Clone Campaigns

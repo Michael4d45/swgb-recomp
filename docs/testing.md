@@ -14,9 +14,9 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 
 | Level | Name | Time | What it runs | Needs |
 |---|---|---|---|---|
-| L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
+| L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
-| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, `--res 1920x1080` from Options, `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, and the frame-rate check (below) | as L1, ffmpeg |
+| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res 1920x1080` from Options, `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, and the frame-rate check (below) | as L1, ffmpeg |
 | L3 | `soak` | about 2 h at 5 games at once (8 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat); Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns. `--soak-scale 0.2` for a shorter trial. | as L2 |
 | L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
 
@@ -440,7 +440,7 @@ profile in DIR), 2026-11-23: base game and Clone Campaigns, 3 minutes each,
 ## The game's three resolutions
 
 ```
-py -3 toolses_check.py 800|1024|1280 [--out DIR] [--game DIR] [--no-options]
+py -3 toolses_check.py 800|1024|1280 [--out DIR] [--game DIR] [--no-options]
 ```
 
 Headless (`--headless --multi`). It picks Screen Size on the 800x600 Options
@@ -469,9 +469,69 @@ run a private copy of the game's HKCU keys per `--game` folder
 (`HKCU\Software\swgb-recomp\hives\...`), so your Screen Size never reaches the
 user's game or another worktree's. To check that it persists: pick a size, end
 the game from the main menu (Exit at 40,565) and run
-`toolses_check.py SIZE --no-options`: it reaches that size without touching
-Options. In `--keys` the cursor is in game pixels (the host does not scale it); the
-letterboxed mouse is tested with `wmove`/`wclick` (next section).
+`toolses_check.py SIZE --no-options`: it reaches that size without touching
+Options. A `--keys` click is in game pixels, posted at the window pixel that maps
+to it, so it goes through the letterbox as the real mouse does; window pixels
+themselves are `wmove`/`wclick` (next section).
+
+### Switching in the game: `res_check.py ingame`
+
+```
+py -3 toolses_check.py ingame [--res WxH] [--cc] [--out DIR] [--game DIR] [--run EXE] [--exe EXE]
+```
+
+A skirmish at 800x600 (picked on the main Options first), then the game menu's
+Options (Menu, then Options at the screen's middle + 17; its Screen Size radio
+buttons at 133, 318/353/388 and OK at 305,455 on 800x600, centred on a bigger
+screen) switches to 1024x768, to the third size (1280x1024, or WxH with
+`--res`), and back to 800x600. After each switch: a shot (`NN_WxH`), the HUD's
+Menu button, and the game menu must open centred on the new screen
+(`NN_WxH_menu` against `NN_WxH_before`); then Quit Current Game, the score
+screen at 800x600 and Main Menu. It passes when the modes are exactly 800x600,
+1024x768, the third, 800x600.
+
+This is the check for "after an in-game switch to 1024x768 the Menu button no
+longer answers" (track 3's lead, 2026-11-21). It did not come back on main
+(2026-11-26), nor on the host built at the widescreen merge (`ebfe327`) against
+today's lift: 800, 1280 and 1920x1080 -> 1024, 800 -> 1024 -> 1280 -> 800,
+Options and Cancel again, Quit and the score screen, game-pixel clicks and
+`wclick` window pixels in a 1600x900 window. `test.py` runs it as
+`res/ingame/base` and `res/ingame/cc` with `--res 1920x1080`.
+
+One thing a script must do that a player does not: move the cursor after OK.
+The scripted cursor stays where it clicked, and after a switch to a smaller
+screen (1280x1024 -> 800x600) the old OK is past the bottom edge: the view
+edge-scrolls to the bottom of the map and the map looks black. A real
+fullscreen mode change clamps the cursor the same way; a window maps it in
+proportion. The check parks the cursor at 400,300 (inside every size).
+
+### Windows over the map: `res_check.py popups`
+
+```
+py -3 toolses_check.py popups [--size 800|1024|1280|wide] [--res WxH] [--cc] [--out DIR] ...
+```
+
+A skirmish at `--size` (`wide`: the third size, WxH with `--res`; the
+default), then each window, shot just before (`*_before`) and after: the
+HUD's buttons (Menu, Objectives, Chat, Diplomacy, Tech Tree; on the right, the
+base layout's places moved with the HUD at WxH), Save Game (the name
+`rescheck` typed, OK: the save must be in `SaveGame` and the game back at its
+size), Load (Yes, the Saved Game screen, Cancel) and About. A dialog passes
+when the box of what changed is centred on the screen (its middle within 4%
+across, 6% down); the tech tree when it spans the screen; Save and Load when
+they are the largest of the game's sizes that fits, centred, with black
+around (at the game's own sizes: the whole screen).
+
+Found at WxH (2026-11-26, shots at 1024x768, 1280x1024, 1366x768, 1920x1080,
+2560x1440, both games): every dialog was already centred (the game centres it
+on its parent, which is WxH). Save Game and Load were not: they are screens of
+their own, laid out in proportion to the screen from an 800x600 design, over
+the 1280x1024 background drawn at 0,0, so at 1920x1080 their buttons were
+spread across the screen with the picture in a corner. Now they are 1280x1024
+(1024x768 at 1366x768), centred (`widescreen.c`, "full screens shown in a
+game"). The tech tree is left at the whole screen: it lays itself out at any
+size, and made smaller it drew past its panel (a fault at 1920x1080).
+`test.py`: `popups/base-1024`, `popups/base-2560x1440`, `popups/cc-1920x1080`.
 
 ## The picture (scaling, fullscreen, pacing)
 

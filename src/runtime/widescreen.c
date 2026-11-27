@@ -46,6 +46,7 @@
 
 int widescreen_w, widescreen_h;
 static int g_base_w, g_base_h;
+static int g_fit_w, g_fit_h;   /* the largest of the game's sizes within WxH: full screens */
 static uint32_t g_screen;   /* the game screen laid out at WxH */
 static int g_map_h = 774;   /* the map view's height in the base layout */
 
@@ -55,6 +56,8 @@ void G_SCREEN_DRAW(void);
 void G_INFO_DRAW(void);
 void G_SCREEN_PAINT(void);
 void G_SCREEN_DELETE(void);
+void G_PANEL_SIZE(void);
+void G_PANEL_IDEAL(void);
 
 static FILE* g_trace;
 static int g_trace_on;
@@ -80,6 +83,8 @@ int widescreen_parse(const char* s) {
     widescreen_h = h;
     g_base_w = w >= 1280 && h >= 720 ? 1280 : w >= 1024 && h >= 700 ? 1024 : 800;
     g_base_h = g_base_w == 1280 ? 1024 : g_base_w == 1024 ? 768 : 600;
+    g_fit_w = w >= 1280 && h >= 1024 ? 1280 : w >= 1024 && h >= 768 ? 1024 : 800;
+    g_fit_h = g_fit_w == 1280 ? 1024 : g_fit_w == 1024 ? 768 : 600;
     return 1;
 }
 
@@ -106,6 +111,7 @@ static void trace_tramp(void) {
     uint32_t vt = g_ecx > 0x10000 && g_ecx < 0x7FFF0000 ? MEM32(g_ecx) : 0;
     fprintf(g_trace, "%08X from %08X  ecx %08X vt %08X  args %d %d %d %d\n", va, g_cur_func, g_ecx, vt,
             (int)ARG(0), (int)ARG(1), (int)ARG(2), (int)ARG(3));
+    fflush(g_trace);   /* a run ended by --watchdog keeps its last lines */
     fn();
 }
 static recomp_func_t trace_icall(uint32_t va, recomp_func_t fn) {
@@ -424,6 +430,60 @@ void widescreen_LoadStringA(void) {
 }
 #endif
 
+/* ---- full screens shown in a game ------------------------------------------
+ * A screen of its own opened in a game (Save Game, Load Game, the tech tree)
+ * is a panel without a parent that TPanel::setup (sub_004B54F0) sizes to
+ * the draw area: x, y, w, h at +0xA0, +0xA4, +0xB0 (and its maximum +0xB4),
+ * +0xB8 (+0xBC), placed by handle_size (+0x34 == 0: x, y, w, h as given).
+ * Its constructor then places its children in proportion to its width and
+ * height (from a design at 800x600: sub_004BA220 and the other child makers
+ * scale by +0x14/+0x18 over +0xF8/+0xFC), and its background is the art the
+ * game has for 800x600, 1024x768 or 1280x1024. At WxH it is made the largest
+ * of those sizes that fits, centred, with the game's black around it: it
+ * looks as it does at that size. */
+static int full_screen_panel(uint32_t p) {
+    /* The tech tree is left full size: it lays out at any size, and draws
+     * past a smaller panel (a fault at 1920x1080, garbage at 2560x1440). */
+    return MEM32(p + 0x40) == 0 && MEM32(p) != G_SCREEN_VTABLE && MEM32(p) != G_TECH_TREE_VTABLE;
+}
+
+/* TPanel vtable + 0x5C: handle_size(w, h), the draw area's size. setup calls it
+ * twice: with the panel at x, y, w, h (+0x34 == 0), then filling the area less
+ * the insets +0xA0..+0xAC (left, top, right, bottom; +0x34 == 1). */
+static void hook_panel_size(void) {
+    uint32_t p = g_ecx;
+    int W = widescreen_w, H = widescreen_h, dx = (W - g_fit_w) / 2, dy = (H - g_fit_h) / 2;
+    if ((int)ARG(0) == W && (int)ARG(1) == H && full_screen_panel(p) && (g_fit_w != W || g_fit_h != H)) {
+        int mode = (int)MEM32(p + 0x34);
+        if (mode == 0 && MEM32(p + 0xA0) == 0 && MEM32(p + 0xA4) == 0 &&
+            (int)MEM32(p + 0xB0) == W && (int)MEM32(p + 0xB8) == H) {
+            MEM32(p + 0xA0) = (uint32_t)dx;
+            MEM32(p + 0xA4) = (uint32_t)dy;
+            MEM32(p + 0xB0) = MEM32(p + 0xB4) = (uint32_t)g_fit_w;
+            MEM32(p + 0xB8) = MEM32(p + 0xBC) = (uint32_t)g_fit_h;
+            printf("[res] full screen %08X (vtable %08X): %dx%d at %d,%d\n", p, MEM32(p), g_fit_w, g_fit_h, dx, dy);
+        } else if (mode == 1 && !MEM32(p + 0xA0) && !MEM32(p + 0xA4) && !MEM32(p + 0xA8) && !MEM32(p + 0xAC)) {
+            MEM32(p + 0xA0) = (uint32_t)dx;
+            MEM32(p + 0xA4) = (uint32_t)dy;
+            MEM32(p + 0xA8) = (uint32_t)(W - g_fit_w - dx);
+            MEM32(p + 0xAC) = (uint32_t)(H - g_fit_h - dy);
+        }
+    }
+    G_PANEL_SIZE();
+}
+
+/* TEasy_Panel vtable + 0x110, sub_004B8590: the size the panel is made for
+ * (setup passes the draw area's), which picks its art. */
+static void hook_panel_ideal(void) {
+    uint32_t p = g_ecx;
+    if ((int)ARG(0) == widescreen_w && (int)ARG(1) == widescreen_h && full_screen_panel(p) &&
+        (int)P_W(p) == g_fit_w && (int)P_H(p) == g_fit_h && (g_fit_w != widescreen_w || g_fit_h != widescreen_h)) {
+        ARG(0) = (uint32_t)g_fit_w;
+        ARG(1) = (uint32_t)g_fit_h;
+    }
+    G_PANEL_IDEAL();
+}
+
 /* vtable 0x0065CE24 + 0x00: the game screen's destructor. */
 static void hook_game_screen_delete(void) {
     if (g_ecx == g_screen) g_screen = 0;
@@ -441,6 +501,8 @@ static recomp_func_t hooked(uint32_t va) {
     case G_RESOURCES_DRAW_VA: return hook_resources_draw;
     case G_GAME_INTERFACE_VA: return hook_game_interface;
     case G_SCREEN_DELETE_VA: return hook_game_screen_delete;
+    case G_PANEL_SIZE_VA: return hook_panel_size;
+    case G_PANEL_IDEAL_VA: return hook_panel_ideal;
     }
     return NULL;
 }
