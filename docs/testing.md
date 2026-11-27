@@ -34,7 +34,8 @@ C changed.
 own, `A:\Games\star\games\testing-<base|cc>-<k>` (hard links to the shared
 install, real copies of profiles and saves, as `worktree_env.ps1` makes them;
 made on first use and kept). `--jobs` games run at once (default 5, at most 8
-whatever is asked: the user plays on this machine). The tool stops only the
+whatever is asked: the user plays on this machine), and as many of the units
+and lift checks before them. The tool stops only the
 processes it started, by PID (`taskkill /T /PID`), when one runs past its
 time or on Ctrl-C.
 
