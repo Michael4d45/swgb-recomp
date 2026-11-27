@@ -209,6 +209,10 @@ Both instances run the same machine code, so nothing should differ. Specifically
   other ("a client with another build ...: refused" in its log), and the
   joiner sees the game's own "Unable to join game." Two links of the same
   source count as different builds: copy one build to both machines.
+  For a test only, `SWGB_MP_ANY_BUILD=1` on the hosting side lets another
+  build in ("... let in (SWGB_MP_ANY_BUILD)" in its log); `mp_pair.py
+  --run-b EXE` sets it and gives B that host, to see whether two builds of
+  one source (say the lifted C at `/O1` and `/O2`) simulate alike.
 
 Measured: no differences in any run (Tests below).
 
@@ -271,7 +275,7 @@ machine's exe. Changing rules is the user's decision.
 ## Tests
 
 ```
-py -3 tools\mp_pair.py [--minutes 20] [--activity idle|habits|busy] [--seed S] [--run EXE] [--game DIR] [--out DIR]
+py -3 tools\mp_pair.py [--minutes 20] [--activity idle|habits|busy] [--seed S] [--run EXE] [--run-b EXE] [--game DIR] [--out DIR]
 ```
 
 Two headless `--multi` runs over loopback. A creates; B (game folder
@@ -297,6 +301,7 @@ Shots every five minutes and at the end, `summary.json` in `--out`.
 | `--cc --minutes 5 --activity busy --seed 3` | 5 min, Clone Campaigns | PASS: 36 checkpoints, none differ |
 | `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (37.9 min of game time) | PASS: 125 checkpoints (250 records), none differ; 10,800 messages each way; no fault, drop or out-of-sync message |
 | A this build, B the same source linked a minute earlier | the join | refused as another build; B shows "Unable to join game." |
+| `--run-b`: A the lifted C at `/O1`, B at `/O2` (2026-11-26), `--minutes 25 --activity busy --seed 5` | 25 min (46.9 min of game time, turn 6,210) | PASS: let in with `SWGB_MP_ANY_BUILD`; 156 checkpoints (312 records), none differ; no fault, drop or out-of-sync message ([performance.md](performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default)) |
 
 ## What's left
 

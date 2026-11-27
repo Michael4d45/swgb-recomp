@@ -131,9 +131,9 @@ block is a call. The experiment below tried `/O2` on the hot files, and
 
 ## The generated code at /O2
 
-The 53 generated files (3.9M lines) are built at `/O1` because `/O2` on all
-of them stalled a build farm (Shogo's lift). Tried here on what the profiles
-say is hot:
+The 53 generated files (3.9M lines) were built at `/O1` because `/O2` on all
+of them stalled a build farm (Shogo's lift); since 2026-11-26 they are `/O2`
+(the next section). First tried here on what the profiles say is hot:
 
 - `profile_report.py --hot` lists the lifted functions that cover 90% of
   the lifted code's own time (with the helpers they call): 186 functions
@@ -161,9 +161,92 @@ say is hot:
 - **`__forceinline` on the helpers is worse:** with it, `recomp_0040.c` at
   `/O1` took 237 s to compile instead of 31 (tried in a pcrecomp worktree,
   not kept). `/O1` inlining big functions is what is slow; `/O2` is not.
-  These numbers also suggest `/O2` for the whole lift may no longer stall
-  (the files here compile as fast at `/O2` as at `/O1`); that needs a full
-  build of the generated code to confirm.
+  These numbers also suggested `/O2` for the whole lift may no longer stall:
+  the next section is that build.
+
+## The whole lift at /O2 (2026-11-26): now the default
+
+`GEN_OPT` is `/O2` (`-DGEN_OPT=/O1` for the old build). Measured headless on
+the same machine as above, while up to nine other agents' builds and games
+shared it: the noise is why every figure is several runs, and why the two
+builds ran side by side (`tools/perf_ab.py --pairs`, below).
+
+**The build** (a full build of the generated C, Ninja on 20 threads, the
+64-bit-hosted `cl`; the 4 `GEN_HOT_FILES` are `/O2` in both):
+
+| | `/O1` (the old default) | `/O2` |
+|---|---|---|
+| Base game, wall time | 30.6 min (1,833 s for the 53 files) | 34.0 min (2,036 s) |
+| ... compile time summed over the files | 5,653 s | 7,113 s (+26%) |
+| ... the slowest file, `recomp_0039.c` | 1,771 s | 1,970 s |
+| ... then `recomp_0035.c` | 572 s | 908 s |
+| Compilers' memory at once (private bytes, peak) | 5.5 GB | 6.8 GB |
+| One compiler's peak | 2.6 GB | 2.8 GB |
+| `swgb_gen.lib` / `swgbrecomp.exe` | 351 MB / 105.7 MB | 396 MB / 124.3 MB (+18%) |
+| Clone Campaigns, wall time | 17.4 min (integration's, 2026-11-22) | 32.5 min (8,548 s summed) |
+| ... memory at once, one compiler | | 7.8 GB, 2.7 GB |
+| `swgbrecomp_cc.exe` | 110.4 MB | 126.6 MB |
+
+`/O1` and `/O2` of the base game were built the same day, an hour apart; the
+Clone Campaigns `/O1` figure is from another day's load and is not a fair
+comparison. Either way one file, `recomp_0039.c`, is most of the wall time
+(it starts with the others and finishes alone); `/O2` adds about 10% to the
+wall time of a build and nothing stalled. Peak memory stays far below the
+machine's 32 GB.
+
+**The game** (`tools/perf_ab.py --pairs --runs 5`: both builds at once in
+each round, the first build first in even rounds; figures are medians of the
+seconds, from 20 s into the game to its end; "ms a frame" is the process's
+CPU time over the window divided by the frames drawn in it; the last column
+is the median of `/O2` over `/O1` round by round, and its range):
+
+| Scenario | build | CPU % of a core | frames drawn/s | shown/s | CPU ms a frame | `/O2` / `/O1` |
+|---|---|---|---|---|---|---|
+| Menus, 50 s | `/O1` | 2.5 (2-3) | 4 | 4 | | |
+| | `/O2` | 2.5 (2-3) | 4 | 4 | | |
+| Skirmish 800x600 (one Easiest computer, Tiny Savannah) | `/O1` | 12 (11-14) | 184 | 181 | 0.66 (0.60-0.80) | |
+| | `/O2` | 12 (11-14) | 184 | 181 | 0.64 (0.63-0.72) | 0.99 (0.80-1.15) |
+| ... `--fps off` | `/O1` | 92 | 944 (929-948) | 180 | 0.97 (0.93-1.03) | |
+| | `/O2` | 91 | 945 (930-961) | 180 | 0.95 (0.93-1.03) | 1.00 (0.98-1.01) |
+| Skirmish 2560x1440 fullscreen | `/O1` | 52 (39-61) | 185 | 179 | 2.81 (2.11-3.37) | |
+| | `/O2` | 47 (44-70) | 185 | 180 | 2.56 (2.33-3.77) | 0.92 (0.69-1.34) |
+| ... `--fps off` | `/O1` | 97 | 472 (426-518) | 180 | 2.04 (1.85-2.30) | |
+| | `/O2` | 97 | 504 (432-536) | 180 | 1.89 (1.83-2.23) | 1.02 (0.80-1.09) |
+| **Late game, 7 computers**, 800x600 | `/O1` | 58 (56-61) | 152 (150-154) | 136 (135-138) | 3.81 (3.71-4.06) | |
+| | `/O2` | 56 (55-58) | 159 (158-163) | 142.5 (141-145) | 3.54 (3.32-3.64) | **0.92 (0.89-0.95)** |
+| ... `--fps off` | `/O1` | 95 | 340 (307-343) | 150 (145-152) | 2.81 (2.76-3.06) | |
+| | `/O2` | 95 | 357 (319-365) | 157 (154-158) | 2.67 (2.62-2.91) | **0.95 (0.90-0.98)** |
+| **Late game, 7 computers**, 2560x1440 | `/O1` | 62 (58-64) | 144 (141-148) | 122 (120-125) | 4.32 (3.97-4.44) | |
+| | `/O2` | 56 (56-69) | 153 (144-155) | 130 (128-131) | 3.74 (3.70-4.73) | **0.89 (0.84-1.09)** |
+
+The late game is a save (`perf_ab.py --make-save 16`): me and two allies
+against five computers, Moderate, a Normal Savannah map, 16 minutes at Fast
+(about 24 minutes of game, every computer at Tech Level 3), loaded from
+Saved Game and played 3 minutes by an idle player, the view on my base. It is
+where the game is heaviest, and the only place it cannot keep to the
+refresh: about 150 frames drawn a second at 800x600, 122-130 shown at
+2560x1440. There `/O2` costs 8-11% less a frame, in four of the five rounds
+or all five, and shows 5-7% more frames (122 to 130 a second at 2560x1440,
+ranges that do not meet). A light skirmish is unchanged: its frame is mostly
+the host's (the presenter, softdd's Blt), and the 1440 skirmish's random map
+makes its rounds spread more than any difference between the builds.
+
+The profile of the late game at 2560x1440 (`--profile`, one run each, the
+same 155 s): the game thread ran 58,191 samples at `/O1` for 144 frames a
+second, 53,975 at `/O2` for 153: about 13% less a frame. pcrecomp's helpers
+in the generated code (`recomp_cond`, `fp_push_impl`, `fp_pop_impl`, ...)
+fell from 13,070 samples to 8,694 (-33%): at `/O2` they are inlined into the
+lifted functions. The lifted code itself fell 5% (19,582 to 18,651); the
+host's share is the same work.
+
+**Correctness.** `/O2` changes no result: `mp_pair.py --run-b` played a
+25-minute busy LAN game with A on the `/O1` host and B on the `/O2` one
+(`SWGB_MP_ANY_BUILD=1` lets the join accept another build): 156 checkpoints
+(312 sync records, 46.9 minutes of game, turn 6,210), none different; no
+fault, drop or out-of-sync message. Clone Campaigns the same way: below in
+[multiplayer.md](multiplayer.md#tests). A soak of the `/O2` host (`soak.py`,
+two 25-minute skirmishes) and the functional gate on it: see ROADMAP.md,
+track 8.
 
 ## The GPU: `--present d3d11`
 
@@ -233,6 +316,24 @@ Also: `--fps-log` (frames drawn, changed and steps a second, CPU) and
 `tools/present_bench.c` for the scaler (its first lines have the `cl`
 command; "OK" when the pictures match the old scaler's).
 
+Two builds against each other (compiler flags, a pcrecomp change):
+
+```
+py -3 tools\perf_ab.py --build O1=DIR --build O2=DIR [--scenario menus,sk800,sk800-off,sk1440,sk1440-off,late,late-off,late1440]
+                       [--runs N] [--pairs] [--profile] [--save late.gax] [--cc] [--out DIR]
+py -3 tools\perf_ab.py --build O1=DIR --make-save 16 --out DIR      # the late game's save
+```
+
+The same scripted headless games (`SWGB_PAINT_HEADLESS=1`, `--fps-log
+--present-log`) for each build, in turn or (`--pairs`) at once, each in a
+game folder of its own; every game sets its Screen Size in Options first
+(the 1440 scenarios pick the third, `--res 2560x1440 --fullscreen`): a folder
+remembers it. `report.md` and `summary.json` in `--out`: per scenario and
+build the median and range of CPU, frames drawn, shown and changed a second,
+steps a second and CPU ms a frame, and each build's ratio to the first, round
+by round. `--profile` adds a `--profile` run of each and its
+`profile_report.py`.
+
 ## Not done, or left
 
 - **On the real screen** (2026-11-22, with the user's go-ahead):
@@ -244,7 +345,9 @@ command; "OK" when the pictures match the old scaler's).
 - Callbacks into the game's window procedure go through an exception each
   (native32's VEH, which also calls `getenv` on every one); in game that is
   ~2 a frame. pcrecomp's.
-- `/O2` for the whole lift (above): one full build of the generated code to
-  time it and measure.
+- `/O2` for the whole lift: done (above), the default now. The shared
+  `swgb_gen.lib` worktrees link is still the `/O1` one until the integrator
+  next builds the generated code. Not tried: `/GL` (whole-program
+  optimization: one link over 3.9M lines), `/Ob3`, PGO.
 - Loading: a map loads in under a second here; its progress presents are
   held back by the pacing and cost little.

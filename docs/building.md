@@ -183,7 +183,9 @@ change on; use it to find more of them.
 
 `build.cmd` configures CMake with Ninja for 32-bit MSVC and builds
 `build\swgbrecomp.exe`. `-DGEN_OPT=/Od` (in `CMAKE_ARGS`) compiles the
-generated C unoptimized, much faster; the default is `/O1`. On a
+generated C unoptimized, much faster; the default is `/O2` (`/O1` until
+2026-11-26: [performance.md](performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default),
+`-DGEN_OPT=/O1` for it: 10% shorter, 8-11% slower in a late game). On a
 [recomp-netlab](https://github.com/sp00nznet/recomp-netlab) farm:
 `netlab build swgb-recomp` (recipe `projects/swgb-recomp.env`, `/Od`), which
 lands the build in `build-farm\`.
@@ -215,9 +217,10 @@ not-lifted stubs 0   errors 0` and 5.5M lines of C in `src\recomp\gen_cc\`.
 `battlegrounds_cc.exe`: that one is the same build with a community
 widescreen mod in it, and `run_lift.py` refuses it ([lifting.md](lifting.md#clone-campaigns)).
 
-It is built as the base game is: `GEN_OPT` (`/O1`), and `GEN_HOT_OPT`
-(`/O2`) for `CC_GEN_HOT_FILES`, the seven files the base game's four hot
-ones became in x1. The full build took 25 minutes here: 11 for 52 files at
+It is built as the base game is: `GEN_OPT` (`/O2`; it was `/O1`, with
+`GEN_HOT_OPT` (`/O2`) for `CC_GEN_HOT_FILES`, the seven files the base game's
+four hot ones became in x1). At `/O2` it took 32.5 minutes here on a busy
+machine, 7.8 GB for the compilers at once and 2.7 GB for one. The full build took 25 minutes here: 11 for 52 files at
 `-j 6`, then 14 for `recomp_0039.c` alone, whose compiler peaks near 4 GB
 of commit (the base game's own large files are alike). Windows without a
 pagefile limits commit to the size of RAM whatever is free, so on a busy

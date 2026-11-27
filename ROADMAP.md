@@ -285,8 +285,23 @@ what needs research or a new subsystem.
   for 128 frames shown a second before, 45% for 180 after.
 - **GPU presenter:** `--present d3d11` (`present_d3d.c`), opt-in: real-screen
   check 38/38 and text fields fine, but the same CPU as change-only GDI here.
-- **Left:** `/O2` for the whole lift (one full build to time it); callbacks
-  into the window procedure without an exception each (pcrecomp).
+- **`/O2` for the whole lift (2026-11-26): now the default** (`GEN_OPT`,
+  `-DGEN_OPT=/O1` for the old build;
+  [performance.md](docs/performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default)).
+  Build: 34.0 min against 30.6 at `/O1` (the same day; `recomp_0039.c` alone
+  is most of either), compilers 6.8 GB at once (5.5), 2.8 GB for one (2.6),
+  exe 124 MB (106); Clone Campaigns 32.5 min, 7.8 GB, 127 MB. Game
+  (`tools/perf_ab.py`, both builds side by side, 5 rounds): a late game with
+  7 computers is 8-11% cheaper a frame (0.92x at 800x600, 0.89x at
+  2560x1440) and shows 5-7% more frames where it cannot keep to the refresh
+  (122 to 130 a second at 2560x1440); a light skirmish and the menus are
+  unchanged. The profile: pcrecomp's flag and x87 helpers -33% (inlined).
+  Same results: `mp_pair.py --run-b` with A at `/O1` and B at `/O2`, 25
+  minutes, 312 sync records, none differ; a 2x25-minute soak of `/O2`, no
+  event.
+- **Left:** callbacks into the window procedure without an exception each
+  (pcrecomp); the shared `swgb_gen.lib` is `/O1` until the next integration
+  build; `/GL`, PGO untried.
 - **Risk:** low.
 
 ### 9. Multiplayer (LAN)

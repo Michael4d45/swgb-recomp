@@ -1,5 +1,6 @@
 """The tools' own tests, no game needed: tools/soak.py's scripts and log reading,
-tools/lift_check.py, and tools/test.py's image and --fps-log readers.
+tools/lift_check.py, tools/test.py's image and --fps-log readers, perf_ab.py
+and mp_pair.py's sync compare.
 
     py -3 -m unittest -v tests.unit.test_tools        (tools/test.py --level unit runs it)
 """
@@ -14,6 +15,8 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 
 import lift_check  # noqa: E402
+import mp_pair  # noqa: E402
+import perf_ab  # noqa: E402
 import soak  # noqa: E402
 import test as runner  # noqa: E402
 
@@ -174,6 +177,56 @@ class Runner(unittest.TestCase):
         self.assertEqual([c.name for c in runner.select(a)], ['real/present'])
         a.level, a.cc = 'smoke', False
         self.assertFalse(any(c.game == 'cc' for c in runner.select(a)))
+
+
+class PerfAB(unittest.TestCase):
+    """tools/perf_ab.py (two builds, the same games) and mp_pair.py's sync-record compare."""
+
+    def test_figures(self):
+        rows = ['[fps] %6.1fs mode 4 cpu %3.0f%% presents %.0f/s changed 9/s | world 1 ms +1500/s speed 1.50 steps %.1f/s of 77.0 ms (max 80)'
+                % (t, c, p, 19.0 + (t % 2)) for t, c, p in [(5, 99, 10), (20, 50, 100), (21, 60, 200), (22, 40, 100), (90, 99, 1)]]
+        rows.append('[present] 1.0 s: 100 presents, 60 shown (180 Hz, sharp); by the timer: 0 held')
+        f = perf_ab.figures('\n'.join(rows), 20, 30)
+        self.assertEqual(f['seconds'], 3)
+        self.assertEqual(f['cpu'], 50)
+        self.assertEqual(f['drawn'], 100)
+        self.assertAlmostEqual(f['ms_frame'], 150 * 10 / 400)   # CPU over the window / frames drawn
+        self.assertEqual(f['steps'], 19)        # 19, 20, 19
+        self.assertEqual(f['shown'], 60)
+        self.assertIsNone(perf_ab.figures('nothing', 0, 10))
+
+    def test_ratio_by_round(self):
+        run = lambda ms, rc=4: {'ms_frame': ms, 'cpu': 50, 'exit': rc, 'events': 0}   # noqa: E731
+        res = {('O1', 'late'): [run(4.0), run(3.0), run(2.0)],
+               ('O2', 'late'): [run(3.6), run(3.0), run(1.0, rc=3)]}
+        t = perf_ab.summarize(res)['late']
+        self.assertEqual(t['O2']['ratio'][:2], [0.95, 0.9])     # rounds 0, 1; the fault's round left out
+        self.assertEqual(t['O2']['bad'], 1)
+        self.assertNotIn('ratio', t['O1'])
+        self.assertIn('ms/frame vs O1', perf_ab.report(perf_ab.summarize(res), ['O1', 'O2']))
+
+    def test_scenarios_set_their_screen_size(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, (plan, extra, size) in perf_ab.SCENARIOS.items():
+                s, t0, t1 = plan('base', d, size)
+                steps = dict((t, w) for t, w in s.steps)
+                self.assertLess(t0, t1, name)
+                if size is None:
+                    continue
+                # a game folder remembers Screen Size: each game picks its own before Single Player
+                self.assertEqual(steps[12], 'click:%d:%d' % perf_ab.MAIN_OPTIONS, name)
+                self.assertEqual(steps[19], 'click:%d:%d' % perf_ab.SIZE_RADIO[size], name)
+                self.assertEqual(size == 'res', '--res' in extra, name)
+                self.assertGreater(min(t for t, w in s.steps if w.startswith('click') and t > 19), 19, name)
+
+    def test_mp_sync_compare(self):
+        rec = lambda p, turn, ck: (0, (p, 1000 * turn, turn, 1000 * turn, ck, 7, 0, 5, 9))   # noqa: E731
+        a = [rec(1, 40, 11), rec(2, 40, 11), rec(1, 80, 12), rec(2, 80, 12)]
+        shared, bad = mp_pair.compare(a, list(a))
+        self.assertEqual((len(shared), bad), (4, []))
+        b = [rec(1, 40, 11), rec(2, 40, 11), rec(1, 80, 13), rec(2, 80, 13)]   # B's builds drift at turn 80
+        shared, bad = mp_pair.compare(a, b)
+        self.assertEqual(sorted(k for k, _, _ in bad), [(1, 80), (2, 80)])
 
 
 if __name__ == '__main__':

@@ -156,7 +156,7 @@ Results on Linux (Omarchy/Arch, clang 21, `-m32`, 2026-11-23), both games:
 | `pacing`, `pacing_cc` | `tests/unit/pacing_test.c` | `framerate.c` itself with a fake clock: `--fps 60/30/144/1000` passes a second, the 16/17 ms gate, the refresh default held to 30-1000, no catch-up burst after a 250 ms hitch, the menus untouched, `--fps` arguments; at the base and Clone Campaigns addresses |
 | `films` | `tests/unit/films_test.c` | `movie.c` itself: AVI headers, `--films` names (`NAME.avi`, then `xNAME.avi`), the film palette, the ordered dither (flat colours stay flat, the level holds on average), drawing into an 8-bit DC (the film palette and a foreign one) |
 | `keys` | `tests/unit/keys_test.c` | `keyscript.c`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
-| `tools` | `tests/unit/test_tools.py` | the Python side, as above |
+| `tools` | `tests/unit/test_tools.py` | the Python side, as above, and `perf_ab.py`'s figures, its round-by-round ratio and that every game sets its Screen Size, and `mp_pair.py`'s sync-record compare |
 
 They run on GitHub Actions (`.github/workflows/unit.yml`, `windows-latest`):
 pcrecomp is fetched at a pinned commit for its headers, and nothing of the game
