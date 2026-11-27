@@ -1592,7 +1592,7 @@ static HRESULT __stdcall dp_Open(dpobj* o, SD2* sd, DWORD flags) {
 }
 
 /* A chat line the game takes in, for the log (tools/mp_pair.py --chat checks every player got
- * every line). The game's own message: 'C', 2, ..., the sender's player number (a word at 12),
+ * every line). The game's own message: 'C', 2, ..., the sender's player number (a byte at 12; 13 is not set),
  * "Y"/"N" for each of the eight players it goes to (14-21), the text at 29 up to a 0. */
 static void chat_seen(DPID from, DPID to, const uint8_t* d, DWORD n) {
     if (n < 31 || d[0] != 'C' || d[1] != 2) return;
@@ -1602,7 +1602,7 @@ static void chat_seen(DPID from, DPID to, const uint8_t* d, DWORD n) {
     for (DWORD i = 29; i < n && d[i] && k < (int)sizeof text - 5; i++)
         k += d[i] >= 0x20 && d[i] < 0x7F && d[i] != '"' && d[i] != '\\' ? (text[k] = (char)d[i], 1) : _snprintf(text + k, 5, "\\x%02X", d[i]);
     text[k] = 0;
-    printf("[mp] chat from player %u (%08lX) to %08lX (%.8s): \"%s\"\n", d[12] | d[13] << 8, from, to, (const char*)d + 14, text);
+    printf("[mp] chat from player %u (%08lX) to %08lX (%.8s): \"%s\"\n", d[12], from, to, (const char*)d + 14, text);
 }
 
 static HRESULT __stdcall dp_Receive(dpobj* o, DPID* from, DPID* to, DWORD flags, void* data, DWORD* size) {

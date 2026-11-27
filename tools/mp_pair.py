@@ -364,14 +364,29 @@ def wsl_path(p):
     return '/mnt/%s%s' % (p[0].lower(), p[2:].replace('\\', '/'))
 
 
+def for_host(args, who, step):
+    """A step as that player's host reads it: a WSL player's shots go to WSL paths."""
+    if who in args.wsl and step.startswith('shot='):
+        return 'shot=' + wsl_path(step[5:])
+    return step
+
+
 def launch(args, who, k, game, out, keys, live, wd):
     log = open(os.path.join(out, 'run.log'), 'w')
     if who in args.wsl:
         root = WSL_CHECKOUT
         run = '%s/build-linux/%s' % (root, 'swgbrecomp_cc' if args.cc else 'swgbrecomp')
         exe = '%s/work/%s' % (root, 'battlegrounds_x1.exe' if args.cc else 'Battlegrounds.exe')
-        cmd = ['wsl.exe', '-d', WSL_DISTRO, '--cd', wsl_path(out), '--exec', run, '--run', '--multi', '--headless',
-               '--exe', exe, '--game', wsl_path(game), '--watchdog', str(wd), '--keys', '@' + wsl_path(keys), '--keys-live', wsl_path(live),
+        # its game folder in Linux's own file system (win32hle's LoadLibraryA finds no language.dll
+        # on a /mnt drive): work/games/<the Windows folder's name>, hard links to the checkout's game/
+        lgame = '%s/work/games/%s' % (root, os.path.basename(game.rstrip('\\/')))
+        subprocess.run(['wsl.exe', '-d', WSL_DISTRO, '--cd', root, '--exec', 'python3', '-c',
+                        "import sys; sys.path.insert(0, 'tools'); import soak; soak.ensure_game('game', %r)" % lgame])
+        # stderr into stdout in Linux: through wsl.exe the two reach the log with their own file
+        # positions, and one wrote over the other
+        cmd = ['wsl.exe', '-d', WSL_DISTRO, '--cd', wsl_path(out), '--exec', 'bash', '-c', 'exec "$@" 2>&1', 'bash',
+               run, '--run', '--multi', '--headless',
+               '--exe', exe, '--game', lgame, '--watchdog', str(wd), '--keys', '@' + wsl_path(keys), '--keys-live', wsl_path(live),
                '--mp-port', str(args.port)] + args.extra.split() + args.wsl_extra.split()
     else:
         cmd = [args.run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
@@ -414,6 +429,8 @@ def play(args, phase=''):
         folders[who] = game
         rnd = random.Random(args.seed * 4 + k + (100 if phase else 0))
         text, wd = script(who, k, n, args, outs[who], phase)
+        text = '\n'.join(l.split(':', 1)[0] + ':' + for_host(args, who, l.split(':', 1)[1]) if 'shot=' in l else l
+                         for l in text.split('\n'))
         plans[who] = game_plan(rnd, who, k, n, args, outs[who], phase)
         keys = os.path.join(outs[who], 'keys.txt')
         open(keys, 'w').write(text)
@@ -456,7 +473,7 @@ def play(args, phase=''):
                 if m and procs[w].poll() is None:   # the line shows for some seconds: a shot now
                     shot = os.path.join(outs[w], 'chat_%s.bmp' % m.group(5))
                     with open(lives[w], 'a') as f:
-                        f.write('0:shot=%s\n' % shot)
+                        f.write('0:%s\n' % for_host(args, w, 'shot=' + shot))
                     chat_shots[w].append(m.group(5))
         if g0 is not None:
             t = now - g0
@@ -467,7 +484,7 @@ def play(args, phase=''):
                     nxt[w] += 1
                 if due and procs[w].poll() is None:
                     with open(lives[w], 'a') as f:
-                        f.write(''.join('0:%s\n' % st for st in due))
+                        f.write(''.join('0:%s\n' % for_host(args, w, st) for st in due))
             if args.drop and not phase and dropped is None and t >= args.drop[1] * 60:
                 who = args.drop[0]
                 if procs[who].poll() is None:

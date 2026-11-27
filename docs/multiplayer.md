@@ -263,25 +263,46 @@ Not possible yet, and not tested:
 
 ## Lobby and session
 
-Works (headless, loopback, two players):
+Works (headless, loopback, two to four players):
 
 - the Multiplayer screen: the connection list, Show Games, the list of games
-  ("<name>'s Game"), Join, Create;
+  ("<name>'s Game"), Join, Create, and Restore (beside Create once
+  `SaveGame\Multi` holds a multiplayer save; Clone Campaigns' template always
+  has one);
 - the setup screen on both sides: both players, their ping (6-7 ms),
   civilizations, player numbers, "CD 1.1" versions, the settings (only the
   host can change them), I'm Ready, the host's Start Game;
 - the start: `EnableNewPlayers(FALSE)` closes the session to new joins, and
   both load the same map (Rebel Alliance and Gungans on the screenshots) and
   play;
-- leaving: the client's Close is `DPSYS_DESTROYPLAYERORGROUP` on the host. The
-  host going away is `DPSYS_SESSIONLOST` on the client, which then destroys its
-  player, closes and initializes a new connection for the Multiplayer screen
-  (seen when a watchdog ended the host first).
+- chat in the game: Enter, the text, Enter. Every other player's game takes
+  the line in and draws it at the left of the map in the sender's colour
+  (player 1 light blue, 2 light red, 3 green, 4 yellow); the Multiplayer Status
+  dialog keeps them too;
+- three and four players: each joins as the second did, and every sync record
+  is the same in all logs;
+- a player quitting (the game menu, Quit Current Game, Yes): its Close is
+  `DPSYS_DESTROYPLAYERORGROUP` on the others, and they play on with no vote;
+- a player resigning (the game menu, Resign, Yes): it stays in the session and
+  the game, the others play on;
+- a joiner's process killed: the host sees the connection close and destroys
+  its player at once; the game shows Multiplayer Status ("Player Dropped"),
+  the others vote Continue Game and play on, in sync;
+- the host's process killed: the others migrate (above): the next player hosts,
+  the third reconnects to it within a second, and after their Continue Game
+  votes they play on, in sync;
+- saving (the game menu, Save, OK): "Multiplayer Save - <date>" lands in each
+  player's `SaveGame\Multi` (`.msx` in the base game, `.ms1` in Clone
+  Campaigns);
+- restoring: the host's Restore lists the saves (the newest first), OK opens
+  the setup screen, the others join and ready as for a new game, and the game
+  goes on from where it was saved: the restored game's first sync record has
+  the save's world time (93 s into a game saved 45 s of real time in), and
+  every record after it agrees.
 
-Not tried yet: chat (typed text in the setup screen and the game), changing
-settings while a client is in, more than two players, computer players in a
-multiplayer game, saving and restoring a multiplayer game, a client dropping
-mid-game.
+Not tried yet: chat in the setup screen, changing settings while a client is
+in, computer players in a multiplayer game, a host migration in the setup
+screen, a restore with a player missing.
 
 ## Firewall
 
@@ -293,27 +314,87 @@ the first run of this track. Loopback is never filtered, so the tests here
 don't care, but a game between two machines needs an Allow rule for the host
 machine's exe. Changing rules is the user's decision.
 
+**WSL on the same machine** (mirrored networking, `hostAddressLoopback=true`,
+WSL's own firewall on): checked with a small UDP echo and TCP accept on ports
+2391-2395, both ways, no rule added:
+
+| From | To | 127.0.0.1 | the LAN address (192.168.1.25) | 255.255.255.255 |
+|---|---|---|---|---|
+| Windows | a listener in WSL | UDP and TCP | UDP and TCP | nothing comes back |
+| WSL | a listener on Windows | UDP and TCP | UDP and TCP | nothing comes back |
+
+So a Windows and a Linux host on one machine find each other through the
+loopback probe (`EnumSessions` always probes 127.0.0.1), and connect. A
+broadcast does not reach the other side, so `--mp-join` is the way from
+another machine. Mirrored networking shares the port space: whichever host
+binds 2300 first has it, and the other takes 2301 (the probes cover
+2300-2303).
+
+From another machine to a game hosted in WSL, Hyper-V's firewall for WSL
+filters inbound traffic. The rule that would let the game's ports in (run in
+an elevated PowerShell; not added here):
+
+```
+New-NetFirewallHyperVRule -Name SWGB-recomp-MP -DisplayName "SWGB recomp multiplayer" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 2300-2303
+New-NetFirewallHyperVRule -Name SWGB-recomp-MP-UDP -DisplayName "SWGB recomp multiplayer (UDP)" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol UDP -LocalPorts 2300-2303
+```
+
+(A host migration to a process in WSL would also need its listening port,
+which is any free one; with a host on Windows that is not an issue.)
+
 ## Tests
 
 ```
-py -3 tools\mp_pair.py [--minutes 20] [--activity idle|habits|busy] [--seed S] [--run EXE] [--game DIR] [--out DIR]
+py -3 tools\mp_pair.py [--players 2-4] [--minutes 20] [--activity idle|habits|busy] [--seed S] [--cc]
+                       [--chat] [--drop WHO@MIN] [--quit WHO@MIN] [--resign WHO@MIN]
+                       [--save MIN [--restore]] [--wsl WHO] [--run EXE] [--game DIR] [--out DIR] [--port N]
 ```
 
-Two headless `--multi` runs over loopback. A creates; B (game folder
-`DIR-mp2`, hard links) joins; both click I'm Ready; A starts (a Random Map, the
-setup screen's defaults). Then both play `--minutes`. With `habits`, every
-25-45 s each player selects the command center, trains a worker and
-right-clicks somewhere. `busy` adds a left or right click on the map or a
-command button every 2-6 s. It passes when:
+Headless `--multi` runs over loopback, players a, b, c, d. A creates; the
+others (game folders `DIR-mp2`.., hard links) start five seconds apart and
+join; all click I'm Ready; A starts (a Random Map, the setup screen's
+defaults). Then all play `--minutes`. With `habits`, every 25-45 s each player
+selects the command center, trains a worker and right-clicks somewhere. `busy`
+adds a left or right click on the map or a command button every 2-6 s.
 
-- both ran to their watchdog (exit 4): no fault, no not-lifted stub, no
-  unresolved call;
-- neither lost the session or a player before the planned end (B stops 10 s
-  before A);
+The menus are each run's `--keys` script, timed from the main menu's music
+(`on:open.mp3`), so a slow start on a busy machine delays the clicks with it.
+The game is played live (`--keys-live`): the tool watches the logs, takes the
+game's start from A's first sync record (the players finish loading seconds
+apart, but the lockstep game starts for all at once) and writes each player's
+steps as they fall due. It also answers what it reads: a shot of a player the
+moment a chat line arrives, and a Continue Game vote (three clicks, ten
+seconds apart) each time a player's Multiplayer Status dialog opens (its chat
+line is a window: `CreateWindowExA "" ... at 67,463 441x21`).
+
+- `--chat`: two lines from every player ("mpchatb1"...), each checked on
+  every other: in the log (`[mp] chat from ...`) and in the shot (pixels of the
+  sender's colour at the left of the map).
+- `--drop WHO@MIN`: that player's process is killed, by its PID. The others
+  must see it leave within 45 s and keep logging sync records after it; if
+  it was A, one of the others must take over as the host and the rest move to
+  it.
+- `--quit` / `--resign WHO@MIN`: the game menu's Quit Current Game or Resign.
+- `--save MIN`: A saves; `--restore` then plays a second game, A restoring the
+  newest save, which must start at the save's world time.
+- `--wsl WHO`: that player runs the Linux host in WSL (below).
+
+It passes when:
+
+- every run reached its watchdog (exit 4): no fault, no not-lifted stub, no
+  unresolved call (a dropped player is not checked);
+- nobody lost the session or a player before that player's planned end
+  (each joiner stops 20 s before the one before it), but the one dropped or
+  quitting;
 - no out-of-sync string was loaded;
-- the sync records agree, across the logs and within each.
+- the sync records agree, across every pair of logs and within each;
+- the chat, drop, quit and restore checks above.
 
 Shots every five minutes and at the end, `summary.json` in `--out`.
+`tools/test.py` runs it: `mp/base-3p` (3 players, chat, c dropped at 1 min)
+and `mp/cc-restore` (save at 0:45, restore) at the functional level; four
+players for 20 minutes, a quit, a host drop and longer restores in both games
+at the soak level.
 
 | Run | Game time | Result |
 |---|---|---|
@@ -322,6 +403,20 @@ Shots every five minutes and at the end, `summary.json` in `--out`.
 | `--cc --minutes 5 --activity busy --seed 3` | 5 min, Clone Campaigns | PASS: 36 checkpoints, none differ |
 | `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (37.9 min of game time) | PASS: 125 checkpoints (250 records), none differ; 10,800 messages each way; no fault, drop or out-of-sync message |
 | A this build, B the same source linked a minute earlier | the join | refused as another build; B shows "Unable to join game." |
+
+2026-11-26, this machine shared with nine other agents' builds and games:
+
+| Run | Game | Result |
+|---|---|---|
+| `--players 4 --minutes 3 --activity busy --chat` | base | PASS: 112 records in each of the four logs, none differ; 24 of 24 chat lines received and drawn. Multiplayer Status opened 6 times for a lagging player (no drop) and closed on the votes. |
+| `--players 3 --minutes 3 --activity busy --drop c@1` | base | PASS: a and b saw c leave at once, voted Continue Game, played on: 65 records shared, none differ |
+| `--players 3 --minutes 3 --activity busy --chat --drop a@1` | base | PASS: the host killed; b took over (`DPSYS_HOST`), c rejoined it within a second; 63 records after, none differ; 4 of 4 chat lines |
+| the same, `--cc` | Clone Campaigns | PASS: the same, 63 records |
+| `--players 3 --minutes 2.5 --activity busy --chat --quit b@1` | base | PASS: a and c saw b leave at once and played on with no vote; 58 records, none differ; chat 4 of 4 |
+| `--players 3 --minutes 2.5 --activity busy --resign c@1` | base | PASS: c stays; 63 records in each log, none differ |
+| `--players 2 --minutes 1.5 --activity busy --save 0.75 --restore` | base | PASS: the save in both `SaveGame\Multi`; the restored game starts at world time 93.2 s; 50 records after, none differ |
+| the same, `--cc` | Clone Campaigns | PASS: restored at 93.6 s; 50 records, none differ |
+| before the host migration: `--drop a@1` | base | the clients got `DPSYS_SESSIONLOST` and sat in Multiplayer Status, "Waiting For Vote", to the end |
 
 ## What's left
 

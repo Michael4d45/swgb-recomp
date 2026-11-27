@@ -301,10 +301,21 @@ what needs research or a new subsystem.
   logged (`[sync]`) and compared by `tools/mp_pair.py`.
   Results: 25 minutes of the base game and 20 of Clone Campaigns, every
   checkpoint the same on both sides; a different build is refused at the join.
-- **Left:** two real machines (a firewall Allow rule on the host's exe); chat, more players,
-  drops mid-game, saved multiplayer games; answering the startup version check
-  and the ordinal imports without dplayx.dll on disk (Linux); playing the
-  original exe (`--dplay native`, a working dplaysvr, the x87 transcendentals).
+- **Done (2026-11-26):** three and four players; chat (every line received,
+  logged and drawn on every other side); a joiner killed mid-game (the game's
+  Multiplayer Status, a Continue Game vote, play on in sync); the host killed
+  (host migration: the game asks for `DPSESSION_MIGRATEHOST`, and before this
+  the others lost the session); quit and resign; a multiplayer save restored
+  with the same players (base game and Clone Campaigns), the game going on from
+  the save in sync. `tools/mp_pair.py` does all of it (`--players`, `--chat`,
+  `--drop`, `--quit`, `--resign`, `--save --restore`, `--wsl`); `tools/test.py`
+  runs a short pair at the functional level and long ones at the soak level.
+- **Left:** two real machines (a firewall Allow rule on the host's exe); a
+  Windows and a Linux host together (`--mp-cross`, `--wsl`; see
+  docs/multiplayer.md "Windows and Linux"); computer players in a multiplayer
+  game; answering the startup version check and the ordinal imports without
+  dplayx.dll on disk; playing the original exe (`--dplay native`, a working
+  dplaysvr, the x87 transcendentals).
 - **Risk:** medium: out-of-sync shows only in long games and across machines.
 
 ## Later
