@@ -1,8 +1,10 @@
 # Multiplayer (LAN)
 
-Two recomp instances play a multiplayer game against each other through a
-DirectPlay of the host's own (`src/runtime/dplay.c`). Tested on one machine
-over loopback (`tools/mp_pair.py`), base game. Results are under Tests below.
+Two to four recomp instances play a multiplayer game against each other
+through a DirectPlay of the host's own (`src/runtime/dplay.c`): chat, a player
+dropping or quitting, the host dropping (host migration), saving and restoring.
+Tested on one machine over loopback (`tools/mp_pair.py`), base game and Clone
+Campaigns. Results are under Tests below.
 
 ```
 build\swgbrecomp.exe --run                       the host's DirectPlay (the default)
@@ -10,6 +12,7 @@ build\swgbrecomp.exe --run --dplay native        Windows' DirectPlay (dplayx), a
 build\swgbrecomp.exe --run --mp-port 2400        the port: TCP and UDP, 2400-2403 (default 2300)
 build\swgbrecomp.exe --run --mp-join 192.168.1.7 also look for games at this address (or a name; commas between)
 build\swgbrecomp.exe --run --mp-log              every probe answered, and more
+build\swgbrecomp.exe --run --mp-cross            the lift's build stamp: a Windows and a Linux host meet
 ```
 
 In the game: Multiplayer, then **Local (LAN) TCP/IP Connection** or **Internet
@@ -129,25 +132,47 @@ Playing against the original needs (a) on both sides plus everything in
   and a session is listed for four seconds after its last answer, so probing
   only inside `EnumSessions` made its game blink in and out of the list.
 - **Ports.** The host listens on TCP and UDP 2300 (the next free of
-  2300-2303, so a second host on one machine works). Clients use ephemeral
-  ports only. Nothing is near 44620-48715.
+  2300-2303, so a second host on one machine works). Each client connects from
+  an ephemeral port and listens on one more, any free TCP port, for a host
+  migration (below). Nothing asks for 44620-48715.
 - **Players and system messages.** The host numbers players. Joins and
   leaves reach the other processes as `DPSYS_CREATEPLAYERORGROUP` /
   `DPSYS_DESTROYPLAYERORGROUP`, with the names inside the message as dplayx
   lays them out. `SetSessionDesc` and `EnableNewPlayers` send
-  `DPSYS_SETSESSIONDESC`. A host that goes away is `DPSYS_SESSIONLOST` to the
-  others.
+  `DPSYS_SETSESSIONDESC`.
+- **Host migration.** The game opens its session with flags `0x44`:
+  `DPSESSION_KEEPALIVE | DPSESSION_MIGRATEHOST`. When the host goes, the
+  others carry on and one of them becomes the host, as with dplayx. Each
+  client listens on a port of its own from its join, and the host tells every
+  client where the others listen (`T_PEERS`, after each join and leave). When
+  a client's connection to the host closes, it destroys the old host's players
+  (`DPSYS_DESTROYPLAYERORGROUP`), and the process with the lowest player id
+  left takes its own listener as the host's and gets `DPSYS_HOST`; the others
+  connect to it and name their players (`T_REJOIN`). A `Send` while the host is
+  going waits (`g_backlog`) and goes out once the connection it is for is back;
+  a client not back within 15 s is dropped. Only a client with nowhere to go
+  (no peer list, or the new host unreachable) gets `DPSYS_SESSIONLOST`.
 - **Drops.** A closed connection is a drop at once. A silent one is a drop
   after 30 s: there is a ping each second each way, and a pulled cable sends
-  no FIN.
+  no FIN. The game itself then waits for the dropped player's turns and shows
+  its **Multiplayer Status** dialog ("Player Dropped"), where each player votes
+  Wait, Continue Game or Save and Exit; the game goes on when the others vote
+  Continue Game. The dialog also opens when a player only lags (seen with four
+  games on one busy machine).
+- **Chat.** The game's chat line is a message of its own (`'C'`, 2, ...,
+  the sender's player number at 12, `Y`/`N` for each of the eight players it
+  goes to at 14-21, the text from 29). The host logs each one the game takes in
+  (`[mp] chat from player N (DPID) to DPID (YYYNNNNN): "text"`), and the game
+  draws it at the left of the map in the sender's colour.
 - **Threads.** The game's threads call the methods (native32 has already let
   go of the machine, as for any native call). Our network thread reads the
   sockets and queues messages, and sets the event a player was created with.
   Guest code (the EnumSessions callback) runs only on the game's thread,
   inside EnumSessions, and never with our lock held.
-- **Not done:** groups, player and group data (the game uses none), host
-  migration (the game's sessions don't ask for it), passwords, NAT (out of
-  scope). Every method the game doesn't call is there with its real signature
+- **Not done:** groups, player and group data (the game uses none),
+  passwords, NAT (out of scope). A host migration while players are still
+  joining (in the setup screen) is untried; the new host does not answer
+  probes, so nobody new can find the game. Every method the game doesn't call is there with its real signature
   (native32's bridge takes the stack purge from the callee). It returns
   `DPERR_UNSUPPORTED` and says so in the log the first time.
 

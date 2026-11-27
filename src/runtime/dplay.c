@@ -122,6 +122,8 @@ typedef struct {
 #define DPSYS_DESTROYPLAYERORGROUP 0x0005
 #define DPSYS_SESSIONLOST          0x0031
 #define DPSYS_SETSESSIONDESC       0x0104
+#define DPSYS_HOST                 0x0101
+#define DPSESSION_MIGRATEHOST        0x4
 #define DPPLAYERTYPE_PLAYER 1
 
 static const GUID SP_TCPIP   = { 0x36E95EE0, 0x8577, 0x11CF, { 0x96, 0x0C, 0x00, 0x80, 0xC7, 0x53, 0x4E, 0x82 } };
@@ -239,7 +241,8 @@ static const char* u8(const WCHAR* w) {
 
 typedef struct {
     DPID id;
-    int owner;                 /* -1: this process; else the connection it lives behind */
+    int owner;                 /* -1: this process; -2: behind a connection not yet back after a
+                                  host migration; else the connection it lives behind */
     DWORD flags;
     int has_short, has_long;
     WCHAR shortname[NAMEN], longname[NAMEN];
@@ -253,7 +256,10 @@ typedef struct {
     int rxn, rxcap;
     DWORD last_rx, last_tx;
     int dead;
+    u_short lport;             /* host: the client's own listening port (host migration) */
 } conn_t;
+
+typedef struct { uint8_t* b; int n, cap; } wbuf;
 
 typedef struct qmsg {
     struct qmsg* next;
@@ -287,6 +293,23 @@ static char g_target[64];     /* InitializeConnection's address, if one was give
 static LONG64 g_sent_msgs, g_sent_bytes, g_recv_msgs, g_recv_bytes;
 static CRITICAL_SECTION g_send_cs;
 
+/* Host migration. The game opens its session with DPSESSION_MIGRATEHOST: when the host goes,
+ * the others carry on, and one of them becomes the host (DPSYS_HOST). Each client listens on a
+ * port of its own from its join; the host tells every client where the others listen (T_PEERS).
+ * When the host's connection closes, the process with the lowest player id among those left
+ * takes its listener as the host's, the others connect to it and say which players are theirs
+ * (T_REJOIN), and every process destroys the old host's players. What is sent meanwhile waits in
+ * g_backlog and goes out once the connection it is for is back. */
+typedef struct { DPID id; uint32_t ip; u_short port; } peer_t;
+static peer_t g_peers[MAXP];
+static int g_npeers;
+static SOCKET g_plisten = INVALID_SOCKET;   /* a client's listener */
+static u_short g_plisten_port;
+static DWORD g_migrate_until;              /* a new host: players not back by then are dropped */
+static int g_lost;                         /* a client: the host went, and no new one took over */
+typedef struct backlog { struct backlog* next; DPID from, to; wbuf w; } backlog_t;
+static backlog_t* g_backlog;
+
 /* sessions seen by EnumSessions */
 typedef struct {
     GUID inst;
@@ -313,14 +336,14 @@ static player_t* find_player(DPID id) {
     return NULL;
 }
 static DPID first_local(void) {
-    for (int i = 0; i < g_npl; i++) if (g_pl[i].owner < 0) return g_pl[i].id;
+    for (int i = 0; i < g_npl; i++) if (g_pl[i].owner == -1) return g_pl[i].id;
     return 0;
 }
 /* A local player's event is the game's (CreatePlayer's): on win32hle a handle of its own,
  * set holding the machine. */
 static void signal_player(DPID to) {
     for (int i = 0; i < g_npl; i++)
-        if (g_pl[i].owner < 0 && g_pl[i].event && (to == 0 || g_pl[i].id == to)) {
+        if (g_pl[i].owner == -1 && g_pl[i].event && (to == 0 || g_pl[i].id == to)) {
 #ifdef SWGB_WIN32HLE
             mach_enter();
             hle_set_event((uint32_t)(uintptr_t)g_pl[i].event);
@@ -365,7 +388,7 @@ static void sys_player(int type, const player_t* p) {
     qmsg_t* m = enqueue(0, first_local(), b, n);
     if (m) { m->nreloc = r; memcpy(m->reloc, rel, r * sizeof(DWORD)); }
 }
-static void sys_simple(DWORD type) { enqueue(0, first_local(), &type, 4); }
+static void sys_simple(DWORD type) { VLOG("system message %04lX to %08lX", type, first_local()); enqueue(0, first_local(), &type, 4); }
 static void sys_sessiondesc(void) {
     uint8_t b[4 + sizeof(SD2) + NAMEN * 2];
     ((DWORD*)b)[0] = DPSYS_SETSESSIONDESC;
@@ -379,9 +402,9 @@ static void sys_sessiondesc(void) {
 }
 
 /* ---- the wire: [u32 length][u8 type][payload] ---------------------------------- */
-enum { T_HELLO = 1, T_WELCOME, T_CREATE, T_CREATED, T_PADD, T_PDEL, T_DATA, T_SDESC, T_PING, T_DESTROY };
+enum { T_HELLO = 1, T_WELCOME, T_CREATE, T_CREATED, T_PADD, T_PDEL, T_DATA, T_SDESC, T_PING, T_DESTROY,
+       T_PEERS, T_REJOIN };
 
-typedef struct { uint8_t* b; int n, cap; } wbuf;
 static void wb_put(wbuf* w, const void* p, int n) {
     if (w->n + n > w->cap) { w->cap = (w->n + n) * 2 + 64; w->b = (uint8_t*)realloc(w->b, w->cap); }
     memcpy(w->b + w->n, p, n);
@@ -491,6 +514,10 @@ static DWORD build_stamp(void) {
 
 /* ---- the host's handling of a frame from client c (lock held) ---------------------- */
 static void route_data(int origin, DPID from, DPID to, DWORD flags, const uint8_t* data, DWORD size);
+static void send_peers(void);
+static void conn_close(int i);
+static void backlog_flush(int c);
+static void backlog_free(void);
 
 static void drop_player(int i, int tell) {
     player_t p = g_pl[i];
@@ -502,8 +529,141 @@ static void drop_player(int i, int tell) {
         wb_begin(&w, T_PDEL); wb_u32(&w, p.id); wb_end(&w);
         send_all(&w, p.owner);
         free(w.b);
+        send_peers();
     }
     LOG("player %08lX (%s) left (%.1f s)", p.id, u8(p.shortname), secs());
+}
+
+/* ---- host migration (g_peers, g_backlog: above) ---- */
+static void send_peers(void) {   /* host: where each client listens, by its players (lock held) */
+    wbuf w = { 0 };
+    int n = 0, at;
+    wb_begin(&w, T_PEERS);
+    at = w.n;
+    wb_u32(&w, 0);
+    for (int k = 0; k < g_npl; k++) {
+        int o = g_pl[k].owner;
+        if (o < 0 || g_conn[o].s == INVALID_SOCKET || !g_conn[o].lport) continue;
+        wb_u32(&w, g_pl[k].id);
+        wb_u32(&w, g_conn[o].peer.sin_addr.s_addr);
+        wb_u32(&w, g_conn[o].lport);
+        n++;
+    }
+    memcpy(w.b + at, &n, 4);
+    wb_end(&w);
+    send_all(&w, -1);
+    free(w.b);
+}
+
+static void backlog_add(DPID from, DPID to, const wbuf* w) {
+    backlog_t* b = (backlog_t*)calloc(1, sizeof *b);
+    if (!b) return;
+    b->from = from, b->to = to;
+    b->w.b = (uint8_t*)malloc(w->n);
+    if (!b->w.b) { free(b); return; }
+    memcpy(b->w.b, w->b, w->n);
+    b->w.n = b->w.cap = w->n;
+    backlog_t** t = &g_backlog;
+    while (*t) t = &(*t)->next;
+    *t = b;
+}
+static void backlog_free(void) {
+    while (g_backlog) { backlog_t* b = g_backlog; g_backlog = b->next; free(b->w.b); free(b); }
+}
+/* What waited for connection c: on a client, everything for its new host; on a new host, for a
+ * client back after the migration, what went to everyone and what went to its players. */
+static void backlog_flush(int c) {
+    int n = 0;
+    for (backlog_t* b = g_backlog; b; b = b->next) {
+        player_t* to = b->to ? find_player(b->to) : NULL;
+        if (g_role == 2 || !b->to || (to && to->owner == c)) { conn_send(&g_conn[c], &b->w); n++; }
+    }
+    if (n) LOG("%d message(s) held during the host migration sent", n);
+    if (g_role == 2) backlog_free();
+}
+
+static void session_lost(void) {
+    LOG("the host is gone: session lost (%.1f s)", secs());
+    g_lost = 1;
+    for (int k = g_npl - 1; k >= 0; k--) if (g_pl[k].owner != -1) g_pl[k] = g_pl[--g_npl];
+    backlog_free();
+    sys_simple(DPSYS_SESSIONLOST);
+    InterlockedExchange(&g_reply_type, -1);
+    SetEvent(g_reply_ev);
+}
+
+/* a connection to the new host, tried for up to ms (its own process may not have seen the old
+ * host go yet; its listener is up from its join, so a refusal is unexpected but retried) */
+static SOCKET connect_within(uint32_t ip, u_short port, int ms) {
+    struct sockaddr_in a = { AF_INET };
+    a.sin_addr.s_addr = ip;
+    a.sin_port = htons(port);
+    for (DWORD t0 = GetTickCount(); GetTickCount() - t0 < (DWORD)ms; Sleep(100)) {
+        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) break;
+        if (!connect(s, (struct sockaddr*)&a, sizeof a)) {
+            BOOL one = TRUE;
+            setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+            return s;
+        }
+        closesocket(s);
+    }
+    return INVALID_SOCKET;
+}
+
+/* A client whose host is gone (lock held): the old host's players leave, and the process with
+ * the lowest player id left becomes the host (DPSYS_HOST); the others connect to it. */
+static void migrate(void) {
+    for (int k = g_npl - 1; k >= 0; k--) {
+        if (g_pl[k].owner == -1) continue;
+        int listed = 0;
+        for (int j = 0; j < g_npeers; j++) if (g_peers[j].id == g_pl[k].id) listed = 1;
+        if (!listed) drop_player(k, 0);   /* the old host's: DPSYS_DESTROYPLAYERORGROUP */
+    }
+    int bi = -1;
+    for (int k = 0; k < g_npl; k++) if (bi < 0 || g_pl[k].id < g_pl[bi].id) bi = k;
+    if (bi < 0 || !(g_sd.dwFlags & DPSESSION_MIGRATEHOST) || g_plisten == INVALID_SOCKET) { session_lost(); return; }
+    if (g_pl[bi].owner == -1) {
+        DPID top = 0;
+        g_role = 1;
+        g_listen = g_plisten, g_plisten = INVALID_SOCKET, g_tcp_port = g_plisten_port;
+        for (int k = 0; k < g_npl; k++) {
+            if (g_pl[k].owner != -1) g_pl[k].owner = -2;
+            if (g_pl[k].id > top) top = g_pl[k].id;
+        }
+        if (g_next_id <= top) g_next_id = top + 1;
+        g_npeers = 0;
+        g_migrate_until = GetTickCount() + 15000;
+        sys_simple(DPSYS_HOST);
+        LOG("the host is gone (%.1f s): this process hosts now (DPSYS_HOST), on TCP port %d", secs(), g_tcp_port);
+        return;
+    }
+    peer_t* pe = NULL;
+    for (int j = 0; j < g_npeers; j++) if (g_peers[j].id == g_pl[bi].id) pe = &g_peers[j];
+    SOCKET s = pe ? connect_within(pe->ip, pe->port, 3000) : INVALID_SOCKET;
+    if (s == INVALID_SOCKET) { session_lost(); return; }
+    memset(&g_conn[0], 0, sizeof g_conn[0]);
+    g_conn[0].s = s;
+    g_conn[0].peer.sin_family = AF_INET;
+    g_conn[0].peer.sin_addr.s_addr = pe->ip;
+    g_conn[0].peer.sin_port = htons(pe->port);
+    g_conn[0].last_rx = g_conn[0].last_tx = GetTickCount();
+    if (g_nconn < 1) g_nconn = 1;
+    for (int k = 0; k < g_npl; k++) if (g_pl[k].owner != -1) g_pl[k].owner = 0;
+    wbuf w = { 0 };
+    int n = 0, at;
+    wb_begin(&w, T_REJOIN);
+    wb_u32(&w, g_plisten_port);
+    at = w.n;
+    wb_u32(&w, 0);
+    for (int k = 0; k < g_npl; k++) if (g_pl[k].owner == -1) { wb_u32(&w, g_pl[k].id); n++; }
+    memcpy(w.b + at, &n, 4);
+    wb_end(&w);
+    conn_send(&g_conn[0], &w);
+    free(w.b);
+    LOG("the host is gone (%.1f s): rejoined the session at %s:%u, where player %08lX hosts", secs(),
+        inet_ntoa(g_conn[0].peer.sin_addr), pe->port, g_pl[bi].id);
+    backlog_flush(0);
 }
 
 static void host_frame(int c, int type, rbuf* r) {
@@ -513,6 +673,7 @@ static void host_frame(int c, int type, rbuf* r) {
         GUID inst;
         rb_get(r, &inst, sizeof inst);
         DWORD theirs = rb_u32(r), mine = build_stamp();
+        if (r->n >= 4) g_conn[c].lport = (u_short)rb_u32(r);   /* where it listens (host migration) */
         if (theirs != mine)
             LOG("a client with another build (%08lX; this one is %08lX%s): refused", theirs, mine,
                 g_cross ? ", --mp-cross" : "; the same lift on another system needs --mp-cross on both");
@@ -547,7 +708,25 @@ static void host_frame(int c, int type, rbuf* r) {
             send_all(&w, c);
             sys_player(DPSYS_CREATEPLAYERORGROUP, &p);
             LOG("player %08lX (%s) joined (%.1f s)", p.id, u8(p.shortname), secs());
+            send_peers();
         }
+        break;
+    }
+    case T_REJOIN: {   /* a client back after the host migration, at its new host */
+        if (g_role == 2 && g_conn[0].s != INVALID_SOCKET) conn_close(0);   /* it saw the old host go first */
+        if (g_role != 1) break;
+        DWORD lport = rb_u32(r), n = rb_u32(r), got = 0;
+        g_conn[c].lport = (u_short)lport;
+        for (DWORD i = 0; i < n && !r->bad; i++) {
+            player_t* p = find_player(rb_u32(r));
+            if (p && p->owner == -2) { p->owner = c; got++; }
+        }
+        LOG("client %d (%s) is back after the host migration: %lu player(s)", c, inet_ntoa(g_conn[c].peer.sin_addr), got);
+        backlog_flush(c);
+        int pending = 0;
+        for (int k = 0; k < g_npl; k++) if (g_pl[k].owner == -2) pending = 1;
+        if (!pending) { backlog_free(); g_migrate_until = 0; }
+        send_peers();
         break;
     }
     case T_DESTROY: {
@@ -609,7 +788,7 @@ static void client_frame(int type, rbuf* r) {
         if (r->bad) break;
         if (to == 0) {   /* to all: each local player but the sender */
             for (int i = 0; i < g_npl; i++)
-                if (g_pl[i].owner < 0 && g_pl[i].id != from) enqueue(from, g_pl[i].id, r->p, (DWORD)r->n);
+                if (g_pl[i].owner == -1 && g_pl[i].id != from) enqueue(from, g_pl[i].id, r->p, (DWORD)r->n);
         } else enqueue(from, to, r->p, (DWORD)r->n);
         break;
     }
@@ -617,6 +796,18 @@ static void client_frame(int type, rbuf* r) {
         rb_get(r, &g_sd, sizeof g_sd);
         rb_str(r, g_sname, NAMEN);
         sys_sessiondesc();
+        break;
+    }
+    case T_PEERS: {
+        DWORD n = rb_u32(r);
+        g_npeers = 0;
+        for (DWORD i = 0; i < n && i < MAXP && !r->bad; i++) {
+            g_peers[g_npeers].id = rb_u32(r);
+            g_peers[g_npeers].ip = rb_u32(r);
+            g_peers[g_npeers].port = (u_short)rb_u32(r);
+            g_npeers++;
+        }
+        VLOG("%d peer(s) to migrate to", g_npeers);
         break;
     }
     case T_PING: break;
@@ -630,21 +821,27 @@ static void route_data(int origin, DPID from, DPID to, DWORD flags, const uint8_
     (void)flags;
     if (to == 0) {
         for (int i = 0; i < g_npl; i++)
-            if (g_pl[i].owner < 0 && g_pl[i].id != from) enqueue(from, g_pl[i].id, data, size);
+            if (g_pl[i].owner == -1 && g_pl[i].id != from) enqueue(from, g_pl[i].id, data, size);
     } else {
         player_t* p = find_player(to);
         if (!p) { VLOG("a message to %08lX, who is not here", to); return; }
-        if (p->owner < 0) { enqueue(from, to, data, size); return; }
+        if (p->owner == -1) { enqueue(from, to, data, size); return; }
     }
     wb_begin(&w, T_DATA); wb_u32(&w, from); wb_u32(&w, to); wb_u32(&w, flags); wb_put(&w, data, size); wb_end(&w);
     if (to == 0) {
+        int pending = 0;
         for (int i = 0; i < g_nconn; i++) {
             if (i == origin || g_conn[i].s == INVALID_SOCKET) continue;
             int any = 0;   /* only connections with a player behind them */
             for (int k = 0; k < g_npl; k++) if (g_pl[k].owner == i && g_pl[k].id != from) any = 1;
             if (any) conn_send(&g_conn[i], &w);
         }
-    } else conn_send(&g_conn[find_player(to)->owner], &w);
+        for (int k = 0; k < g_npl; k++) if (g_pl[k].owner == -2) pending = 1;
+        if (pending) backlog_add(from, 0, &w);   /* for the clients not back yet */
+    } else {
+        int o = find_player(to)->owner;
+        if (o >= 0) conn_send(&g_conn[o], &w); else backlog_add(from, to, &w);
+    }
     free(w.b);
 }
 
@@ -660,12 +857,8 @@ static void conn_close(int i) {
     if (g_role == 1) {
         LOG("client %d (%s) gone (%.1f s)", i, inet_ntoa(c->peer.sin_addr), secs());
         for (int k = g_npl - 1; k >= 0; k--) if (g_pl[k].owner == i) drop_player(k, 1);
-    } else if (g_role == 2) {
-        LOG("the host is gone: session lost (%.1f s)", secs());
-        for (int k = g_npl - 1; k >= 0; k--) if (g_pl[k].owner >= 0) g_pl[k] = g_pl[--g_npl];
-        sys_simple(DPSYS_SESSIONLOST);
-        InterlockedExchange(&g_reply_type, -1);
-        SetEvent(g_reply_ev);
+    } else if (g_role == 2 && i == 0) {
+        migrate();   /* the host: carry on without it, or the session is lost */
     }
 }
 
@@ -684,7 +877,7 @@ static void conn_read(int i) {
         if (c->rxn - off < 4 + (int)len) break;
         rbuf r = { c->rx + off + 5, (int)len - 1, 0 };
         int type = c->rx[off + 4];
-        if (g_role == 1) host_frame(i, type, &r); else client_frame(type, &r);
+        if (g_role == 1 || i > 0) host_frame(i, type, &r); else client_frame(type, &r);   /* i > 0 on a client: a peer back after a migration */
         if (c->s == INVALID_SOCKET) return;
         off += 4 + (int)len;
     }
@@ -811,6 +1004,7 @@ static DWORD WINAPI net_thread(LPVOID unused) {
 #define ADD_FD(s_) do { FD_SET((s_), &rd); nfd++; if ((int)(s_) > maxfd) maxfd = (int)(s_); } while (0)
         lock();
         if (g_listen != INVALID_SOCKET) ADD_FD(g_listen);
+        if (g_plisten != INVALID_SOCKET) ADD_FD(g_plisten);
         if (g_disc != INVALID_SOCKET) ADD_FD(g_disc);
         if (g_enum != INVALID_SOCKET) ADD_FD(g_enum);
         for (int i = 0; i < g_nconn; i++) {
@@ -825,19 +1019,26 @@ static DWORD WINAPI net_thread(LPVOID unused) {
             if (now - c->last_tx > 1000) { wbuf w = { 0 }; wb_begin(&w, T_PING); wb_end(&w); conn_send(c, &w); free(w.b); }
             if (now - c->last_rx > 30000) { LOG("connection %d silent for 30 s: dropped (%.1f s)", i, secs()); conn_close(i); }
         }
+        if (g_role == 1 && g_migrate_until && (int)(now - g_migrate_until) > 0) {   /* not back after a migration */
+            for (int k = g_npl - 1; k >= 0; k--) if (g_pl[k].owner == -2) drop_player(k, 1);
+            backlog_free();
+            g_migrate_until = 0;
+        }
         unlock();
         struct timeval tv = { 0, 50000 };
         if (nfd == 0) { Sleep(50); continue; }
         int n = select(maxfd + 1, &rd, NULL, NULL, &tv);
         if (n <= 0) continue;
         lock();
-        if (g_listen != INVALID_SOCKET && FD_ISSET(g_listen, &rd)) {
+        for (int l = 0; l < 2; l++) {   /* the host's listener; a client's (a peer, after a host migration) */
+            SOCKET ls = l ? g_plisten : g_listen;
+            if (ls == INVALID_SOCKET || !FD_ISSET(ls, &rd)) continue;
             struct sockaddr_in a;
             sock_len al = sizeof a;
-            SOCKET s = accept(g_listen, (struct sockaddr*)&a, &al);
+            SOCKET s = accept(ls, (struct sockaddr*)&a, &al);
             if (s != INVALID_SOCKET) {
                 int i;
-                for (i = 0; i < g_nconn; i++) if (g_conn[i].s == INVALID_SOCKET) break;
+                for (i = g_role == 2 ? 1 : 0; i < g_nconn; i++) if (g_conn[i].s == INVALID_SOCKET) break;   /* a client's [0] is its host */
                 if (i == MAXC) closesocket(s);
                 else {
                     BOOL one = TRUE;
@@ -875,7 +1076,11 @@ static void net_stop(void) {
     for (int i = 0; i < g_nconn; i++) if (g_conn[i].s != INVALID_SOCKET) { closesocket(g_conn[i].s); g_conn[i].s = INVALID_SOCKET; free(g_conn[i].rx); g_conn[i].rx = NULL; }
     g_nconn = 0;
     if (g_listen != INVALID_SOCKET) { closesocket(g_listen); g_listen = INVALID_SOCKET; }
+    if (g_plisten != INVALID_SOCKET) { closesocket(g_plisten); g_plisten = INVALID_SOCKET; }
     if (g_disc != INVALID_SOCKET) { closesocket(g_disc); g_disc = INVALID_SOCKET; }
+    g_npeers = 0;
+    g_migrate_until = 0;
+    backlog_free();
     unlock();
 }
 
@@ -1035,6 +1240,8 @@ static HRESULT __stdcall dp_Close(dpobj* o) {
     g_qtail = NULL;
     g_qn = 0;
     if (g_enum != INVALID_SOCKET) { closesocket(g_enum); g_enum = INVALID_SOCKET; }
+    if (g_plisten != INVALID_SOCKET) { closesocket(g_plisten); g_plisten = INVALID_SOCKET; }
+    backlog_free();
     unlock();
     return DP_OK;
 }
@@ -1103,7 +1310,7 @@ static HRESULT __stdcall dp_DestroyPlayer(dpobj* o, DPID id) {
     (void)o;
     lock();
     player_t* p = find_player(id);
-    if (!p || p->owner >= 0) { unlock(); return DPERR_INVALIDPLAYER; }
+    if (!p || p->owner != -1) { unlock(); return DPERR_INVALIDPLAYER; }
     int i = (int)(p - g_pl);
     if (g_role == 2) {
         wbuf w = { 0 };
@@ -1143,7 +1350,7 @@ static HRESULT __stdcall dp_EnumPlayers(dpobj* o, GUID* inst, void* cb, void* ct
         DPN dn = { sizeof dn, 0, NULL, NULL };
         if (copy[i].has_short) { name_out(sb, copy[i].shortname, o->ansi); dn.lpszShortName = sb; }
         if (copy[i].has_long) { name_out(lb, copy[i].longname, o->ansi); dn.lpszLongName = lb; }
-        DWORD pf = copy[i].owner < 0 ? 0x8 /* DPENUMPLAYERS_LOCAL */ : 0x10 /* REMOTE */;
+        DWORD pf = copy[i].owner == -1 ? 0x8 /* DPENUMPLAYERS_LOCAL */ : 0x10 /* REMOTE */;
         if (!GUEST_CB5(ENUMPLAYERS_CB, cb, copy[i].id, DPPLAYERTYPE_PLAYER, &dn, pf, ctx)) break;
     }
     (void)flags;
@@ -1232,7 +1439,7 @@ static HRESULT __stdcall dp_GetPlayerCaps(dpobj* o, DPID id, DPCAPS_* c, DWORD f
     if (!c || c->dwSize < sizeof *c) return DPERR_INVALIDPARAMS;
     lock();
     player_t* p = find_player(id);
-    int local = p && p->owner < 0;
+    int local = p && p->owner == -1;
     unlock();
     if (!p) return DPERR_INVALIDPLAYER;
     fill_caps(c, local);
@@ -1345,6 +1552,13 @@ static HRESULT __stdcall dp_Open(dpobj* o, SD2* sd, DWORD flags) {
         }
         BOOL one = TRUE;
         setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+        /* a listener of its own, should this process become the host (host migration): any
+         * free port, which the host passes to the others (T_PEERS) */
+        SOCKET pl = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        struct sockaddr_in pa = { AF_INET };
+        sock_len pal = sizeof pa;
+        if (pl != INVALID_SOCKET && (bind(pl, (struct sockaddr*)&pa, sizeof pa) || listen(pl, 8) ||
+                                     getsockname(pl, (struct sockaddr*)&pa, &pal))) { closesocket(pl); pl = INVALID_SOCKET; }
         lock();
         memset(&g_conn[0], 0, sizeof g_conn[0]);
         g_conn[0].s = s;
@@ -1354,9 +1568,14 @@ static HRESULT __stdcall dp_Open(dpobj* o, SD2* sd, DWORD flags) {
         g_role = 2;
         g_owner = o;
         g_reply_type = 0;
+        g_lost = 0;
+        g_npeers = 0;
+        if (g_plisten != INVALID_SOCKET) closesocket(g_plisten);
+        g_plisten = pl;
+        g_plisten_port = pl != INVALID_SOCKET ? ntohs(pa.sin_port) : 0;
         ResetEvent(g_reply_ev);
         wbuf w = { 0 };
-        wb_begin(&w, T_HELLO); wb_put(&w, &f.inst, sizeof f.inst); wb_u32(&w, build_stamp()); wb_end(&w);
+        wb_begin(&w, T_HELLO); wb_put(&w, &f.inst, sizeof f.inst); wb_u32(&w, build_stamp()); wb_u32(&w, g_plisten_port); wb_end(&w);
         conn_send(&g_conn[0], &w);
         free(w.b);
         unlock();
@@ -1427,13 +1646,15 @@ static HRESULT __stdcall dp_Send(dpobj* o, DPID from, DPID to, DWORD flags, void
     if (g_role == 1) route_data(-1, from, to, flags, (const uint8_t*)data, size);
     else {
         if (to == 0)   /* other local players hear it too */
-            for (int i = 0; i < g_npl; i++) if (g_pl[i].owner < 0 && g_pl[i].id != from) enqueue(from, g_pl[i].id, data, size);
+            for (int i = 0; i < g_npl; i++) if (g_pl[i].owner == -1 && g_pl[i].id != from) enqueue(from, g_pl[i].id, data, size);
         player_t* p = to ? find_player(to) : NULL;
-        if (p && p->owner < 0) enqueue(from, to, data, size);
+        if (to && !p) VLOG("Send from %08lX to %08lX, who is not here (%lu bytes)", from, to, size);
+        if (p && p->owner == -1) enqueue(from, to, data, size);
         else {
             wbuf w = { 0 };
             wb_begin(&w, T_DATA); wb_u32(&w, from); wb_u32(&w, to); wb_u32(&w, flags); wb_put(&w, data, size); wb_end(&w);
             int ok = conn_send(&g_conn[0], &w);
+            if (!ok && !g_lost) { backlog_add(from, to, &w); ok = 1; }   /* the host is going: for the next one */
             free(w.b);
             if (!ok) { unlock(); return DPERR_NOCONNECTION; }
         }
@@ -1523,7 +1744,7 @@ static HRESULT __stdcall dp_GetPlayerFlags(dpobj* o, DPID id, DWORD* f) {
     if (!f) return DPERR_INVALIDPARAMS;
     lock();
     player_t* p = find_player(id);
-    if (p) *f = p->owner < 0 ? 0x8 : 0;   /* DPPLAYER_LOCAL */
+    if (p) *f = p->owner == -1 ? 0x8 : 0;   /* DPPLAYER_LOCAL */
     unlock();
     return p ? DP_OK : DPERR_INVALIDPLAYER;
 }

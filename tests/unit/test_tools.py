@@ -230,12 +230,13 @@ class MpPair(unittest.TestCase):
         plan = self.mp.game_plan(random.Random(1), 'b', 1, 3, a, 'out')
         self.assertEqual(plan, sorted(plan, key=lambda s: s[0]))
         steps = [s for _, s in plan]
-        self.assertIn('click:%d:%d' % self.mp.STATUS_CONTINUE, steps)        # b votes after c drops
+        self.assertTrue(any('drop_after' in st for st in steps))
+        self.assertEqual([s for t, s in plan if 118 <= t <= 195 and s.startswith(('click', 'rclick'))], [])   # c drops: b only votes
         t_chat = next(t for t, s in plan if s == 'enter')
         near = [s for t, s in plan if t_chat - 2 <= t <= t_chat + 5 and s.startswith(('click', 'rclick'))]
         self.assertEqual(near, [])          # no clicks while typing
         plan_c = self.mp.game_plan(random.Random(1), 'c', 2, 3, a, 'out')
-        self.assertNotIn('click:%d:%d' % self.mp.STATUS_CONTINUE, [s for _, s in plan_c])
+        self.assertFalse(any('drop_after' in s for _, s in plan_c))
         text, wd = self.mp.script('b', 1, 3, a, 'out')
         self.assertTrue(text.startswith('on:%s\n' % self.mp.ON_MENU))
         _, wd_a = self.mp.script('a', 0, 3, a, 'out')

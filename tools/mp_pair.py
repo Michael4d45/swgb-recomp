@@ -93,6 +93,7 @@ SETUP_START = (118, 568)         # ... Start Game (the host's)
 MP_MENU = {'quit': (408, 178), 'resign': (408, 218), 'save': (408, 251), 'save_exit': (408, 284)}
 MENU_YES = (305, 328)            # "Are you sure you want to resign?" (or quit): Yes
 STATUS_CONTINUE = (445, 369)     # Multiplayer Status (a player dropped): vote Continue Game
+STATUS_BOX = 'CreateWindowExA "" style 40000080 at 67,463 441x21'   # ... its chat line, opening
 GAME_DEFAULT = r'A:\Games\star\games\multiplayer'
 B_DELAY = 5                      # each joiner starts this many seconds after the one before
 WHO = 'abcd'
@@ -138,16 +139,25 @@ def menu_part(s, who, k, n, out, restore=False):
         s.click(start, SETUP_START)
 
 
-def chat_times(n, minutes):
-    """Two chat lines from each player, spread over the game's first half, a player at a time:
-    [(seconds into the game, who, words)]."""
+def chat_times(n, minutes, before=None):
+    """Two chat lines from each player, spread over the game's first half (or the time before
+    a player leaves: before, in seconds), a player at a time: [(seconds into the game, who,
+    words)]."""
     out = []
     span = max(60, minutes * 60 / 2)
+    if before:
+        span = min(span, max(2 * n * 4, before - 30))
     step = span / (2 * n)
     for r in range(2):
         for k in range(n):
             out.append((20 + step * (r * n + k), WHO[k], 'mpchat%s%d' % (WHO[k], r + 1)))
     return out
+
+
+def leave_at(args):
+    """When a player drops or quits (seconds into the game), or None."""
+    spec = args.drop or args.quit
+    return spec[1] * 60 if spec else None
 
 
 def game_end(k, minutes):
@@ -166,7 +176,7 @@ def game_plan(rnd, who, k, n, args, out, phase=''):
     s.at(end - 5, 'shot=%s' % os.path.join(out, 'end.bmp'))
     quiet = []                    # (from, to): no activity (the chat line, a save, the menu, a vote)
     if args.chat:
-        for t, w, words in chat_times(n, args.minutes):
+        for t, w, words in chat_times(n, args.minutes, leave_at(args)):
             if w == who:
                 soak.chat(s, t, words)
                 quiet.append((t - 2, t + 5 + 0.3 * len(words)))
@@ -193,15 +203,12 @@ def game_plan(rnd, who, k, n, args, out, phase=''):
                 s.click(t + 16, soak.SCORE_MENU)
                 s.at(t + 30, 'shot=%s' % os.path.join(out, how + '_menu_after.bmp'))
             stop = t - 2
-    if args.drop and args.drop[0] != who and args.drop[0] != 'a' and not phase:
-        # the game waits for the dropped player's turns, then shows Multiplayer Status: vote
-        # Continue Game (twice: a vote before the window is up is a click on the map)
+    if args.drop and args.drop[0] != who and not phase:
+        # the game waits for the dropped player's turns and shows Multiplayer Status, where
+        # play() votes Continue Game each time it opens; no other clicks meanwhile
         t = args.drop[1] * 60
-        for dt in (15, 30, 45):
-            s.at(t + dt - 1, 'shot=%s' % os.path.join(out, 'drop_status_%d.bmp' % dt))
-            s.click(t + dt, STATUS_CONTINUE)
-        s.at(t + 60, 'shot=%s' % os.path.join(out, 'drop_after.bmp'))
-        quiet.append((t - 2, t + 62))
+        s.at(t + 75, 'shot=%s' % os.path.join(out, 'drop_after.bmp'))
+        quiet.append((t - 2, t + 75))
 
     def busy(t):
         return any(a <= t <= b for a, b in quiet)
@@ -313,6 +320,15 @@ def check(log):
     return ev, chats, me, deps, left, started
 
 
+MIGRATION = re.compile(r'^\[dplay\] (the host is gone \(.*|client \d+ .* is back after the host migration.*|'
+                       r'\d+ message\(s\) held during the host migration sent)$')
+
+
+def migration(log):
+    """What a log says of a host migration (dplay.c): who took over, who came back."""
+    return [l[8:] for l in open(log, encoding='utf-8', errors='replace').read().splitlines() if MIGRATION.match(l)]
+
+
 # The colour the game draws a player's chat line in (player 1, 2, ...): measured on the shots.
 CHAT_RGB = {1: (110, 166, 235), 2: (255, 100, 100), 3: (0, 255, 0), 4: (255, 255, 0)}
 
@@ -417,6 +433,7 @@ def play(args, phase=''):
     nxt = {w: 0 for w in procs}
     g0, dropped, drop_wall, hung = None, None, None, set()
     chat_shots = {w: [] for w in procs}
+    votes = {}
     while any(p.poll() is None for p in procs.values()):
         now = time.time()
         for w in procs:
@@ -424,6 +441,17 @@ def play(args, phase=''):
                 if g0 is None and w == 'a' and l.startswith('[sync]'):
                     g0 = now - 6
                     print('%sthe game started (%.0f s after A)' % (phase, g0 - starts['a']), flush=True)
+                if g0 is not None and STATUS_BOX in l and procs[w].poll() is None:
+                    # Multiplayer Status opened (its chat line is a window): vote Continue Game,
+                    # and again (a vote can come before the dialog takes clicks)
+                    k = votes[w] = votes.get(w, 0) + 1
+                    t_open = now - g0
+                    plans[w][nxt[w]:] = sorted(plans[w][nxt[w]:] + [
+                        (t_open + 2, 'shot=%s' % os.path.join(outs[w], 'status_%d.bmp' % k)),
+                        (t_open + 3, 'click:%d:%d' % STATUS_CONTINUE),
+                        (t_open + 13, 'click:%d:%d' % STATUS_CONTINUE),
+                        (t_open + 23, 'click:%d:%d' % STATUS_CONTINUE)], key=lambda st: st[0])
+                    print('%s: Multiplayer Status opened (%d), voting Continue Game' % (w, k), flush=True)
                 m = CHAT_RX.match(l)
                 if m and procs[w].poll() is None:   # the line shows for some seconds: a shot now
                     shot = os.path.join(outs[w], 'chat_%s.bmp' % m.group(5))
@@ -488,7 +516,7 @@ def play(args, phase=''):
         if ev[w]:
             problems.append('%s: %s' % (w, ev[w][0]))
         for t, line, dpid in deps[w]:
-            x = 'a' if dpid == 'host' else pid_of.get(dpid)
+            x = None if dpid == 'host' else pid_of.get(dpid)   # a lost session is never planned
             wall = starts[w] + t
             if x and x == leaver and leave_wall and wall >= leave_wall - 5:
                 seen_leave[w] = seen_leave[w] or wall
@@ -514,14 +542,14 @@ def play(args, phase=''):
         problems.append('%d sync records differ' % len(bad))
     if not shared:
         problems.append('no sync records shared')
-    if leaver and leaver != 'a':   # the others played on: they logged records after it left
+    if leaver:   # the others played on (the host: after a host migration): records after it left
         after = max((r[1] for w in procs if w != leaver for _, r in recs[w]), default=0)
         before = max((r[1] for _, r in recs[leaver]), default=0)
         if after <= before:
             problems.append('no sync records after %s left' % leaver)
     chat_report = {}
     if args.chat:
-        for t, sender, words in chat_times(n, args.minutes):
+        for t, sender, words in chat_times(n, args.minutes, leave_at(args)):
             for w in procs:
                 if w == sender or leaver in (w, sender):   # the leaver may be gone by then
                     continue
@@ -533,12 +561,19 @@ def play(args, phase=''):
                     problems.append('%s never received "%s" from %s' % (w, words, sender))
                 if drawn is False:
                     problems.append('%s: "%s" not drawn in %s' % (w, words, png))
+    migr = {w: migration(l) for w, l in logs.items()}
+    if leaver == 'a':   # the host went: one of the others hosts now, the rest came back to it
+        if not any('hosts now' in l for w in procs if w != 'a' for l in migr[w]):
+            problems.append('nobody took over as the host')
+        for w in procs:
+            if w != 'a' and not any('hosts now' in l or 'rejoined' in l for l in migr[w]):
+                problems.append('%s did not move to the new host' % w)
     first = {w: next(((r[1], r[2]) for _, r in recs[w]), None) for w in procs}
     summary = {
         'phase': phase or 'game', 'players': n, 'exit': rc, 'wsl': sorted(args.wsl),
         'sync_records': dict({w: len(r) for w, r in recs.items()}, shared=len(shared), differ=len(bad)),
         'first_record': {w: {'world_ms': v[0], 'turn': v[1]} if v else None for w, v in first.items()},
-        'events': ev, 'lost': lost, 'chat': chat_report,
+        'events': ev, 'lost': lost, 'chat': chat_report, 'status_dialogs': votes, 'host_migration': {w: v for w, v in migr.items() if v},
         'left': {'who': leaver, 'seen_after_s': {w: round(t - leave_wall, 1) for w, t in seen_leave.items() if t}}
         if leaver and leave_wall else None,
         'turns_checked': len({k[1] for k in shared}),
