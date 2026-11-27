@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Long headless games against the computer, to find what a short one never runs.
 
-    py -3 tools/soak.py [--mode skirmish|monkey|campaign] [--runs N] [--minutes M]
-                        [--jobs J] [--seed S] [--run EXE] [--game DIR] [--out DIR]
-                        [--cc] [--civs A,B] [--my-civ C]
+    py -3 tools/soak.py [--mode skirmish|monkey|campaign|missions|ingame-load|...] [--runs N]
+                        [--minutes M] [--jobs J] [--seed S] [--run EXE] [--game DIR] [--out DIR]
+                        [--cc] [--civs A,B] [--my-civ C] [--campaign NAME] [--first K]
+                        [--last K] [--unlocked] [--screen 800|1024|1280]
 
 --cc plays Clone Campaigns (swgbrecomp_cc.exe, battlegrounds_x1.exe): its
 Single Player menu (Standard Game and Saved Game a row lower, the campaigns
@@ -29,6 +30,20 @@ Every run is `--headless --multi` (never a window, never the user's game):
             first mission has no command center for the idle habits;
             --idle-campaign for them anyway).
 
+  missions  --campaign's missions --first..--last in a row (any of the six, or with
+            --cc either Episode II campaign): each mission's box on the campaign
+            screen (MISSION_BOXES), the briefing, the monkey with a save, the
+            victory cheat, the end briefing, the score screen, Scenario Menu.
+            The missions before --first are passed through (won at once) to
+            open their boxes, unless --unlocked. `chain` is this mode.
+  ingame-load  a varied skirmish (or --campaign's mission --first) with the
+            monkey, a save at 30%, then the game menu's Load at 55%: Yes, the
+            save from the list, OK, and the monkey in the loaded game.
+
+--screen 1024|1280 sets the Screen Size on the main menu's Options first (it
+lasts for that run: the game stores it only when it exits normally) and moves
+the HUD's clicks to that size's layout (HUD_LAYOUTS; base game only).
+
 In every mode the game speed is set to Fast (--speed) and the game is saved
 once, 40% of the way in (--no-save).
 
@@ -41,9 +56,10 @@ the host: 4 the watchdog ended it (the run survived), 0 the game exited,
 Then `py -3 tools/seeds_from_logs.py` turns the unresolved addresses into
 seeds (it reads work/soak/**/*.log).
 
-Coordinates are the 800x600 screens (the menus, the setup screen, the HUD):
-a --game folder whose Screen Size is 1024 or 1280 is moved off by the HUD's
-layout, so the tool checks the first SetDisplayMode in the game and warns.
+Coordinates are the 800x600 screens (the menus, the setup screen, the HUD)
+unless --screen says otherwise: a --game folder whose Screen Size is 1024 or
+1280 moves the HUD, so the tool checks the game's SetDisplayMode calls and
+warns (with --screen, a run at another size is a problem).
 """
 import argparse
 import datetime
@@ -102,9 +118,51 @@ SAVED_ROW0, SAVED_STEP, SAVED_OK = 121, 21, (178, 568)   # its list (alphabetica
 TEAM_X, TEAM_ME_Y = 472, 94          # the setup screen's Team buttons: each click is the next team
 SCORE_TABS = [(130, 562), (238, 562), (346, 562), (454, 562), (562, 562), (672, 562)]
 SCORE_MENU = (710, 514)              # the score screen: Main Menu (Scenario Menu in a campaign)
-# OOM-9's missions on its campaign screen, in order (each appears when the one before is won).
-OOM9_MISSIONS = [(150, 140), (372, 140), (135, 265), (368, 265), (90, 430)]
+# Each campaign's mission boxes on its campaign screen, in order. A box shows once the
+# mission before it is won (Basic Training's are all open from the start). Found by winning
+# each mission in turn and diffing the campaign screen before and after (2026-11-26).
+MISSION_BOXES = {
+    'Attichitcuk': [(105, 160), (265, 150), (430, 200), (270, 295), (95, 350), (245, 460), (405, 430)],
+    'OOM-9': [(150, 140), (377, 149), (133, 265), (368, 265), (90, 430), (255, 420), (428, 440)],
+    'Boss Nass': [(150, 140), (264, 156), (398, 143), (110, 310), (323, 326), (120, 455), (311, 466)],
+    'Chewbacca': [(150, 140), (382, 146), (100, 286), (250, 277), (411, 293), (115, 455), (335, 453)],
+    'Darth Vader': [(150, 140), (401, 132), (116, 290), (300, 270), (445, 288), (181, 490), (391, 451)],
+    'Princess Leia': [(150, 140), (296, 147), (430, 150), (114, 293), (286, 308), (450, 293), (133, 458),
+                      (360, 460)],
+}
+OOM9_MISSIONS = MISSION_BOXES['OOM-9']
+# Clone Campaigns' two Episode II campaigns (clone_campaigns() makes them the table).
+CONFEDERACY_BOXES = [(150, 140), (397, 128), (110, 280), (284, 280), (450, 276), (178, 455), (408, 458)]
+REPUBLIC_BOXES = [(150, 140), (390, 119), (113, 285), (278, 282), (447, 281), (187, 470), (398, 485)]
+REQUIRES = {}                        # a campaign that opens only when another is won
+CAMPAIGN_MENU = (90, 25)             # a campaign screen's Campaign Menu: back to the six
 WIN_CHEAT = 'skywalker'              # typed in the chat: instant victory
+SAVE_EXT = '.gax'                    # the base game's saved games (Clone Campaigns': .ga1)
+GAME_MENU_LOAD = (408, 251)          # the game menu's Load, then "quit and load a new game?" Yes
+LOAD_YES = (305, 328)
+INGAME_LOAD = (300, 121, 21, (178, 568))   # its list: x, the first row, the step, then OK
+SCREEN = [800]                       # --screen: the Screen Size the game runs at
+# Where the game's in-game screens are at its three Screen Sizes. The HUD is its own art per
+# width (screen_coords.txt); the game menu and the Options dialog are centred; the Save and
+# Load screens are the 800x600 one scaled; the menus and the score screen stay 800x600.
+HUD_LAYOUTS = {
+    1024: {'MAP_VIEW': (0, 20, 1023, 560),
+           'COMMAND_GRID': [(x, y) for y in (605, 648, 691, 733) for x in (37, 81, 126, 170)],
+           'HUD_RIGHT': {'menu': (983, 624), 'objectives': (983, 653), 'chat': (983, 680),
+                         'diplomacy': (983, 706), 'last': (983, 733)},
+           'MINIMAP': (770, 682, 150), 'MINIMAP_BUTTONS': [(860, 624), (890, 624), (636, 728)],
+           'TOP_ICONS': [(268, 580), (291, 580), (314, 580), (337, 580)],
+           'COMMAND_CENTER': (500, 300)},
+    1280: {'MAP_VIEW': (0, 20, 1279, 760),
+           'COMMAND_GRID': [(x, y) for y in (822, 873, 924, 975) for x in (47, 98, 149, 200)],
+           'HUD_RIGHT': {'menu': (1232, 850), 'objectives': (1232, 880), 'chat': (1232, 908),
+                         'diplomacy': (1232, 937), 'last': (1232, 967)},
+           'MINIMAP': (965, 918, 200), 'MINIMAP_BUTTONS': [(1085, 857), (1113, 857), (803, 975)],
+           'TOP_ICONS': [(327, 795), (354, 795), (382, 795), (410, 795)],
+           'COMMAND_CENTER': (610, 340)},
+}
+SCREEN_RADIO = {800: (453, 383), 1024: (453, 413), 1280: (453, 443)}   # the main menu's Options panel
+MAIN_OPTIONS = (40, 490)
 COMMAND_CENTER = (400, 170)         # where the view starts: the command center
 FORCED_CIVS = []                    # --civs: the computers' civilizations, in turn
 MY_CIV = [None]                     # --my-civ
@@ -117,12 +175,56 @@ def clone_campaigns():
     Campaigns, Standard Game, Custom Campaign, Saved Game; its setup screen is
     the base game's with nine civilizations; its Episode II campaign screen has
     two; the mission screen and difficulty dialog are the base game's."""
-    global SP_STANDARD, SP_CAMPAIGNS, SP_SAVED, CIVS, CIV_ITEMS, CAMPAIGNS
+    global SP_STANDARD, SP_CAMPAIGNS, SP_SAVED, CIVS, CIV_ITEMS, CAMPAIGNS, MISSION_BOXES, SAVE_EXT
     SP_STANDARD, SP_CAMPAIGNS, SP_SAVED = (603, 228), (603, 170), (603, 344)
     CIVS = ['Confederacy', 'Galactic Empire', 'Gungans', 'Rebel Alliance', 'Republic', 'Royal Naboo',
             'Trade Federation', 'Wookiees', 'Random']
     CIV_ITEMS = len(CIVS)
     CAMPAIGNS = {'Confederacy': (225, 315), 'Galactic Republic': (555, 315)}
+    MISSION_BOXES = {
+        'Confederacy': CONFEDERACY_BOXES,
+        'Galactic Republic': REPUBLIC_BOXES,
+    }
+    SAVE_EXT = '.ga1'
+    REQUIRES['Galactic Republic'] = 'Confederacy'     # its planet answers once Confederacy is won
+
+
+def use_screen(size):
+    """--screen: the in-game coordinates for a Screen Size of 1024 or 1280 (800: as they are).
+    Dialogs are centred, the Save and Load screens scaled."""
+    global MAP_VIEW, COMMAND_GRID, HUD_RIGHT, MINIMAP, MINIMAP_BUTTONS, TOP_ICONS, COMMAND_CENTER
+    global GAME_MENU, OPTIONS_FAST, OPTIONS_OK, SAVE_OK, GAME_MENU_LOAD, LOAD_YES
+    global INGAME_LOAD
+    SCREEN[0] = size
+    if size == 800:
+        return
+    w, h = {1024: (1024, 768), 1280: (1280, 1024)}[size]
+    L = HUD_LAYOUTS[size]
+    MAP_VIEW, COMMAND_GRID, HUD_RIGHT = L['MAP_VIEW'], L['COMMAND_GRID'], L['HUD_RIGHT']
+    MINIMAP, MINIMAP_BUTTONS, TOP_ICONS = L['MINIMAP'], L['MINIMAP_BUTTONS'], L['TOP_ICONS']
+    COMMAND_CENTER = L['COMMAND_CENTER']
+    dx, dy = (w - 800) // 2, (h - 600) // 2
+
+    def centred(xy):
+        return (xy[0] + dx, xy[1] + dy)
+
+    def scaled(xy):
+        return (xy[0] * w // 800, xy[1] * h // 600)
+    GAME_MENU = {k: centred(v) for k, v in GAME_MENU.items()}
+    OPTIONS_FAST, OPTIONS_OK = centred(OPTIONS_FAST), centred(OPTIONS_OK)
+    GAME_MENU_LOAD, LOAD_YES = centred(GAME_MENU_LOAD), centred(LOAD_YES)
+    SAVE_OK = scaled(SAVE_OK)
+    # The in-game Load's list: the Saved Game screen at this size (the main menu's stays 800x600).
+    x, row0, step, ok = INGAME_LOAD
+    INGAME_LOAD = (x * w // 800, row0 * h // 600, step * h / 600, scaled(ok))
+
+
+def set_screen(s, t, size):
+    """The main menu's Options panel: Screen Size. It is kept in this game folder's registry
+    (--multi gives each folder its own). Eight seconds."""
+    s.click(t, MAIN_OPTIONS)
+    s.click(t + 6, SCREEN_RADIO[size])
+    return t + 9
 MONKEY_KEYS = list('abcdefghijklmnopqrstuvwxyz0123456789') + \
     ['esc', 'enter', 'space', 'tab', 'up', 'down', 'left', 'right', 'home', 'end', 'bksp'] + \
     ['f1', 'f2', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f11']   # F3 pauses, F10 is the menu: kept off
@@ -190,7 +292,7 @@ def setup_skirmish(s, rnd, t):
 
 
 def setup_campaign(s, rnd, t, name=None):
-    name = name or rnd.choice(sorted(CAMPAIGNS))
+    name = name or rnd.choice(sorted(c for c in CAMPAIGNS if c not in REQUIRES))   # a locked one: missions
     s.click(t, MAIN_SINGLE)
     s.click(t + 15, SP_CAMPAIGNS)
     s.click(t + 30, CAMPAIGNS[name])
@@ -299,6 +401,10 @@ def monkey(s, rnd, t0, t1, out):
                     rnd.choice(['click', 'rclick']))
         elif r < 0.68:
             s.click(t, rnd.choice(MINIMAP_BUTTONS + TOP_ICONS))
+        elif r < 0.72 and t + 8 > t1:
+            # No room before t1 for a panel or the game menu (their Escapes come 5-6 s later): a
+            # save or load scripted at t1 would be closed by them. A key instead.
+            s.at(t, rnd.choice(MONKEY_KEYS))
         elif r < 0.71:
             # A HUD panel (objectives, chat, diplomacy, ...): a click or two inside it, then Escape.
             s.click(t, HUD_RIGHT[rnd.choice(['objectives', 'chat', 'diplomacy', 'last'])])
@@ -392,7 +498,26 @@ def analyse(log, keys_text):
             kind = 'defeat' if 'lost' in l.lower() else 'victory'
             if not endings or endings[-1][1] != kind or now - endings[-1][0] > 30:
                 endings.append((now, kind))
-    return {'events': events, 'watchdog': bool(m), 'last_key': last_key,
+    # The saved games the game opened (--files), by the [keys] time before: a save writes one,
+    # a load reads it.
+    saves, now = [], 0.0
+    for l in lines:
+        if l.startswith('[keys] '):
+            mm = re.match(r'\[keys\] ([0-9.]+)s', l)
+            now = float(mm.group(1)) if mm else now
+        else:
+            mm = re.match(r'\[host\] open (?:.*\\)?savegame\\([^\\]+?)\.ga[x1] -> ok', l, re.I)
+            if mm:
+                saves.append(['%.0f' % now, mm.group(1).lower()])
+    # Campaign missions: a mission's end briefing (campaign\media\<campaign>s<N>_end.mm) opens
+    # when it is won, Basic Training's too (which plays no victory music).
+    won = []
+    for l in lines:
+        mm = re.match(r'\[host\] open campaign\\media\\(\w+?)_end\.mm -> ok', l, re.I)
+        if mm and mm.group(1).lower() not in won:
+            won.append(mm.group(1).lower())
+    return {'events': events, 'watchdog': bool(m), 'last_key': last_key, 'save_opens': saves,
+            'missions_won': won,
             'endings': [['%.0f' % t, k] for t, k in endings],
             'modes': ['%sx%s' % mm for mm in modes], 'frames': int(frames[-1]) if frames else None,
             'firsthit': fh}
@@ -487,9 +612,7 @@ def plan_victory(s, rnd, out, args, game, seed):
     t = score_tour(s, t + 25, out, 'victory')
     s.click(t, SCORE_MENU)
     # The saved games, as the list shows them: alphabetical.
-    saved = os.path.join(game, 'SaveGame')
-    names = sorted({f[:-4].lower() for f in os.listdir(saved) if f.lower().endswith('.gax')} | {name})
-    row = names.index(name)
+    row = saved_row(game, name)
     s.click(t + 10, MAIN_SINGLE)
     s.click(t + 25, SP_SAVED)
     s.click(t + 35, (300, SAVED_ROW0 + SAVED_STEP * row))
@@ -503,40 +626,149 @@ def plan_victory(s, rnd, out, args, game, seed):
     return end, dict(what, goal='victory, then load', save=name, save_row=row, speed=args.speed)
 
 
-def plan_chain(s, rnd, out, args, game, seed):
-    """OOM-9's missions --first..--last in a row: each played with the monkey for --minutes,
-    won (the cheat), its score screen, Scenario Menu, then the next. A mission appears once
-    the one before it is won, in this game folder's player profile."""
-    s.click(20, MAIN_SINGLE)
-    s.click(35, SP_CAMPAIGNS)
-    s.click(50, CAMPAIGNS['OOM-9'])
-    t = 60
-    done = []
-    for m in range(args.first, args.last + 1):
-        s.click(t, OOM9_MISSIONS[m - 1])
-        if m == 1:
-            s.click(t + 6, CAMPAIGN_OK)          # the difficulty, the first time only
-        start = t + 100                          # the briefing, then the mission
-        for k in range(4):
-            s.at(start - 30 + 10 * k, 'esc')     # its Objectives
-        s.at(start, 'shot=%s' % os.path.join(out, 'shot_m%d_start.bmp' % m))
+def mission(s, rnd, out, args, seed, t, box, m, play, tag):
+    """One mission from its campaign screen: its box (mission 1: the difficulty's OK), the
+    briefing, Escape for its Objectives; if PLAY, Fast and the monkey for --minutes with a save
+    40% of the way in, else nothing (passing through); then the cheat, the end briefing, the
+    score screen's tabs and Scenario Menu. Returns the time back on the campaign screen."""
+    s.click(t, box)
+    if m == 1:
+        s.click(t + 6, CAMPAIGN_OK)              # the difficulty, the first time only
+    start = t + 110                              # the briefing (~35 s), then the mission loads
+    for k in range(4):
+        s.at(start - 30 + 10 * k, 'esc')         # its Objectives
+    s.at(start, 'shot=%s' % os.path.join(out, 'shot_%s_start.bmp' % tag))
+    if not play:
+        won = start + 5                          # passing through: won at once
+    else:
         t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
         won = start + args.minutes * 60
-        monkey(s, rnd, t, won - 5, out)
-        t = chat(s, won, WIN_CHEAT)
-        t = score_tour(s, t + 30, out, 'm%d' % m)
-        s.click(t, SCORE_MENU)
-        s.at(t + 12, 'shot=%s' % os.path.join(out, 'shot_m%d_after.bmp' % m))
-        t += 15
-        done.append(m)
-    return t + 5, {'campaign': 'OOM-9', 'missions': done, 'speed': args.speed}
+        if args.save:
+            save_at = t + (won - t) * 0.4
+            monkey(s, rnd, t, save_at - 3, out)
+            save_game(s, save_at, 'soak%d%s' % (seed, tag))
+            monkey(s, rnd, save_at + 22, won - 5, out)
+        else:
+            monkey(s, rnd, t, won - 5, out)
+    t = chat(s, won, WIN_CHEAT)
+    # The end briefing (20-35 s in every mission tried), then the score screen.
+    t = score_tour(s, t + 45, out, tag)
+    s.click(t, SCORE_MENU)
+    s.at(t + 12, 'shot=%s' % os.path.join(out, 'shot_%s_after.bmp' % tag))
+    return t + 15
+
+
+def plan_missions(s, rnd, out, args, game, seed):
+    """--campaign's missions --first..--last in a row on its campaign screen (OOM-9 when none
+    is named, Confederacy with --cc; `chain` is this mode). Each played mission: its box, the
+    briefing, Escape for its Objectives, Fast, the monkey for --minutes with a save 40% of the
+    way in, then won (the cheat), the end briefing, the score screen's tabs and Scenario Menu,
+    back on the campaign screen for the next box.
+
+    A box shows once the mission before it is won, in this game folder's player profile, so
+    the missions before --first are passed through first: each started and won at once,
+    about three minutes each. A campaign that opens only when another is won (Galactic
+    Republic: Confederacy) has that one passed through first, all of it. --unlocked skips
+    both, for a profile that has them open already. Mission 1's first start asks for the
+    difficulty: its OK (Easy)."""
+    name = args.campaign or ('Confederacy' if SAVE_EXT == '.ga1' else 'OOM-9')
+    boxes = MISSION_BOXES[name]
+    last = min(args.last or len(boxes), len(boxes))
+    s.click(20, MAIN_SINGLE)
+    s.click(35, SP_CAMPAIGNS)
+    t = 50
+    passed, played = [], []
+    before = REQUIRES.get(name)
+    if before and not args.unlocked:
+        s.click(t, CAMPAIGNS[before])
+        t += 10
+        for m, box in enumerate(MISSION_BOXES[before], 1):
+            t = mission(s, rnd, out, args, seed, t, box, m, False, 'pre%d' % m)
+            passed.append('%s %d' % (before, m))
+        # After a campaign's last mission the game is back on the list of campaigns.
+    s.click(t, CAMPAIGNS[name])
+    t += 10
+    for m in range(args.first if args.unlocked else 1, last + 1):
+        play = m >= args.first
+        t = mission(s, rnd, out, args, seed, t, boxes[m - 1], m, play, 'm%d' % m)
+        (played if play else passed).append(m)
+    return t + 5, {'campaign': name, 'missions': played, 'passed_through': passed, 'speed': args.speed,
+                   'save': args.save}
+
+
+plan_chain = plan_missions
+
+
+def saved_names(game):
+    """The game's Saved Game list, as it shows it: the saves and the recorded games (base
+    .gax/.mgx, Clone Campaigns .ga1/.mg1), by name, alphabetical. Clone Campaigns' first
+    in-game Load counted saves alone and loaded the recorded game a row up instead."""
+    exts = (SAVE_EXT, SAVE_EXT.replace('.ga', '.mg'))
+    saved = os.path.join(game, 'SaveGame')
+    return sorted({f[:-4].lower() for f in os.listdir(saved) if f.lower().endswith(exts)})
+
+
+def saved_row(game, name):
+    """The row of save NAME in the game's Saved Game lists."""
+    names = sorted(set(saved_names(game)) | {name})
+    return names.index(name)
+
+
+def ingame_load(s, t, row, out, tag='loaded'):
+    """The game menu -> Load -> Yes (quit this game) -> the row'th save -> OK. Returns the time
+    the loaded game is up."""
+    s.click(t, HUD_RIGHT['menu'])
+    s.click(t + 2, GAME_MENU_LOAD)
+    s.click(t + 4, LOAD_YES)
+    x, row0, step, ok = INGAME_LOAD
+    s.at(t + 12, 'shot=%s' % os.path.join(out, 'shot_load_list.bmp'))
+    s.click(t + 13, (x, round(row0 + step * row)))
+    s.click(t + 15, ok)
+    s.at(t + 80, 'shot=%s' % os.path.join(out, 'shot_%s.bmp' % tag))
+    return t + 82
+
+
+def plan_ingame_load(s, rnd, out, args, game, seed):
+    """A varied skirmish (or, with --campaign, that campaign's mission --first, which must be
+    open: Basic Training's all are), the monkey, a save 30% of the way in, the monkey on, then
+    the game menu's Load at 55%: Yes, the save from the list, OK; and the monkey in the loaded
+    game to the end. The main menu's Saved Game is `victory` and `load`."""
+    if args.campaign:
+        s.click(20, MAIN_SINGLE)
+        s.click(35, SP_CAMPAIGNS)
+        s.click(50, CAMPAIGNS[args.campaign])
+        s.click(60, MISSION_BOXES[args.campaign][args.first - 1])
+        if args.first == 1:
+            s.click(66, CAMPAIGN_OK)
+        start = 170
+        for k in range(4):
+            s.at(start - 30 + 10 * k, 'esc')
+        what = {'campaign': args.campaign, 'mission': args.first}
+    else:
+        # Easiest, 1-3 computers on a Medium map: Hardest ones razed the monkey's base before
+        # the Load (a defeat at 11 minutes), and the monkey then clicked the main menu's Exit.
+        t, what = setup_fixed(s, 20, others=rnd.randint(1, 3), size=2, diff=0,
+                              loc=rnd.randrange(len(LOCATIONS)))
+        start = t + 80
+    s.at(start, 'shot=%s' % os.path.join(out, 'shot_start.bmp'))
+    t = fast_speed(s, start + 2) if args.speed == 'fast' else start + 2
+    end = start + args.minutes * 60
+    name = 'soak%d' % seed
+    save_at, load_at = start + (end - start) * 0.3, start + (end - start) * 0.55
+    monkey(s, rnd, t, save_at - 3, out)
+    save_game(s, save_at, name)
+    monkey(s, rnd, save_at + 22, load_at - 3, out)
+    row = saved_row(game, name)
+    loaded = ingame_load(s, load_at, row, out)
+    monkey(s, rnd, loaded, end - 5, out)
+    return end, dict(what, goal='save, then the in-game Load', save=name, save_row=row, speed=args.speed,
+                     load_at=round(load_at))
 
 
 def plan_load(s, rnd, out, args, game, seed):
     """Single Player -> Saved Game -> the --row'th save in the list -> OK, then the monkey
     for --minutes."""
-    saved = os.path.join(game, 'SaveGame')
-    names = sorted(f[:-4].lower() for f in os.listdir(saved) if f.lower().endswith('.gax'))
+    names = saved_names(game)
     s.click(20, MAIN_SINGLE)
     s.click(35, SP_SAVED)
     s.click(45, (300, SAVED_ROW0 + SAVED_STEP * args.row))
@@ -729,17 +961,45 @@ def fight_control(args, out, log, live, proc, t_launch, what):
         kill_tree(proc)
 
 
-ENDGAME = {'fight': plan_fight, 'load': plan_load, 'defeat': plan_defeat, 'allied': plan_allied, 'victory': plan_victory, 'chain': plan_chain}
+ENDGAME = {'fight': plan_fight, 'load': plan_load, 'defeat': plan_defeat, 'allied': plan_allied, 'victory': plan_victory,
+           'chain': plan_chain, 'missions': plan_missions, 'ingame-load': plan_ingame_load}
+# The endgame modes that also work in Clone Campaigns (the others script the base game's screens).
+CC_MODES = ('missions', 'ingame-load')
+
+
+LOST = re.compile(r'stream\\lost\.mp3 -> ok', re.I)
+
+
+def defeat_watch(log, live, out, proc, what):
+    """missions: a mission the game declares lost (lost.mp3) ends its run: the defeat and the
+    score screen shot, then this run's process tree stopped (by its PID). The rest of the
+    script would otherwise click on through the menus, out of step."""
+    while proc.poll() is None:
+        time.sleep(2)
+        try:
+            text = open(log, encoding='utf-8', errors='replace').read()
+        except OSError:
+            continue
+        if LOST.search(text):
+            for shot, pause in (('defeat.bmp', 30), ('score_defeat.bmp', 4)):
+                with open(live, 'a', newline='\n') as f:
+                    f.write('0:shot=%s\n' % os.path.join(out, shot))
+                time.sleep(pause)
+            what['ended_by'] = 'a defeat, then this tool'
+            kill_tree(proc)
+            return
 
 
 def run_one(args, i, mode, rnd_seed, out_root, game):
     rnd = random.Random(rnd_seed)
-    name = '%02d-%s-%d' % (i, mode, rnd_seed)
+    name = '%02d-%s-%d' % (i, mode if mode not in ('missions', 'chain') else 'm%d' % args.first, rnd_seed)
     out = os.path.join(out_root, name)
     os.makedirs(out, exist_ok=True)
     s = Script()
     SHOT_DIR[0] = out
     ARGS[0] = args
+    if args.screen:
+        set_screen(s, 12, args.screen)          # before the plan's first click, at 20
     if mode in ENDGAME:
         end, what = ENDGAME[mode](s, rnd, out, args, game, rnd_seed)
     else:
@@ -751,7 +1011,7 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
     cmd = [args.run, '--run', '--multi', '--headless', '--files', '--exe', args.exe, '--game', game,
            '--watchdog', str(int(end + 5)), '--keys', '@' + keys] + args.extra.split()
     live = os.path.join(out, 'live.txt')
-    if mode == 'fight':
+    if mode in ('fight', 'missions', 'chain'):
         open(live, 'w').close()
         cmd += ['--keys-live', live]
     meta = {'name': name, 'mode': mode, 'seed': rnd_seed, 'setup': what, 'minutes': args.minutes,
@@ -763,13 +1023,20 @@ def run_one(args, i, mode, rnd_seed, out_root, game):
         meta['pid'] = p.pid
         if mode == 'fight':
             fight_control(args, out, log, live, p, t0, what)
+        elif mode in ('missions', 'chain'):
+            defeat_watch(log, live, out, p, what)
         rc = p.wait()
     meta['seconds'] = round(time.time() - t0)
     meta['exit'] = rc
     meta['outcome'] = EXIT.get(rc, 'exit %d' % rc)
     meta.update(analyse(log, s.text()))
-    if what.get('ended_by') and meta['endings']:   # the fight's controller ended it after the game over
+    if what.get('load_at'):                        # ingame-load: the save read back after the Load
+        meta['save_reads'] = [o for o in meta['save_opens'] if o[1] == what['save'] and float(o[0]) >= what['load_at']]
+    if what.get('ended_by') and meta['endings']:   # fight, missions: ended by this tool after the game over
         meta['outcome'] = 'game over: %s' % meta['endings'][-1][1]
+    if mode in ('missions', 'chain'):
+        meta['mission'] = what.get('missions', [None])[-1] if what.get('missions') else None
+        meta['result'] = 'lost' if what.get('ended_by') else 'won' if meta['missions_won'] else 'not finished'
     for f in sorted(os.listdir(out)):
         if f.endswith('.bmp') and shutil.which('ffmpeg'):
             png = os.path.join(out, f[:-4] + '.png')
@@ -788,8 +1055,12 @@ def main():
     ap.add_argument('--wave-every', type=float, default=300, help='fight: seconds between waves (up to 9)')
     ap.add_argument('--dwell', type=float, default=90, help='fight: seconds at each sweep point')
     ap.add_argument('--row', type=int, default=0, help='load: the save to load, by its row in the list')
-    ap.add_argument('--first', type=int, default=1, help='chain: the first OOM-9 mission (1-5)')
-    ap.add_argument('--last', type=int, default=3, help='chain: the last OOM-9 mission (1-5)')
+    ap.add_argument('--first', type=int, default=1, help='missions, chain: the first mission played')
+    ap.add_argument('--last', type=int, default=None, help="missions, chain: the last (default: the campaign's last)")
+    ap.add_argument('--unlocked', action='store_true',
+                    help='missions: the profile has the missions before --first open already: start there')
+    ap.add_argument('--screen', type=int, default=None, choices=[800, 1024, 1280],
+                    help='set the Screen Size first (main menu, Options); the HUD clicks follow it')
     ap.add_argument('--runs', type=int, default=1)
     ap.add_argument('--minutes', type=float, default=25)
     ap.add_argument('--jobs', type=int, default=1, help='runs at once (each with its own game folder)')
@@ -817,8 +1088,13 @@ def main():
     args = ap.parse_args()
     if args.cc:
         clone_campaigns()
-        if args.mode in ENDGAME:
-            sys.exit('--cc: --mode %s plays the base game\'s OOM-9 campaign; skirmish, monkey or campaign' % args.mode)
+        if args.mode in ENDGAME and args.mode not in CC_MODES:
+            sys.exit('--cc: --mode %s plays the base game\'s screens; skirmish, monkey, campaign, %s'
+                     % (args.mode, ', '.join(CC_MODES)))
+        if args.screen and args.screen != 800:
+            sys.exit('--cc: --screen is the base game\'s (its main menu\'s Options are elsewhere)')
+    if args.screen:
+        use_screen(args.screen)
     if os.name == 'nt':
         args.run = args.run or (r'A:\Games\star\builds\clone-campaigns\swgbrecomp_cc.exe' if args.cc
                                 else r'A:\Games\star\builds\coverage\swgbrecomp.exe')
@@ -837,6 +1113,10 @@ def main():
             sys.exit('no civilization %r: %s' % (c, ', '.join(CIVS)))
     if args.campaign and args.campaign not in CAMPAIGNS:
         sys.exit('no campaign %r: %s' % (args.campaign, ', '.join(sorted(CAMPAIGNS))))
+    if args.mode in ('missions', 'chain', 'ingame-load') and args.campaign:
+        n = len(MISSION_BOXES[args.campaign])
+        if not 1 <= args.first <= n or (args.last and not args.first <= args.last <= n):
+            sys.exit('%s has missions 1-%d' % (args.campaign, n))
     FORCED_CIVS[:] = [c for c in args.civs.split(',') if c]
     MY_CIV[0] = args.my_civ or None
     sys.stdout.reconfigure(line_buffering=True)    # a run's line as it ends, into a redirected log too
@@ -849,10 +1129,20 @@ def main():
     for g in games[1:]:
         ensure_game(args.game, g)
     modes = ['skirmish', 'monkey', 'campaign']
-    plan = [(i, args.mode if args.mode != 'mixed' else modes[i % 3], rnd.randrange(1 << 20))
+    plan = [(i, args.mode if args.mode != 'mixed' else modes[i % 3], rnd.randrange(1 << 20), {})
             for i in range(args.runs)]
+    if args.mode in ('missions', 'chain'):
+        # A game of its own per mission, in turn, in the one folder (its profile opens each next
+        # box): a mission lost before the cheat (a hero killed, a base razed while the monkey
+        # plays) would leave the rest of one long script clicking out of step. The first run
+        # also passes through what comes before --first.
+        camp = args.campaign or ('Confederacy' if args.cc else 'OOM-9')
+        n = len(MISSION_BOXES[camp])
+        plan = [(k, args.mode, rnd.randrange(1 << 20), {'first': m, 'last': m, 'unlocked': args.unlocked or k > 0})
+                for k, m in enumerate(range(args.first, min(args.last or n, n) + 1))]
+        args.jobs, games = 1, games[:1]
     print('soak: %d run(s), %s, %g min each, %d at once, seed %d -> %s'
-          % (args.runs, args.mode, args.minutes, args.jobs, seed, args.out))
+          % (len(plan), args.mode, args.minutes, args.jobs, seed, args.out))
     results, lock = [], threading.Lock()
     free = list(games)
 
@@ -860,7 +1150,7 @@ def main():
         with lock:
             g = free.pop()
         try:
-            m = run_one(args, item[0], item[1], item[2], args.out, g)
+            m = run_one(argparse.Namespace(**dict(vars(args), **item[3])), item[0], item[1], item[2], args.out, g)
         finally:
             with lock:
                 free.append(g)
@@ -879,14 +1169,20 @@ def main():
             th.start()
             threads.append(th)
         time.sleep(1)
+    size = '%dx%d' % {800: (800, 600), 1024: (1024, 768), 1280: (1280, 1024)}[args.screen or 800]
+    for m in results:
+        # The menus are 800x600 at every Screen Size: the game's own size is the one after them.
+        m['screen_ok'] = not m['modes'] or (size in m['modes'] if args.screen else
+                                             all(x == '800x600' for x in m['modes']))
     json.dump(sorted(results, key=lambda m: m['name']), open(os.path.join(args.out, 'summary.json'), 'w'), indent=1)
     bad = [m for m in results if (m['exit'] not in (0, 4) and not m['outcome'].startswith('game over'))
-           or m['events']]
+           or m['events'] or (args.screen and not m['screen_ok'])]
     hours = sum(m['seconds'] for m in results) / 3600
     print('%d run(s), %.2f game-hours, %d with a problem; %s' % (len(results), hours, len(bad), args.out))
     for m in results:
-        if m['modes'] and m['modes'][0] != '800x600':
-            print('  warning: %s ran at %s: the HUD coordinates are for 800x600' % (m['name'], m['modes'][0]))
+        if not m['screen_ok']:
+            print('  warning: %s ran at %s: the HUD coordinates are for %s (--screen)'
+                  % (m['name'], ', '.join(m['modes']), size))
     return 1 if bad else 0
 
 
