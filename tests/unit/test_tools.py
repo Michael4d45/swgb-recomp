@@ -245,6 +245,32 @@ class LiftCheck(unittest.TestCase):
             self.assertFalse(rep['ok'])
             self.assertEqual(rep['gone'], 1)
 
+    def test_runner_lift_new(self):
+        """test.py's lift check: no baseline is NEW, its hashes only in the check's folder;
+        --update-baselines records them, and the next run compares."""
+        with tempfile.TemporaryDirectory() as d:
+            self.write_gen(os.path.join(d, 'src', 'recomp', 'gen'), [('sub_00401000', '    eax = 1;')])
+
+            class A:
+                main, update_baselines = d, False
+
+            class C:
+                a, baselines = A(), os.path.join(d, 'base')
+            check = runner.Check('lift/base', 'smoke', None, doc='x')
+            fn = runner.lift_check_fn('base')
+            r = runner.Result(check, os.path.join(d, 'results'))
+            fn(C(), r)
+            self.assertEqual(r.status, 'NEW')
+            self.assertFalse(os.path.exists(C.baselines))
+            self.assertTrue(os.path.exists(os.path.join(r.dir, 'new-baselines', 'lift', 'base.json')))
+            A.update_baselines = True
+            fn(C(), runner.Result(check, os.path.join(d, 'results')))
+            self.assertTrue(os.path.exists(os.path.join(C.baselines, 'lift', 'base.json')))
+            A.update_baselines = False
+            r = runner.Result(check, os.path.join(d, 'results'))
+            fn(C(), r)
+            self.assertEqual((r.status, r.metrics['identical']), ('PASS', 1))
+
     def test_errors_fail(self):
         with tempfile.TemporaryDirectory() as d:
             gen, stats = os.path.join(d, 'gen'), os.path.join(d, 's.json')
@@ -338,14 +364,17 @@ class Runner(unittest.TestCase):
             ctx.baselines = os.path.join(d, 'base')
             png = os.path.join(d, 'x.png')
             Image.new('L', (100, 100), 50).save(png)
-
-            class R(runner.Result):
-                def __init__(self):
-                    self.lines, self.metrics, self.images, self.status, self.root = [], {}, [], 'PASS', d
-
-            r = R()
-            self.assertEqual(runner.compare(ctx, r, png, 'k/menu'), 0.0)   # recorded
+            r = runner.Result(runner.Check('skirmish/k', 'smoke', None, game='base', doc='x'), d)
+            # no baseline: NEW, not compared, and the baselines left alone (only --update-baselines writes them)
+            self.assertIsNone(runner.compare(ctx, r, png, 'k/menu'))
+            self.assertEqual(r.status, 'NEW')
+            self.assertFalse(os.path.exists(ctx.baselines))
+            self.assertTrue(os.path.exists(os.path.join(r.dir, 'new-baselines', 'k', 'menu.png')))
+            ctx.a.update_baselines = True
+            self.assertIsNone(runner.compare(ctx, r, png, 'k/menu'))
             self.assertTrue(os.path.exists(os.path.join(d, 'base', 'k', 'menu.png')))
+            ctx.a.update_baselines = False
+            r = runner.Result(r.check, d)
             im = Image.new('L', (100, 100), 50)
             for x in range(10):                                            # 1% differs
                 im.putpixel((x, 0), 200)
@@ -382,7 +411,7 @@ class Runner(unittest.TestCase):
                         f.write(b'png')
                     r.image(os.path.join(r.dir, 'map.png'), 'map')
                     if attempt < passes_on:
-                        r.fail('no shot: map')
+                        runner.expect_exit(r, -1)            # timed out: what a retry may excuse
                     return r
                 return run
 
@@ -399,7 +428,7 @@ class Runner(unittest.TestCase):
             self.assertEqual((r.status, results[1].status), ('FLAKY', 'PASS'))
             self.assertEqual(text('skirmish_base', 'run.log'), 'try 1')
             self.assertEqual(text('skirmish_base-retry1', 'run.log'), 'try 2')
-            self.assertEqual(r.lines[0], 'try 1: FAIL, in skirmish_base/')
+            self.assertEqual(r.lines[0], 'try 1: FAIL (timing), in skirmish_base/')
             self.assertIn('try 2: PASS, in skirmish_base-retry1/', r.lines)
             self.assertEqual(r.images, [('skirmish_base/map.png', 'try 1: map'),
                                         ('skirmish_base-retry1/map.png', 'try 2: map')])
@@ -416,6 +445,96 @@ class Runner(unittest.TestCase):
             self.assertEqual(sum(l.startswith('try ') for l in r.lines), 3)
             for k, sub in enumerate(['res_1024', 'res_1024-retry1', 'res_1024-retry2']):
                 self.assertEqual(text(sub, 'run.log'), 'try %d' % (k + 1))
+
+    def retried(self, *tries):
+        """A check run once per entry of tries (a function that fails its Result, or None for a
+        pass) under --retry len(tries) - 1: its final Result, and how many times it ran."""
+        with tempfile.TemporaryDirectory() as d:
+            class A:
+                jobs = 1
+
+            class C:
+                a, cancelled, results = A(), False, d
+
+            ran = []
+
+            def run(c, attempt):
+                r = runner.Result(c, d, attempt)
+                ran.append(attempt)
+                if tries[attempt]:
+                    tries[attempt](r)
+                return r
+            results = [run(runner.Check('films/base', 'functional', None, game='base', doc='x'), 0)]
+            runner.retry_failed(C(), results, len(tries) - 1, run)
+            return results[0], len(ran)
+
+    def test_retry_timing_only_is_flaky(self):
+        """Only a try that failed on time alone (killed past its time, the watchdog) is retried into FLAKY."""
+        timed_out = lambda r: runner.expect_exit(r, -1)
+        watchdog = lambda r: runner.expect_exit(r, 4, want=(0,))
+        for why in (timed_out, watchdog):
+            r, n = self.retried(why, None)
+            self.assertEqual((r.status, n), ('FLAKY', 2))
+        r, n = self.retried(timed_out, watchdog, None)
+        self.assertEqual((r.status, n), ('FLAKY', 3))
+        self.assertEqual([t['hard'] for t in r.as_dict()['tries']], [False, False, False])
+
+    def test_retry_hard_failure_stays_fail(self):
+        """A wrong picture, a fault exit, an unresolved call or any other failure fails the run
+        even when the retry passes; it is not retried again once a try passed."""
+        fault = lambda r: runner.expect_exit(r, 3)
+        icall = lambda r: runner.events(r, 'ICALL: unresolved 0x00401000\n')
+        crash_line = lambda r: runner.events(r, '=== fault 0xC0000005 at 0x75B773FE, thread 1 ===\n')
+        picture = lambda r: r.fail('k/menu: 9.0% of the picture differs from the baseline (at most 2.0%)')
+        for why in (fault, icall, crash_line, picture):
+            r, n = self.retried(why, None, None)
+            self.assertEqual((r.status, n), ('FAIL', 2))
+            self.assertTrue(r.lines[0].startswith('FAIL: try 2 passed, but try 1 failed for more than time'), r.lines[0])
+            self.assertIn('try 1: FAIL, in films_base/', r.lines)
+        # a timeout with a fault in the same try is a crash, not timing
+        r, _ = self.retried(lambda r: (runner.expect_exit(r, -1), runner.events(r, '=== fault 0xC0000005 at 0x1 ===')), None)
+        self.assertEqual(r.status, 'FAIL')
+        # timing first, then a hard failure, then a pass: FAIL
+        r, n = self.retried(lambda r: runner.expect_exit(r, -1), fault, None)
+        self.assertEqual((r.status, n), ('FAIL', 3))
+        self.assertIn('try 2', r.lines[0])
+
+    def test_report_new_and_flaky(self):
+        """A NEW check fails functional and up (and the merge alias), not smoke, nor under
+        --update-baselines; NEW and FLAKY checks are listed above the table."""
+        self.assertEqual(runner.ALIASES['merge'], 'functional')
+        with tempfile.TemporaryDirectory() as d:
+            def run_report(level, update=False):
+                class A:
+                    update_baselines = update
+
+                class C:
+                    a, results = A(), d
+                new = runner.Result(runner.Check('skirmish/base', level, None, game='base', doc='x'), d)
+                new.new('base/menu.png: no baseline, not compared')
+                flaky, n = self.retried(lambda r: runner.expect_exit(r, -1), None)
+                plain = runner.Result(runner.Check('unit/keys', 'unit', None, doc='x'), d)
+                meta = {'level': level, 'started': 'now', 'host': 'h', 'seconds': 60, 'jobs': 1, 'build': 'b',
+                        'commit': 'c', 'dirty': False}
+                ok = runner.report(C(), [plain, new, flaky], meta)
+                with open(os.path.join(d, 'report.md'), encoding='utf-8') as f:
+                    return ok, f.read(), meta
+            for level in ('functional', 'soak', 'real'):
+                self.assertFalse(run_report(level)[0], level)
+            ok, md, meta = run_report('smoke')
+            self.assertTrue(ok)
+            self.assertEqual(meta['counts']['NEW'], 1)
+            self.assertTrue(run_report('functional', update=True)[0])
+            ok, md, _ = run_report('functional')
+            table = md.index('| Check |')
+            self.assertLess(md.index('## NEW: '), table)
+            self.assertLess(md.index('## FLAKY: '), table)
+            self.assertLess(md.index('- **skirmish/base**: base/menu.png: no baseline'), table)
+            self.assertLess(md.index('- **films/base**: run: exit -1 (timed out)'), table)
+            with open(os.path.join(d, 'report.html'), encoding='utf-8') as f:
+                page = f.read()
+            self.assertLess(page.index('<div class="top"><h2>NEW: '), page.index('<table>'))
+
     def test_hud_sides(self):
         import numpy as np
         from PIL import Image
