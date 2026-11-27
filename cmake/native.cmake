@@ -64,9 +64,10 @@ set(SWGB_NATIVE_INCS src/linux src/runtime ${GEN_DIR} third_party/miniz ${HLE} $
 # C under gcc"); these keep its integer and aliasing semantics x86's.
 set(GEN_OPT "-O1" CACHE STRING "optimization for the generated C")
 set(SWGB_GEN_FLAGS -w ${GEN_OPT} -fno-strict-aliasing -fwrapv)
-# The few generated files the game spends its time in, at GEN_HOT_OPT, as on
-# Windows (CMakeLists.txt, docs/performance.md: tools/profile_report.py --hot
-# picks them; a re-lift moves functions between files, so pick them again).
+# The few generated files the game spends its time in, at GEN_HOT_OPT
+# (docs/performance.md: tools/profile_report.py --hot picks them; a re-lift
+# moves functions between files, so pick them again). Windows compiles the
+# whole lift at /O2 and has no such list.
 set(GEN_HOT_FILES "recomp_0022.c;recomp_0040.c;recomp_0050.c;recomp_0051.c" CACHE STRING
     "generated files (names, ;-separated) compiled with GEN_HOT_OPT")
 set(GEN_HOT_OPT "-O2" CACHE STRING "optimization for GEN_HOT_FILES")
@@ -117,8 +118,12 @@ add_executable(swgb
 target_include_directories(swgb PRIVATE ${SWGB_NATIVE_INCS})
 target_compile_definitions(swgb PRIVATE ${SWGB_NATIVE_DEFS})
 target_compile_options(swgb PRIVATE -fno-strict-aliasing -fwrapv)
-set_source_files_properties(src/linux/main.c src/linux/shims.c src/linux/framerate.c src/linux/profile.c src/linux/movie.c src/runtime/keyscript.c src/runtime/coverage.c src/runtime/widescreen.c src/runtime/smooth.c src/runtime/dplay.c src/runtime/inflate.c src/runtime/cdaudio.c
-                            PROPERTIES COMPILE_OPTIONS "-Wall;-Wno-unused-parameter")
+# The host's own C (src/) with -Wall, read from the target so a new file gets
+# it, as on Windows; win32hle's and miniz's keep their own. swgbrecomp_cc
+# compiles the same files, so it gets this too.
+get_target_property(_host_sources swgb SOURCES)
+list(FILTER _host_sources INCLUDE REGEX "^src/")
+set_source_files_properties(${_host_sources} PROPERTIES COMPILE_OPTIONS "-Wall;-Wno-unused-parameter")
 set_source_files_properties(third_party/miniz/miniz.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
 # Every object of the lift, referenced or not: the dispatch table is the only
 # way in, and nothing may be dropped from behind it.
