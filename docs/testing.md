@@ -192,8 +192,14 @@ Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
 | `tools` | `tests/unit/test_tools.py` | the Python side, as above, and `perf_ab.py`'s figures, its round-by-round ratio and that every game sets its Screen Size, and `mp_pair.py`'s sync-record compare |
 
 They run on GitHub Actions (`.github/workflows/unit.yml`, `windows-latest`):
-pcrecomp is fetched at a pinned commit for its headers, and nothing of the game
-is downloaded, built or uploaded. Each unit was checked against a deliberate
+pcrecomp is fetched at the commit `tools/pcrecomp_pin.sh` names (the one the
+Linux build uses), and nothing of the game is downloaded, built or uploaded.
+Two more jobs there compile every object of both hosts, `swgbrecomp` and
+`swgbrecomp_cc`, without linking (no lift needed): `windows-host` (MSVC x86)
+and `linux-host` (i386 clang, the packages of [linux-macos.md](linux-macos.md)).
+Both run `tools/compile_hosts.sh`, which works on a machine too, before a
+merge is pushed: `sh tools/compile_hosts.sh out/hosts [-DPCRECOMP=DIR]` from an
+x86 MSVC prompt, with `-DCMAKE_TOOLCHAIN_FILE=cmake/linux-i386.cmake` on Linux. Each unit was checked against a deliberate
 break of the code it covers (the cache keeping every answer, the pacing
 catching up after a hitch, `xNAME.avi` looked for first, the decoder's state
 never marked used): each one fails.

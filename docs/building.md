@@ -234,8 +234,8 @@ not-lifted stubs 0   errors 0` and 5.5M lines of C in `src\recomp\gen_cc\`.
 widescreen mod in it, and `run_lift.py` refuses it ([lifting.md](lifting.md#clone-campaigns)).
 
 It is built as the base game is: `GEN_OPT` (`/O2`; it was `/O1`, with
-`GEN_HOT_OPT` (`/O2`) for `CC_GEN_HOT_FILES`, the seven files the base game's
-four hot ones became in x1). At `/O2` it took 32.5 minutes here on a busy
+`/O2` for the seven files the base game's four hot ones became in x1, a
+list that went when the whole lift became `/O2`). At `/O2` it took 32.5 minutes here on a busy
 machine, 7.8 GB for the compilers at once and 2.7 GB for one. The full build took 25 minutes here: 11 for 52 files at
 `-j 6`, then 14 for `recomp_0039.c` alone, whose compiler peaks near 4 GB
 of commit (the base game's own large files are alike). Windows without a
