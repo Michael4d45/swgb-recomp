@@ -1,6 +1,6 @@
 """The tools' own tests, no game needed: tools/soak.py's scripts and log reading,
 tools/lift_check.py, tools/smooth_check.py, tools/test.py's image and --fps-log readers, perf_ab.py
-and mp_pair.py's sync compare.
+and mp_pair.py's sync compare; every environment variable the sources read is in docs/building.md.
 
     py -3 -m unittest -v tests.unit.test_tools        (tools/test.py --level unit runs it)
 """
@@ -9,6 +9,7 @@ import importlib
 import json
 import os
 import random
+import re
 import sys
 import tempfile
 import unittest
@@ -624,6 +625,57 @@ class MpPair(unittest.TestCase):
             self.assertTrue(self.mp.chat_shown(p, 2))
             self.assertFalse(self.mp.chat_shown(p, 3))
             self.assertFalse(self.mp.chat_shown(os.path.join(d, 'none.png'), 2))
+
+
+ENV_READS = [
+    re.compile(r'''\b(?:getenv|GetEnvironmentVariable[AW]?)\s*\(\s*L?["']([A-Za-z_][A-Za-z0-9_()]*)'''),
+    re.compile(r'''\bos\.(?:environ\.get|getenv)\s*\(\s*["']([A-Za-z_][A-Za-z0-9_()]*)'''),
+    re.compile(r'''\bos\.environ\s*\[\s*["']([A-Za-z_][A-Za-z0-9_()]*)'''),
+    re.compile(r'''\$\{?env:([A-Za-z_][A-Za-z0-9_()]*)'''),
+]
+
+
+def env_names_read():
+    """{name: first file:line} for every environment variable src/ and tools/ read."""
+    found = {}
+    for top in ('src', 'tools'):
+        for d, subdirs, files in os.walk(os.path.join(ROOT, top)):
+            subdirs[:] = [s for s in subdirs if s not in ('recomp', '__pycache__')]   # src/recomp: the lift
+            for f in files:
+                if not f.endswith(('.c', '.h', '.py', '.ps1')):
+                    continue
+                path = os.path.join(d, f)
+                with open(path, encoding='utf-8', errors='replace') as fh:
+                    for n, line in enumerate(fh, 1):
+                        for rx in ENV_READS:
+                            for name in rx.findall(line):
+                                found.setdefault(name, '%s:%d' % (os.path.relpath(path, ROOT), n))
+    return found
+
+
+def env_names_documented():
+    """The backquoted names in docs/building.md's "Environment variables" section."""
+    with open(os.path.join(ROOT, 'docs', 'building.md'), encoding='utf-8') as fh:
+        text = fh.read()
+    m = re.search(r'^## Environment variables\n(.*?)^## ', text, re.S | re.M)
+    if not m:
+        raise AssertionError('docs/building.md has no "## Environment variables" section')
+    return set(re.findall(r'`([A-Za-z_][A-Za-z0-9_()]*)`', m.group(1)))
+
+
+class EnvVars(unittest.TestCase):
+    def test_every_name_read_is_documented(self):
+        read = env_names_read()
+        self.assertIn('SWGB_RES_DUMP', read)   # the scan itself still finds a known one
+        missing = {k: v for k, v in read.items() if k not in env_names_documented()}
+        self.assertEqual(missing, {}, 'add these to docs/building.md, "Environment variables"')
+
+    def test_patterns(self):
+        lines = ['if (getenv("SWGB_A")) x();', 'GetEnvironmentVariableA("SWGB_B", v, sizeof v)',
+                 "os.environ.get('SWGB_C', '')", "os.environ['SWGB_D']", 'Join-Path ${env:ProgramFiles(x86)} x',
+                 '$env:SWGB_E', "env = dict(os.environ, SWGB_F='1')"]
+        got = [name for line in lines for rx in ENV_READS for name in rx.findall(line)]
+        self.assertEqual(got, ['SWGB_A', 'SWGB_B', 'SWGB_C', 'SWGB_D', 'ProgramFiles(x86)', 'SWGB_E'])
 
 
 if __name__ == '__main__':

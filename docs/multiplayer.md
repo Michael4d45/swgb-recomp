@@ -66,22 +66,22 @@ DirectPlayEnumerate) came back into lifted code through native32's
 non-executable-page trampoline. That part works: with `--dplay native` the
 Multiplayer screen lists the service providers and enumerates sessions.
 
-## Windows' DirectPlay cannot host on this machine
+## Windows' DirectPlay can't host beside WSL's mirrored networking
 
-`Open(DPOPEN_CREATE)` fails with `DPERR_GENERIC` (`0x80004005`). It fails in
-the recomp, and in a ten-line 32-bit test program that does nothing but
-`DirectPlayCreate(TCP/IP)` + `Open(CREATE)`, so the lift is not the cause.
+On the machine this was built on, `Open(DPOPEN_CREATE)` fails with
+`DPERR_GENERIC` (`0x80004005`): in the recomp, and in a ten-line 32-bit test
+program that does nothing but `DirectPlayCreate(TCP/IP)` + `Open(CREATE)`,
+so the lift is not the cause.
 
 The cause is the port. DirectPlay's TCP/IP provider needs `dplaysvr.exe` to own
-UDP and TCP port **47624**. This machine runs WSL 2 with
-`networkingMode=mirrored`, which gives Linux the ephemeral ports
-**44620-48715** (`/proc/sys/net/ipv4/ip_local_port_range`). Windows will not
-bind any of them: every bind fails with `WSAEADDRINUSE`, though `netstat` shows
-no owner. dplaysvr starts and listens on nothing, so a session cannot be
-created. The installed original game is in the same position. Enumeration
-alone works, which is why the Multiplayer screen looked healthy. `wsl
---shutdown`, or a WSL configuration without mirrored networking, would free the
-port. That is the user's choice.
+UDP and TCP port **47624**. WSL 2 with `networkingMode=mirrored` gives Linux
+an ephemeral port range (`/proc/sys/net/ipv4/ip_local_port_range`) that can
+contain it, and Windows then binds none of those ports: every bind fails with
+`WSAEADDRINUSE`, though `netstat` shows no owner. dplaysvr starts and listens
+on nothing, so a session cannot be created. The installed original game is
+in the same position. Enumeration alone works, which is why the Multiplayer
+screen looks healthy. `wsl --shutdown`, or a WSL configuration without
+mirrored networking, frees the port.
 
 Hooking the TCP/IP provider's winsock imports showed the order: it binds UDP
 2350 and TCP 2300, listens, then gives up before sending anything, closing the
@@ -90,12 +90,12 @@ sockets.
 ## Providing DirectPlay: (a) or (b)
 
 **(a) Windows' optional "DirectPlay" component** (dplayx + dpwsockx +
-dplaysvr). It's already installed here.
+dplaysvr).
 
 - For: no code. It speaks the real wire protocol, so a recomp could play the
   original exe.
-- Against: an optional feature someone has to turn on. On this machine it
-  can't host while WSL runs (above). Fixed ports 47624 and 2300-2400. It
+- Against: an optional feature someone has to turn on. Beside WSL's
+  mirrored networking it can't host (above). Fixed ports 47624 and 2300-2400. It
   doesn't exist on Linux or macOS. Its threads and timers are a black box when
   something goes wrong.
 
@@ -109,7 +109,7 @@ dplaysvr). It's already installed here.
   play the original exe. More code to keep.
 
 **Recommendation: (b) by default, (a) behind `--dplay native`.** Two recomps
-are the case that matters, and (b) works everywhere, this machine included.
+are the case that matters, and (b) works everywhere, WSL or not.
 Playing against the original needs (a) on both sides plus everything in
 "Recomp against the original" below.
 
@@ -134,7 +134,7 @@ Playing against the original needs (a) on both sides plus everything in
 - **Ports.** The host listens on TCP and UDP 2300 (the next free of
   2300-2303, so a second host on one machine works). Each client connects from
   an ephemeral port and listens on one more, any free TCP port, for a host
-  migration (below). Nothing asks for 44620-48715.
+  migration (below). No port in WSL's ephemeral range is needed.
 - **Players and system messages.** The host numbers players. Joins and
   leaves reach the other processes as `DPSYS_CREATEPLAYERORGROUP` /
   `DPSYS_DESTROYPLAYERORGROUP`, with the names inside the message as dplayx
@@ -286,7 +286,7 @@ win32hle's `LoadLibraryA` does not find `language.dll` on a `/mnt` drive),
 with stderr merged into stdout inside Linux (through `wsl.exe` the two reached
 the log with their own file positions and overwrote each other).
 
-Found on the Linux host, not in `dplay.c` (left for the Linux track):
+Found on the Linux host, not in `dplay.c`:
 
 - **Chat lines and the Multiplayer Status dialog are not drawn.** The game
   takes every line in (`[mp] chat from ...` in its log) and its vote counts,
@@ -367,12 +367,10 @@ screen, a restore with a player missing.
 ## Firewall
 
 A host must accept TCP and UDP on 2300-2303 from the LAN. Windows Firewall
-keys its rules by the exe's full path. This machine already has one for each
-build folder that ever listened. Most are Allow (the user's answers to the
-prompt). `builds\multiplayer\swgbrecomp.exe` has a **Block** rule, created at
-the first run of this track. Loopback is never filtered, so the tests here
-don't care, but a game between two machines needs an Allow rule for the host
-machine's exe. Changing rules is the user's decision.
+keys its rules by the exe's full path, so every build folder that listens
+gets its own prompt, and a Block answered once stays. Loopback is never
+filtered, so the one-machine tests don't care, but a game between two
+machines needs an Allow rule for the hosting machine's exe.
 
 **WSL on the same machine** (mirrored networking, `hostAddressLoopback=true`,
 WSL's own firewall on): checked with a small UDP echo and TCP accept on ports
@@ -456,40 +454,25 @@ and `mp/cc-restore` (save at 0:45, restore) at the functional level; four
 players for 20 minutes, a quit, a host drop and longer restores in both games
 at the soak level.
 
-| Run | Game time | Result |
-|---|---|---|
-| `--minutes 5 --activity busy` | 5 min | PASS: 36 checkpoints (72 records) both logs share, none differ; about 3,150 messages each way |
-| `--minutes 25 --activity busy --seed 7` | 25 min (46.9 min of game time at Normal, turn 6,210) | PASS: 155 checkpoints (310 records), none differ; 13,350 messages (216 KB) each way; no fault, drop or out-of-sync message. B trained workers up to its population limit ("You need to build more shelters"). |
-| `--cc --minutes 5 --activity busy --seed 3` | 5 min, Clone Campaigns | PASS: 36 checkpoints, none differ |
-| `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (37.9 min of game time) | PASS: 125 checkpoints (250 records), none differ; 10,800 messages each way; no fault, drop or out-of-sync message |
-| A this build, B the same source linked a minute earlier | the join | refused as another build; B shows "Unable to join game." |
-| `--run-b`: A the lifted C at `/O1`, B at `/O2` (2026-11-26), `--minutes 25 --activity busy --seed 5` | 25 min (46.9 min of game time, turn 6,210) | PASS: let in with `SWGB_MP_ANY_BUILD`; 156 checkpoints (312 records), none differ; no fault, drop or out-of-sync message ([performance.md](performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default)) |
-| the same, `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (38.2 min of game time, turn 5,050) | PASS: 127 checkpoints (254 records), none differ |
+What has passed, as a reference for a regression (one machine, loopback;
+each run's own figures are in this file's git history):
 
-2026-11-26, this machine shared with nine other agents' builds and games:
-
-| Run | Game | Result |
-|---|---|---|
-| `--players 4 --minutes 3 --activity busy --chat` | base | PASS: 112 records in each of the four logs, none differ; 24 of 24 chat lines received and drawn. Multiplayer Status opened 6 times for a lagging player (no drop) and closed on the votes. |
-| `--players 3 --minutes 3 --activity busy --drop c@1` | base | PASS: a and b saw c leave at once, voted Continue Game, played on: 65 records shared, none differ |
-| `--players 3 --minutes 3 --activity busy --chat --drop a@1` | base | PASS: the host killed; b took over (`DPSYS_HOST`), c rejoined it within a second; 63 records after, none differ; 4 of 4 chat lines |
-| the same, `--cc` | Clone Campaigns | PASS: the same, 63 records |
-| `--players 3 --minutes 2.5 --activity busy --chat --quit b@1` | base | PASS: a and c saw b leave at once and played on with no vote; 58 records, none differ; chat 4 of 4 |
-| `--players 3 --minutes 2.5 --activity busy --resign c@1` | base | PASS: c stays; 63 records in each log, none differ |
-| `--players 2 --minutes 1.5 --activity busy --save 0.75 --restore` | base | PASS: the save in both `SaveGame\Multi`; the restored game starts at world time 93.2 s; 50 records after, none differ |
-| the same, `--cc` | Clone Campaigns | PASS: restored at 93.6 s; 50 records, none differ |
-| before the host migration: `--drop a@1` | base | the clients got `DPSYS_SESSIONLOST` and sat in Multiplayer Status, "Waiting For Vote", to the end |
-| `--players 3 --minutes 15 --activity busy --chat --wsl b --extra=--mp-cross --seed 5` | base, b on Linux (WSL) | sync PASS: 285 records in each log, 95 turns, none differ; 12 of 12 chat lines received; the 4 to b not drawn (Linux, above) |
-| `--players 2 --minutes 5 --activity busy --chat --wsl a --extra=--mp-cross --seed 6` | base, the host on Linux | sync PASS: 80 records, none differ; 4 of 4 chat lines received; the 2 to a not drawn |
-| `--players 2 --minutes 2 --chat --wsl ab` | base, both on Linux | the game does not start (no play disc, above) |
-| `tools/test.py --level functional --cc --prefix mp-coverage` | both | PASS: 37 of 37, `mp/base-3p` and `mp/cc-restore` among them |
+| Run | Result |
+|---|---|
+| `--minutes 25 --activity busy`; `--cc --minutes 20` | every checkpoint equal (310 and 250 records); about 13,000 messages each way, no fault, drop or out-of-sync message |
+| `--run-b` with A's lift at `/O1` and B's at `/O2`, 25 min (`--cc`: 20) | every checkpoint equal: two builds of one source simulate alike |
+| A this build, B the same source linked a minute earlier | refused as another build; B shows "Unable to join game." |
+| `--players 4 --minutes 3 --activity busy --chat` | every record equal in all four logs; every chat line received and drawn |
+| `--players 3 ... --drop c@1`, `--drop a@1` (both games), `--quit b@1`, `--resign c@1` | the others play on, in sync; with A dropped, b hosts (`DPSYS_HOST`) and c rejoins it within a second. Before the host migration, the clients got `DPSYS_SESSIONLOST` and sat in Multiplayer Status to the end |
+| `--players 2 ... --save 0.75 --restore` (both games) | the restored game starts at the save's world time, in sync |
+| `--players 3 --minutes 15 ... --wsl b --extra=--mp-cross`; `--wsl a` | Windows and Linux in sync (285 and 80 records); the chat lines to the Linux side not drawn (above) |
+| `--wsl ab` | the game does not start (no play disc on Linux, above) |
 
 ## What's left
 
 **Two real machines.** Nothing here has crossed a wire yet.
 - The host machine needs a Windows Firewall Allow rule (TCP and UDP
-  2300-2303) for its `swgbrecomp.exe`. This machine's
-  `builds\multiplayer\swgbrecomp.exe` has a Block rule.
+  2300-2303) for its `swgbrecomp.exe`.
 - Finding the game relies on each interface's broadcast address. Where that
   doesn't reach (Wi-Fi isolation, another subnet), use `--mp-join <host IP>`.
   An address the game itself passes to `InitializeConnection` is probed too.

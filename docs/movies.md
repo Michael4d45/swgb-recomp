@@ -94,5 +94,5 @@ the menu as before.
 
 - Disc 2's own films: untested here (no disc 2). The path, the names and
   the format (Indeo 5 AVI) are the same as the Clone Campaigns films'.
-- Linux and macOS (track 7): the player uses `CreateProcess` pipes,
-  `waveOut` and GDI; the decoding side would carry over as it is.
+  The Linux host plays them too, through its own `src/linux/movie.c`
+  ([linux-macos.md](linux-macos.md)).

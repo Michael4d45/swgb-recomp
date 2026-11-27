@@ -40,7 +40,8 @@ command line to run. Rebuild after a change with the same command.
   `src/runtime/host.c` (2, 3, 6, 7), `CMakeLists.txt` (4, 7). Put new
   subsystems in new files (a presenter, a movie player) and keep edits to
   the hot files small and local: no reformatting, no moving code around.
-- `ROADMAP.md`: update your own track's section only.
+- `ROADMAP.md`: take out what your PR finishes and add what it leaves (the
+  future only); what changed goes in `CHANGELOG.md`.
 
 ## Checking a change
 

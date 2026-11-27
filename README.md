@@ -6,9 +6,11 @@ Win32 executable, `Battlegrounds.exe` v1.1, to native C that runs on modern
 Windows. No emulator: the game's own code, recompiled, with a software
 DirectDraw so the desktop's display mode never changes.
 
-Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain, on
-its `main` branch, and following
-its house style: layout, command line, conformance harness, headless mode.
+Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain and
+following its house style: layout, command line, conformance harness,
+headless mode. The Windows host builds against pcrecomp's `main`; the Linux
+host against a branch of the fork, pinned in `tools/pcrecomp_pin.sh`, until
+its win32hle changes are upstream ([docs/building.md](docs/building.md)).
 
 ![The main menu, drawn by the recompiled game](docs/screenshots/main-menu.png)
 
@@ -45,11 +47,13 @@ takes 30 minutes or more. A rerun skips finished steps, and the details go to
 ## Status
 
 **v0.1.0-dev, alpha.** The base game and Clone Campaigns play, recompiled
-throughout: skirmishes to a victory or a defeat, saved and loaded, the first
-campaign missions, the films, LAN games between two recomps, at any
-resolution. Most of it is checked by headless runs driven by scripted mouse
-and keys ([docs/testing.md](docs/testing.md)). Windows plays; Linux plays
-natively on pcrecomp's `win32hle`; macOS is not done.
+throughout: skirmishes to a victory or a defeat, saved and loaded, every
+campaign mission, the films and the music, LAN games of two to four recomps
+on one machine, at any resolution. Most of it is checked by headless runs
+driven by scripted mouse and keys ([docs/testing.md](docs/testing.md)), not
+by hand. Windows plays; Linux plays natively on pcrecomp's `win32hle`;
+macOS is not done. What is next, and the known bugs, are in
+[ROADMAP.md](ROADMAP.md).
 
 | Stage | State |
 |---|---|
@@ -62,8 +66,8 @@ natively on pcrecomp's `win32hle`; macOS is not done.
 | Menus | **run**: drawn as the original, text fields with a caret, hover help, Options |
 | Single Player / skirmish | **plays to the end**: defeats by Hardest computers with the score screen, victories (one by combat: Simon the Killer Ewok's waves razing the base), a 7-computer game saved, loaded and played on; 1 to 7 computers, Tiny to Giant maps |
 | Campaign | **plays**: every mission of every campaign won headless at least once (57 missions, base game and Clone Campaigns), with briefings, triggers, score screens and the Scenario Menu; the in-game Load ([docs/testing.md](docs/testing.md)) |
-| Clone Campaigns | **plays** as a second lift and host (`run_lift.py --build cc`, `swgbrecomp_cc.exe`, the same runtime): Steam's `battlegrounds_x1.exe` unwrapped, 21,069 functions, 0 lift errors, `/O2` (`/O1` before 2026-11-26); its menus, `_x1` data, films, `--res`, skirmishes with the Republic and the Confederacy and both Episode II campaigns' first missions, 1.9 game-hours of soak with no fault ([docs/lifting.md](docs/lifting.md#clone-campaigns)) |
-| Soak | about 30 game-hours headless (skirmishes, a monkey at 800, 1024 and 1280, every campaign, games to the end): no fault since softdd's surface slack, no unresolved call ([ROADMAP.md](ROADMAP.md#stability--coverage)) |
+| Clone Campaigns | **plays** as a second lift and host (`run_lift.py --build cc`, `swgbrecomp_cc.exe`, the same runtime): Steam's `battlegrounds_x1.exe` unwrapped, 21,069 functions, 0 lift errors, `/O2` (`/O1` before 2026-11-26); its menus, `_x1` data, films, `--res`, skirmishes with the Republic and the Confederacy, every mission of both Episode II campaigns (the Campaign row) ([docs/lifting.md](docs/lifting.md#clone-campaigns)) |
+| Soak | about 30 game-hours headless (skirmishes, a monkey at 800, 1024 and 1280, every campaign, games to the end): no fault since softdd's surface slack, no unresolved call ([docs/testing.md](docs/testing.md#long-games-toolssoakpy)) |
 | Resolutions | the game's 800x600, 1024x768 and 1280x1024 in game; **any size** with `--res WxH` or `--res desktop` (widescreen: the map fills the screen, the interface centred, its sides filled from its own art, `--hud-sides black` for bars), checked from 1024x600 to 3440x1440; switching sizes in game; Save and Load centred ([docs/building.md](docs/building.md)) |
 | Presentation | aspect-correct letterbox, filters `sharp`, `smooth`, `nearest`, `integer` (Alt+F12), borderless fullscreen (Alt+Enter) with no display-mode change; `--present d3d11` opt-in |
 | Frame rate and CPU | `--fps N`, the display's refresh by default (game speed unchanged); a skirmish at 800x600 takes 18% of a core (was 97%), the menus 10%; the lifted C at `/O2` (8-11% less CPU a frame in a late game). `--smooth` (opt-in) draws units between simulation steps ([docs/framerate.md](docs/framerate.md), [docs/performance.md](docs/performance.md)) |
@@ -71,9 +75,9 @@ natively on pcrecomp's `win32hle`; macOS is not done.
 | Films | **play**: Indeo 5 decoded by FFmpeg (on `PATH`), with sound, skippable; tested with the Saga's Clone Campaigns logo and intro ([docs/movies.md](docs/movies.md)) |
 | Multiplayer (LAN) | **plays** between two to four recomps: a DirectPlay 4 of the host's own (TCP sessions, UDP discovery on 2300, the host's role handed on if it leaves); chat, drops, saved games restored, Windows with Linux; every sync checkpoint equal (`tools/mp_pair.py`). One machine; two real machines not tried yet ([docs/multiplayer.md](docs/multiplayer.md)) |
 | Headless mode | `--headless --record out.mp4`: a private desktop (pcrecomp `native32_headless`), nothing on the user's screens, frames piped to ffmpeg, the sound muxed in; muted |
-| Tests | `tools/test.py --level unit`, `smoke`, `functional`, `soak`, `real`: the conformance harness (**5/5** milestones: boot, `genie.dat` inflated, 800x600x8 with 100 frames, the main menu, the Exit button), menu and skirmish shots, the resolutions, films, saves and loads, frame-rate figures, soaks ([docs/testing.md](docs/testing.md)) |
+| Tests | `tools/test.py --level unit`, `smoke`, `functional`, `soak`, `real`: the conformance harness (**5/5** milestones: boot, `genie.dat` inflated, 800x600x8 with 100 frames, the main menu, the Exit button), menu and skirmish shots, the resolutions, films, saves and loads, frame-rate figures, soaks. The merge gate is `--level functional --cc --retry 1` ([docs/testing.md](docs/testing.md), [CONTRIBUTING.md](CONTRIBUTING.md)) |
 | Setup.cmd | tested from a fresh clone (2026-11-12): catalog, lift, the full build and the shortcut; the conformance harness 5/5 on that build |
-| Linux | **runs** natively on pcrecomp's `win32hle` (no Wine): `./setup.sh` from a fresh clone in WSL2 Ubuntu 24.04 (2026-11-26): tools, the Steam copy, catalog, lift, build, `play.sh`; `tools/test.py` there ([docs/linux-macos.md](docs/linux-macos.md)) |
+| Linux | **runs** natively on pcrecomp's `win32hle` (no Wine): `./setup.sh` from a fresh clone in WSL2 Ubuntu 24.04 (2026-11-26): tools, the Steam copy, catalog, lift, build, `play.sh`; `tools/test.py` there. Not yet: `--record`'s sound; in multiplayer, chat lines and the Multiplayer Status dialog aren't drawn ([docs/linux-macos.md](docs/linux-macos.md), [ROADMAP.md](ROADMAP.md#known-bugs)) |
 | macOS | designed (`build-macos.sh`), untried: needs a Mac |
 
 ## Screenshots
@@ -105,7 +109,7 @@ you.
 
 ## License
 
-MIT for this repository's own code ([LICENSE](LICENSE)); miniz is MIT
-([NOTICE.md](NOTICE.md)). Star Wars: Galactic Battlegrounds is © LucasArts
+MIT for this repository's own code ([LICENSE](LICENSE)); miniz is MIT and
+stb_vorbis public domain or MIT ([NOTICE.md](NOTICE.md)). Star Wars: Galactic Battlegrounds is © LucasArts
 and Lucasfilm Ltd.; none of its files, and nothing generated from them, is in
 this repository.

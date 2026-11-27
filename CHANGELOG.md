@@ -46,15 +46,67 @@ versions follow [SemVer](https://semver.org/).
   ([docs/linux-macos.md](docs/linux-macos.md)).
 - `docs/parallel-work.md` and `tools/worktree_env.ps1`: several worktrees on
   one machine, linking one prebuilt `swgb_gen.lib`; `--multi`.
-
 - `--smooth`: units drawn between simulation steps, so they glide at high
   frame rates instead of moving once a step; drawing only, multiplayer sync
-  unchanged. `--record-fps N`; `SWGB_SMOOTH_LOG` and `tools/smooth_check.py`.
+  unchanged (`mp_pair.py` with it on one side only: 86 of 86 records equal).
+  `--record-fps N`; `SWGB_SMOOTH_LOG` and `tools/smooth_check.py`.
+- `--hud-sides fill` (the default) beside the interface at a `--res` size:
+  each row continues the art's outermost columns mirrored, in the
+  civilization's colours; `--hud-sides black` keeps the bars.
+- Screen Size switched in a game, from the game menu's Options, at every
+  pair of sizes and `--res` WxH (`res_check.py ingame`); Save Game and Load
+  at WxH laid out at the largest of the game's sizes that fits, centred
+  (`res_check.py popups`). The old lead "after an in-game switch to
+  1024x768 the Menu button no longer answers" did not reproduce.
+- The in-game music: MCI `cdaudio` over the Steam release's
+  `Music\TrackNN.ogg` (stb_vorbis), the mixer's CD line as the music slider,
+  on both hosts (`src/runtime/cdaudio.c`, `--music off|native|DIR`).
+- `--record` has the sound: a proxy over DirectSound (`recaudio.c`) mixes the
+  game's buffers again with the films' PCM on the video's clock, cut to the
+  video's length and muxed in.
+- Every campaign: `soak.py --mode missions` plays any campaign's missions in
+  a row from a table of mission boxes, `ingame-load`, `--screen 1024|1280`.
+  57 missions won headless at least once (the six base campaigns and both
+  Episode II ones), 13.5 game-hours of soak with no unresolved call, fault
+  or stub.
+- Multiplayer: three and four players, chat, a joiner dropped, the host
+  dropped (host migration, `DPSESSION_MIGRATEHOST`), quit and resign, a
+  multiplayer save restored; `--mp-cross` lets a Windows and a Linux host
+  play together (15 minutes of three players in sync). `mp_pair.py`
+  `--players`, `--chat`, `--drop`, `--quit`, `--resign`, `--save
+  --restore`, `--wsl`; `test.py` runs short games at the functional level
+  and long ones at the soak level.
+- Linux: `./setup.sh` does the whole setup natively (tools through apt when
+  asked, a venv, the Steam copy or a disc install, catalog, lift, build,
+  `play.sh`), tested from a fresh clone in WSL2 Ubuntu 24.04; pcrecomp
+  pinned in `tools/pcrecomp_pin.sh`; Enter in text fields as on Windows
+  (`test.py enter/*`).
+- `docs/building.md`: one table of every environment variable the hosts and
+  tools read, and which pcrecomp each host builds against;
+  `tests/unit/test_tools.py` fails when a variable the sources read is
+  missing from the table.
+
 ### Changed
 - The README's status brought up to date (the lift, campaigns, Linux,
   multiplayer, tests) and its documentation list completed.
+- The lifted C is built at `/O2` by default (was `/O1`; `-DGEN_OPT=/O1`
+  keeps it): a late game with 7 computers is 8-11% cheaper a frame; the
+  build takes 34 minutes against 30.6 and 6.8 GB of compilers at once
+  against 5.5. Builds at `/O1` and `/O2` stay in sync with each other (25
+  minutes, 312 records, none differ). The native host stays at `-O1`.
+- `ROADMAP.md` lists only what is next; its dated journal moved here and
+  into git history. `docs/testing.md` and `docs/multiplayer.md` keep the
+  reference and drop the dated lab notes. `CONTRIBUTING.md` names the real
+  merge gate (`test.py --level functional --cc --retry 1`) and the review's
+  habits. The lift's size is 5.4M lines everywhere (it said 3.9M in places).
 
 ### Fixed
+- Linux host: the minimap was black and the terrain plain (the game's temp
+  folder did not exist: each run now has its own as `T:`); the game stopped
+  drawing after a chat line (win32hle's `DestroyWindow` now moves the focus
+  first); the game's cursor was not drawn (`GetClipper` now returns
+  `DDERR_NOCLIPPERATTACHED`). The Linux host computes doubles in SSE2, as
+  MSVC does: with the x87 they rounded differently.
 - `test.py --retry`: a retry ran in the first try's folder and overwrote its
   `run.log` and shots (and could pass on a shot the first try left). Each
   retry now has a folder of its own, `<check>-retry1`, and the report lists
