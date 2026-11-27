@@ -397,10 +397,27 @@ what needs research or a new subsystem.
   logged (`[sync]`) and compared by `tools/mp_pair.py`.
   Results: 25 minutes of the base game and 20 of Clone Campaigns, every
   checkpoint the same on both sides; a different build is refused at the join.
-- **Left:** two real machines (a firewall Allow rule on the host's exe); chat, more players,
-  drops mid-game, saved multiplayer games; answering the startup version check
-  and the ordinal imports without dplayx.dll on disk (Linux); playing the
-  original exe (`--dplay native`, a working dplaysvr, the x87 transcendentals).
+- **Done (2026-11-26):** three and four players; chat (every line received,
+  logged and drawn on every other side); a joiner killed mid-game (the game's
+  Multiplayer Status, a Continue Game vote, play on in sync); the host killed
+  (host migration: the game asks for `DPSESSION_MIGRATEHOST`, and before this
+  the others lost the session); quit and resign; a multiplayer save restored
+  with the same players (base game and Clone Campaigns), the game going on from
+  the save in sync. `tools/mp_pair.py` does all of it (`--players`, `--chat`,
+  `--drop`, `--quit`, `--resign`, `--save --restore`, `--wsl`); `tools/test.py`
+  runs a short pair at the functional level and long ones at the soak level.
+  A Windows and a Linux host (WSL) play together with `--mp-cross`: 15
+  minutes of three players in sync. The Linux host now computes doubles in
+  SSE2 like MSVC (with the x87 they rounded differently); MSVC's CRT and glibc
+  still differ in the last bit of `sin`/`cos`/`tan`/`atan2`/`pow` for about
+  one input in 300, which has not reached the simulation so far.
+- **Left:** two real machines (a firewall Allow rule on the host's exe); a
+  long Windows-Linux game, and one libm for both if it ever goes out of sync;
+  the Linux host's missing chat lines and Multiplayer Status dialog, and its
+  "1.1" without "CD" (two Linux hosts can't start a game); computer players in a multiplayer
+  game; answering the startup version check and the ordinal imports without
+  dplayx.dll on disk; playing the original exe (`--dplay native`, a working
+  dplaysvr, the x87 transcendentals).
 - **Risk:** medium: out-of-sync shows only in long games and across machines.
 
 ## Later

@@ -1523,6 +1523,56 @@ def smooth_fn(kind):
 
 for _k in GAMES:
     CHECKS.append(Check('smooth/' + _k, 'functional', smooth_fn(_k), _k, 3.5))
+# ==== multiplayer: tools/mp_pair.py (docs/multiplayer.md) ========================================
+# name, level, game, mp_pair.py arguments, minutes of game, its own port (four from it: two checks
+# at once must not find each other's games), the check's budget in minutes. Each takes its game
+# folder and DIR-mp2.. beside it (hard links).
+MP_CHECKS = [
+    ('mp/base-3p', 'functional', 'base', ['--players', '3', '--activity', 'busy', '--chat', '--drop', 'c@1'], 2, 2340, 9),
+    ('mp/cc-restore', 'functional', 'cc', ['--players', '2', '--activity', 'busy', '--save', '0.75', '--restore'], 1.5, 2344, 13),
+    ('soak/mp-base-4p', 'soak', 'base', ['--players', '4', '--activity', 'busy', '--chat'], 20, 2348, 30),
+    ('soak/mp-base-quit', 'soak', 'base', ['--players', '3', '--activity', 'busy', '--quit', 'b@5'], 12, 2352, 22),
+    ('soak/mp-base-host-drop', 'soak', 'base', ['--players', '3', '--activity', 'busy', '--drop', 'a@4'], 8, 2356, 18),
+    ('soak/mp-base-restore', 'soak', 'base', ['--players', '3', '--activity', 'busy', '--save', '8', '--restore'], 15, 2360, 45),
+    ('soak/mp-cc-4p', 'soak', 'cc', ['--players', '4', '--activity', 'busy', '--chat', '--drop', 'd@10'], 20, 2364, 30),
+    ('soak/mp-cc-restore', 'soak', 'cc', ['--players', '3', '--activity', 'busy', '--save', '8', '--restore'], 15, 2368, 45),
+]
+
+
+def mp_fn(name, kind, extra, minutes, port, budget):
+    def fn(ctx, r):
+        cmd = [sys.executable, os.path.join(HERE, 'mp_pair.py')] + (['--cc'] if kind == 'cc' else []) + extra + \
+              ['--minutes', '%g' % minutes, '--run', ctx.host(kind), '--exe', ctx.exe(kind), '--game', r.game,
+               '--out', r.dir, '--port', str(port), '--seed', str(ctx.a.seed)]
+        rc, out = run(ctx, r, cmd, budget * 60, 'mp_pair.log', cwd=ROOT)
+        summ = os.path.join(r.dir, 'summary.json')
+        if not os.path.exists(summ):
+            return r.fail('mp_pair.py wrote no summary (exit %d)' % rc)
+        res = json.load(open(summ))
+        for g in res if isinstance(res, list) else [res]:
+            sr = g['sync_records']
+            r.log('%s: %d players, exit %s, sync records %s (%d shared, %d differ), %d turns checked%s' % (
+                g['phase'], g['players'], g['exit'], {k: v for k, v in sr.items() if k not in ('shared', 'differ')},
+                sr['shared'], sr['differ'], g['turns_checked'],
+                ', left: %s' % g['left'] if g.get('left') else ''))
+            if g.get('chat'):
+                r.log('chat: %d lines received, %d drawn of %d' % (sum(v['received'] for v in g['chat'].values()),
+                                                                 sum(bool(v['drawn']) for v in g['chat'].values()), len(g['chat'])))
+            for p in g['problems'][:8]:
+                r.fail('%s: %s' % (g['phase'], p))
+            r.metrics['%s_shared_records' % g['phase']] = sr['shared']
+        for d in sorted(os.listdir(r.dir)):
+            for f in ('start.png', 'end.png'):
+                if os.path.exists(os.path.join(r.dir, d, f)) and d in ('a', 'b', 'r_a'):
+                    r.image(os.path.join(r.dir, d, f), '%s: %s' % (d, f[:-4]))
+        if rc and r.status == 'PASS':
+            r.fail('mp_pair.py: exit %d' % rc)
+    fn.__doc__ = 'mp_pair.py %s, %g minutes (%s)' % (' '.join(extra), minutes, GAMES[kind]['title'])
+    return fn
+
+
+for _n, _lv, _k, _e, _m, _p, _b in MP_CHECKS:
+    CHECKS.append(Check(_n, _lv, mp_fn(_n, _k, _e, _m, _p, _b), _k, _b))
 
 
 # ==== L3: soak ===================================================================================

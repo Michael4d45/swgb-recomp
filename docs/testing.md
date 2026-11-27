@@ -16,8 +16,8 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 |---|---|---|---|---|
 | L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
-| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), `--record` with its sound (a film, a skirmish's clicks, the victory music; the sound stream as long as the video, loud where they play: [recording.md](recording.md)), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), the CD music (a skirmish on a disc of 2-second tracks: tracks 2-49 on time, the notification, the game's repeat; [music.md](music.md)), and the frame-rate check (below) | as L1, ffmpeg |
-| L3 | `soak` | about 2 h at 5 games at once (8 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat); Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns. `--soak-scale 0.2` for a shorter trial. | as L2 |
+| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), `--record` with its sound (a film, a skirmish's clicks, the victory music; the sound stream as long as the video, loud where they play: [recording.md](recording.md)), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), the CD music (a skirmish on a disc of 2-second tracks: tracks 2-49 on time, the notification, the game's repeat; [music.md](music.md)), the frame-rate check (below), and two multiplayer games through `mp_pair.py`: three players with chat and one dropped (base game), a save restored (Clone Campaigns) | as L1, ffmpeg |
+| L3 | `soak` | about 2 h at 5 games at once (8 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat); Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns. Multiplayer (`mp_pair.py`): four players for 20 minutes with chat, a quit, the host dropped (host migration), a save restored, in both games. `--soak-scale 0.2` for a shorter trial. | as L2 |
 | L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
 
 A level runs the levels below it (`--just`: only its own). Clone Campaigns is
@@ -478,18 +478,25 @@ for `seeds_from_logs.py --cc`.
 ## Multiplayer: `tools/mp_pair.py`
 
 ```
-py -3 tools\mp_pair.py [--minutes 20] [--activity idle|habits|busy] [--seed S] [--run EXE] [--game DIR]
-                       [--port N] [--extra SWITCHES] [--extra-a=SWITCHES] [--extra-b=SWITCHES]
+py -3 tools\mp_pair.py [--players 2-4] [--minutes 20] [--activity idle|habits|busy] [--seed S] [--cc]
+                       [--chat] [--drop WHO@MIN] [--quit WHO@MIN] [--resign WHO@MIN] [--save MIN [--restore]]
+                       [--wsl WHO] [--run EXE] [--run-b EXE] [--game DIR] [--port N]
+                       [--extra SWITCHES] [--extra-a=SWITCHES] [--extra-b=SWITCHES]
 ```
 
-`--extra-a` and `--extra-b` give one player switches the other does not
+`--extra-a` and `--extra-b` give one player switches the others do not
 have (`--extra-a=--smooth`: the sync records stay the same, framerate.md).
+`--run-b EXE` runs B on another build (performance.md).
 
-Two headless `--multi` runs on this machine: one hosts, one joins over
-127.0.0.1, both start a two-player game and play `--minutes`. It passes when
-both reach their watchdog, nobody drops, the game shows no out-of-sync
-message and the game's own sync checkpoints (`[sync]` lines) agree between the
-two logs. Details and results in [multiplayer.md](multiplayer.md).
+Two to four headless `--multi` runs on this machine: one hosts, the others
+join over 127.0.0.1, all start a game and play `--minutes`. It passes when
+each reaches its watchdog, nobody drops but the player the options drop, the
+game shows no out-of-sync message and the game's own sync checkpoints
+(`[sync]` lines) agree between every pair of logs. The menus are timed from
+the main menu's music; the game is played live from A's first sync record
+(`--keys-live`), so a busy machine does not throw the clicks off. `--chat`,
+`--drop`, `--quit`, `--resign`, `--save` and `--restore` check those parts of
+the game. Details and results in [multiplayer.md](multiplayer.md).
 
 The joiner selects "Local (LAN) TCP/IP Connection" first: its games appear
 by themselves. A folder that last used it (the Windows farm's) has it
