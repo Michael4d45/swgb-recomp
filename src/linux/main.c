@@ -273,7 +273,22 @@ static char g_live_file[PATH_MAX];
 static uint32_t g_keys_t0;
 
 static void mouse(uint32_t msg, int x, int y) { mach_enter(); hle_input_mouse(msg, x, y); mach_leave(); }
-static void key(int down, int vk) { mach_enter(); hle_input_key(down, (uint32_t)vk, 0); mach_leave(); }
+/* The key's scan code, as a keyboard sends it (US set 1) and the Windows
+ * host's --keys does (MapVirtualKeyA): bits 16-23 of the key messages. */
+static uint32_t scan_of_vk(int vk) {
+    static const uint8_t scan[256] = {
+        [0x08] = 0x0E, [0x09] = 0x0F, [0x0D] = 0x1C, [0x10] = 0x2A, [0x11] = 0x1D, [0x12] = 0x38, [0x1B] = 0x01, [0x20] = 0x39,
+        ['1'] = 2, ['2'] = 3, ['3'] = 4, ['4'] = 5, ['5'] = 6, ['6'] = 7, ['7'] = 8, ['8'] = 9, ['9'] = 10, ['0'] = 11,
+        ['Q'] = 0x10, ['W'] = 0x11, ['E'] = 0x12, ['R'] = 0x13, ['T'] = 0x14, ['Y'] = 0x15, ['U'] = 0x16, ['I'] = 0x17,
+        ['O'] = 0x18, ['P'] = 0x19, ['A'] = 0x1E, ['S'] = 0x1F, ['D'] = 0x20, ['F'] = 0x21, ['G'] = 0x22, ['H'] = 0x23,
+        ['J'] = 0x24, ['K'] = 0x25, ['L'] = 0x26, ['Z'] = 0x2C, ['X'] = 0x2D, ['C'] = 0x2E, ['V'] = 0x2F, ['B'] = 0x30,
+        ['N'] = 0x31, ['M'] = 0x32, [0x70] = 0x3B, [0x71] = 0x3C, [0x72] = 0x3D, [0x73] = 0x3E, [0x74] = 0x3F,
+        [0x75] = 0x40, [0x76] = 0x41, [0x77] = 0x42, [0x78] = 0x43, [0x79] = 0x44, [0x7A] = 0x57, [0x7B] = 0x58,
+        [0x25] = 0x4B, [0x26] = 0x48, [0x27] = 0x4D, [0x28] = 0x50, [0x2D] = 0x52, [0x2E] = 0x53, [0x24] = 0x47,
+        [0x23] = 0x4F, [0x21] = 0x49, [0x22] = 0x51 };
+    return scan[vk & 0xFF];
+}
+static void key(int down, int vk) { mach_enter(); hle_input_key(down, (uint32_t)vk, scan_of_vk(vk)); mach_leave(); }
 
 static void wait_for_file(const char* name) {
     pthread_mutex_lock(&g_seen_lock);

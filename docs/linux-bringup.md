@@ -6,16 +6,21 @@ how to build, what to expect on the first runs, and the work in order.
 [linux-macos.md](linux-macos.md) has the design and the reasons; this page
 is the steps.
 
-## Where it stands (2026-11-23)
+## Where it stands (2026-11-26)
+
+- **`./setup.sh` does steps 1 to 4 below** on Debian, Ubuntu and WSL2
+  (asks before installing; the Steam copy or a disc install): see
+  [linux-macos.md](linux-macos.md), "Building". The steps here are the
+  same by hand.
 
 - Rebased on main; main's Windows features run on Linux too, and
   `tools/test.py` drives the Linux host (smoke and the base game's
   functional checks pass): see [linux-macos.md](linux-macos.md), "What is
   done", and [testing.md](testing.md), "On Linux".
-- pcrecomp: `swgb-linux-palette` at **`35406d6`** (adds
-  `hle_lookup_manual_hook` for `--res`, makes the Enter-to-OK-click
-  opt-in, DestroyWindow moves the focus first; local commits: push them
-  with the branch).
+- pcrecomp: branch `swgb-linux-palette` of the fork
+  (`Michael4d45/pcrecomp`), pinned in `tools/pcrecomp_pin.sh` (now
+  `eb608a2`: Enter reaches a text field as a key, as on Windows; the EDIT
+  ignores control characters). `build-linux.sh` checks the pin.
 
 - Branch `track/linux-macos` on the fork, PR
   [Michael4d45/swgb-recomp#1](https://github.com/Michael4d45/swgb-recomp/pull/1).
@@ -68,8 +73,8 @@ The build expects pcrecomp beside the repository, as on Windows:
 
 ```sh
 mkdir -p ~/star && cd ~/star
-git clone -b track/linux-macos https://github.com/Michael4d45/swgb-recomp.git
-git clone https://github.com/sp00nznet/pcrecomp.git       # ../pcrecomp
+git clone https://github.com/Michael4d45/swgb-recomp.git
+sh swgb-recomp/tools/pcrecomp_pin.sh fetch pcrecomp     # ../pcrecomp: the fork's branch at the pinned commit
 ```
 
 ## 3. The game and the lift
@@ -92,7 +97,7 @@ one in `game/` or `work/`, never a fresh copy from the Steam folder.
 Then get the lifted C, one of two ways:
 
 - **a. Copy it** (238 MB). This is only safe if pcrecomp is at
-  `a67767b`, since the C must match the runtime headers:
+  the pinned commit (`tools/pcrecomp_pin.sh`), since the C must match the runtime headers:
   `mkdir -p src/recomp && cp -r "$W/src/recomp/gen" src/recomp/gen`
 - **b. Lift it on Linux** (a few minutes; `functions.json` saves the
   10-minute catalog): `python3 run_lift.py --all`. The expected end is
@@ -174,8 +179,7 @@ pull request upstream) is your call.
    frames into `hle_dd_frame_hook` and sound into `hle_audio_stream_*`
    (gap 4).
 8. **Housekeeping:**
-   - `setup.sh` builds natively instead of stopping (Red Alert 2's
-     `setup.sh` is the model);
+   - `setup.sh` builds natively instead of stopping — done;
    - `tools/conformance.py` runs the Linux build;
    - `docs/testing.md` gets a Linux section;
    - update the README status row.

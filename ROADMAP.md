@@ -236,9 +236,20 @@ what needs research or a new subsystem.
   (docs/linux-macos.md, "Found by the soak"). The in-game cursor is drawn
   (win32hle `GetClipper` now returns the real `DDERR_NOCLIPPERATTACHED`;
   the old code made `sub_0049F080` return before the sprite blit).
-- **Work:** MCI `cdaudio` over the Steam Ogg tracks (also Windows music, and
-  Clone Campaigns' `WIN32.dll`); `setup.sh`'s native path; macOS (64-bit
-  based, needs a Mac; `dplay.c` there needs guest-pointer conversion).
+- **Done (linux-polish, 2026-11-26):** `./setup.sh` on Linux: checks the
+  tools and installs the missing ones with apt when asked, a venv for the
+  Python packages, pcrecomp's fork branch at a pinned commit
+  (`tools/pcrecomp_pin.sh`, also checked by `build-linux.sh`), the Steam
+  copy (unwrapped) or a disc install (v1.1, disc 2), catalog, lift, build,
+  `play.sh`; tested end to end from a fresh clone in WSL2 Ubuntu 24.04.
+  Enter in text fields is Windows': the game's EDIT subclass takes
+  `VK_RETURN` itself, so win32hle now sends Enter as a key (the
+  `HLE_EDIT_ENTER_CLICK` guess is gone) and its EDIT ignores control
+  characters as Windows does; `test.py enter/*` checks New Player and the
+  chat on both hosts.
+- **Work:** MCI `cdaudio` over the Steam Ogg tracks (the music track);
+  upstreaming the pcrecomp branch (the user's call); macOS (64-bit based,
+  needs a Mac; `dplay.c` there needs guest-pointer conversion).
 - **Estimate:** music 2 days; macOS one more week.
 - **Risk:** medium. The hard part exists, and the rest is the bring-up loop
   the sibling ports went through.

@@ -16,7 +16,7 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 |---|---|---|---|---|
 | L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
-| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, and the frame-rate check (below) | as L1, ffmpeg |
+| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), and the frame-rate check (below) | as L1, ffmpeg |
 | L3 | `soak` | about 2 h at 5 games at once (8 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat); Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns. `--soak-scale 0.2` for a shorter trial. | as L2 |
 | L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
 
@@ -89,8 +89,14 @@ The same runner drives the native host (`src/linux`, [linux-macos.md](linux-maco
 
 ```
 python3 -m venv --system-site-packages work/venv && work/venv/bin/pip install pillow numpy
-work/venv/bin/python tools/test.py --level smoke          # or unit, functional, soak
+SWGB_CD=$PWD/work/disc work/venv/bin/python tools/test.py --level smoke   # or unit, functional, soak
 ```
+
+`./setup.sh` makes `work/venv` (add `pillow numpy` for the tests). `SWGB_CD`
+is the play disc for the test folders (`play.sh` passes `--cd`): `work/disc`
+for a Steam copy, as setup.sh makes it, else disc 2's mount point. Without it
+(and no `~/.steam` Saga to fall back on) the base game stops on "insert a
+game CD".
 
 Off Windows its defaults are this checkout's: the hosts in `build-linux/`
 (`build-macos/` on a Mac: `swgbrecomp`, `swgbrecomp_cc`), the lift and
@@ -100,14 +106,19 @@ Off Windows its defaults are this checkout's: the hosts in `build-linux/`
 process group of its own, which is what a timeout or Ctrl-C ends.
 
 Clone Campaigns' folders take their profile (`player.nf1`) from
-`work/games/clone-campaigns` (`--cc-profiles`), as on Windows. Without one the
-game stops at New Player and every check that starts a game fails. Make one
-once with the host itself:
+`work/games/clone-campaigns` (`--cc-profiles`), as on Windows; the base
+game's come from `game/` (`player.nfx`, which a Steam copy lacks: its
+`player.nf1` alone is no profile). Without one the game stops at New Player
+and every check that starts a game fails. Make them once with the hosts
+themselves (New Player, a name, Enter, Exit):
 
 ```
-python3 -c "import sys; sys.path.insert(0, 'tools'); import soak; soak.ensure_game('game', 'work/games/ccprof')"
-build-linux/swgbrecomp_cc --run --headless --multi --watchdog 45 --game work/games/ccprof \
-  --keys "20:move:345:250,21:click:345:250,26:t,26.5:e,27:s,27.5:t,29:click:323:353,36:esc,40:move:40:565,41:click:40:565"
+K="20:move:345:250,21:click:345:250,26:t,26.5:e,27:s,27.5:t,29:enter,36:esc,40:move:40:565,41:click:40:565"
+python3 -c "import sys; sys.path.insert(0, 'tools'); import soak; soak.ensure_game('game', 'work/games/baseprof'); soak.ensure_game('game', 'work/games/ccprof')"
+rm -f work/games/baseprof/player.nf* work/games/ccprof/player.nf*
+build-linux/swgbrecomp --run --headless --multi --watchdog 60 --game work/games/baseprof --cd work/disc --keys "$K"
+build-linux/swgbrecomp_cc --run --headless --multi --watchdog 45 --game work/games/ccprof --keys "$K"
+cp work/games/baseprof/player.nfx game/
 mkdir -p work/games/clone-campaigns && cp work/games/ccprof/player.nf1 work/games/clone-campaigns/
 ```
 
@@ -130,7 +141,20 @@ What runs there:
 - **The presenter's checks** (`present/*`, L4 `real/present`) SKIP: they test
   the Windows presenter (GDI, Direct3D 11, the real screen).
 
-Results on Linux (Omarchy/Arch, clang 21, `-m32`, 2026-11-23), both games:
+Results on Linux (WSL2 Ubuntu 24.04, clang 18, `-m32`, pcrecomp `eb608a2`,
+2026-11-26), both games, from a fresh clone set up by `./setup.sh` (the Steam
+Saga copy; Clone Campaigns lifted by hand as in linux-macos.md):
+
+- `--level functional --cc --retry 1`: **26 passed, 0 flaky, 0 failed, 11
+  skipped** (the six Windows-only units and the five `present/*` groups) in
+  14.3 minutes. Conformance 5/5 each; the skirmishes; `enter/base` and
+  `enter/cc` (New Player accepted with Enter, the chat's Enter won the
+  game); films (logo 220 frames in both, intro 2117 and 2114); `--res
+  1920x1080`; the three resolutions; `perf` at `--fps 60` (CPU 5% and 6% of
+  a core, 64 presents a second); every civilization skirmish saved and
+  loaded.
+
+Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
 
 - `--level functional --cc`: 24 passed, 0 failed, 11 skipped (the units
   above and the presenter's checks). Conformance 5/5 each; the skirmishes;

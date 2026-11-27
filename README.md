@@ -26,10 +26,10 @@ The CD check passes with disc 2 in the drive or your disc 2 image mounted.
    folder from another PC).
 2. Download this repository (the green **Code** button, then **Download
    ZIP**) and unzip it somewhere with 8 GB free.
-3. Windows: double-click **`Setup.cmd`**. Linux: the game builds and plays
-   natively (no Wine), built by hand with `./build-linux.sh`
-   ([docs/linux-macos.md](docs/linux-macos.md#building)); `./setup.sh` does
-   not do that for you yet, and says so. macOS: not yet.
+3. Windows: double-click **`Setup.cmd`**. Linux (Debian, Ubuntu, WSL2):
+   run **`./setup.sh`**; it takes the Steam Saga release too (unwrapped,
+   no disc 2 needed) and ends with `./play.sh`. macOS: by hand
+   ([docs/linux-macos.md](docs/linux-macos.md)).
 4. Play with **`Galactic Battlegrounds`** in that folder.
 
 The script checks for Python 3.10+, `capstone`, the pcrecomp toolkit (cloned
@@ -73,8 +73,8 @@ natively on pcrecomp's `win32hle`; macOS is not done.
 | Headless mode | `--headless --record out.mp4`: a private desktop (pcrecomp `native32_headless`), nothing on the user's screens, frames piped to ffmpeg; muted |
 | Tests | `tools/test.py --level unit`, `smoke`, `functional`, `soak`, `real`: the conformance harness (**5/5** milestones: boot, `genie.dat` inflated, 800x600x8 with 100 frames, the main menu, the Exit button), menu and skirmish shots, the resolutions, films, saves and loads, frame-rate figures, soaks ([docs/testing.md](docs/testing.md)) |
 | Setup.cmd | tested from a fresh clone (2026-11-12): catalog, lift, the full build and the shortcut; the conformance harness 5/5 on that build |
-| Linux | **plays natively**, no Wine: a second host on pcrecomp's `win32hle` (`-m32`, clang), built by hand with `./build-linux.sh`. Conformance 5/5, `test.py` smoke and the base game's functional checks; `--keys`, `--res`, `--fps`, `--films`, DirectPlay and Clone Campaigns' host as on Windows. Not yet: music, `setup.sh` ([docs/linux-macos.md](docs/linux-macos.md)) |
-| macOS | not yet: the design is in [docs/linux-macos.md](docs/linux-macos.md); it needs a Mac |
+| Linux | **runs** natively on pcrecomp's `win32hle` (no Wine): `./setup.sh` from a fresh clone in WSL2 Ubuntu 24.04 (2026-11-26): tools, the Steam copy, catalog, lift, build, `play.sh`; `tools/test.py` there ([docs/linux-macos.md](docs/linux-macos.md)) |
+| macOS | designed (`build-macos.sh`), untried: needs a Mac |
 
 ## Screenshots
 

@@ -57,7 +57,7 @@ scratch/
 Thumbs.db
 Desktop.ini
 
-# Made by Setup.cmd
+# Made by Setup.cmd and setup.sh
 Galactic Battlegrounds.lnk
 setup.log
 build-*/
@@ -68,3 +68,5 @@ e*.txt
 *.bmp
 *.png
 !docs/screenshots/*.png
+
+play.sh
