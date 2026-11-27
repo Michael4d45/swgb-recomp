@@ -979,7 +979,8 @@ for _k in GAMES:
 
 
 # ==== L3: soak ===================================================================================
-# name, game, soak.py arguments, minutes of game per run (before --soak-scale)
+# name, game, soak.py arguments, minutes of game per run (before --soak-scale); for `missions`,
+# per mission played. The missions before --first are passed through (started and won at once).
 SOAKS = [
     ('skirmish', 'base', ['--mode', 'skirmish'], 30),
     ('monkey', 'base', ['--mode', 'monkey'], 30),
@@ -989,14 +990,54 @@ SOAKS = [
     ('victory-load', 'base', ['--mode', 'victory', '--after', '10'], 15),
     ('chain', 'base', ['--mode', 'chain', '--first', '1', '--last', '3'], 15),
     ('fight', 'base', ['--mode', 'fight', '--allies', '4'], 25),
+    ('missions-oom9', 'base', ['--mode', 'missions', '--campaign', 'OOM-9', '--first', '6'], 8),
+    ('missions-boss-nass', 'base', ['--mode', 'missions', '--campaign', 'Boss Nass', '--first', '2'], 6),
+    ('missions-chewbacca', 'base', ['--mode', 'missions', '--campaign', 'Chewbacca', '--first', '2'], 6),
+    ('missions-darth-vader', 'base', ['--mode', 'missions', '--campaign', 'Darth Vader', '--first', '2'], 6),
+    ('missions-princess-leia', 'base', ['--mode', 'missions', '--campaign', 'Princess Leia', '--first', '2'], 6),
+    ('missions-training', 'base', ['--mode', 'missions', '--campaign', 'Attichitcuk', '--first', '2', '--unlocked'], 6),
+    ('ingame-load', 'base', ['--mode', 'ingame-load'], 20),
+    ('monkey-1024', 'base', ['--mode', 'monkey', '--screen', '1024'], 25),
+    ('monkey-1280', 'base', ['--mode', 'monkey', '--screen', '1280'], 25),
     ('skirmish', 'cc', ['--mode', 'skirmish', '--civs', 'Confederacy,Republic', '--my-civ', 'Republic'], 30),
     ('monkey', 'cc', ['--mode', 'monkey'], 30),
     ('campaign-confederacy', 'cc', ['--mode', 'campaign', '--campaign', 'Confederacy'], 25),
-    ('campaign-republic', 'cc', ['--mode', 'campaign', '--campaign', 'Galactic Republic'], 25),
+    # Galactic Republic opens once Confederacy is won: missions passes through Confederacy first.
+    ('campaign-republic', 'cc', ['--mode', 'missions', '--campaign', 'Galactic Republic', '--first', '1', '--last', '1'], 25),
     ('skirmish-b', 'cc', ['--mode', 'skirmish', '--civs', 'Gungans,Wookiees,Trade Federation', '--my-civ', 'Confederacy'], 30),
+    ('missions-confederacy', 'cc', ['--mode', 'missions', '--campaign', 'Confederacy', '--first', '2'], 6),
+    ('missions-republic', 'cc', ['--mode', 'missions', '--campaign', 'Galactic Republic', '--first', '2'], 6),
+    ('ingame-load', 'cc', ['--mode', 'ingame-load'], 20),
 ]
-# soak.py's endgame modes (defeat .. fight) script the base game's screens and campaign: it
-# refuses them with --cc.
+# soak.py's other endgame modes (defeat .. fight, chain) script the base game's screens and
+# campaign: it refuses them with --cc.
+
+
+def soak_missions(extra):
+    """missions, chain: (played, passed through), from the campaign's table in soak.py."""
+    import soak
+    if '--mode' not in extra or extra[extra.index('--mode') + 1] not in ('missions', 'chain'):
+        return None
+    camp = extra[extra.index('--campaign') + 1] if '--campaign' in extra else 'OOM-9'
+    boxes = soak.MISSION_BOXES.get(camp) or {'Confederacy': soak.CONFEDERACY_BOXES,
+                                             'Galactic Republic': soak.REPUBLIC_BOXES}[camp]
+    first = int(extra[extra.index('--first') + 1]) if '--first' in extra else 1
+    last = int(extra[extra.index('--last') + 1]) if '--last' in extra else len(boxes)
+    if '--unlocked' in extra:
+        return last - first + 1, 0
+    # Galactic Republic opens once Confederacy is won: soak.py passes through all of it first.
+    before = len(soak.CONFEDERACY_BOXES) if camp == 'Galactic Republic' else 0
+    return last - first + 1, first - 1 + before
+
+
+def soak_budget(name, extra, m):
+    """Minutes a soak.py run may take: its game time and the menus, briefings and loads."""
+    ms = soak_missions(extra)
+    if ms:
+        return ms[0] * (m + 6.5) + ms[1] * 4 + 3     # a game per mission: its menus too
+    if name == 'victory-load':
+        return m + 10 + 10
+    return m + 10
 
 
 def soak_fn(name, kind, extra, minutes):
@@ -1007,12 +1048,7 @@ def soak_fn(name, kind, extra, minutes):
         cmd = [sys.executable, os.path.join(HERE, 'soak.py')] + (['--cc'] if kind == 'cc' else []) + extra + \
               ['--minutes', '%g' % m, '--run', ctx.host(kind), '--exe', ctx.exe(kind), '--game', r.game,
                '--out', r.dir, '--seed', str(ctx.a.seed)]
-        if name == 'chain':
-            budget = (m + 6) * 3
-        elif name == 'victory-load':
-            budget = m + 10 + 10
-        else:
-            budget = m + 10
+        budget = soak_budget(name, extra, m)
         rc, out = run(ctx, r, cmd, budget * 60 + 600, 'soak.log', cwd=ROOT)
         if re.search(r'refused with --cc|--cc: --mode', out):
             return r.skip(out.strip().splitlines()[-1])
@@ -1036,6 +1072,26 @@ def soak_fn(name, kind, extra, minutes):
             r.fail('no victory music: the cheat did not end the game')
         if name == 'fight' and runs and not any(k == 'victory' for _, k in runs[0].get('endings', [])):
             r.fail('no victory by combat in %g minutes' % m)
+        ms = soak_missions(extra)
+        if ms and runs:
+            # One game per mission (soak.py). A won mission opens its end briefing; a lost one
+            # (the game's own defeat while the monkey played) is a game outcome, not a fault,
+            # and the missions after it stay shut in a fresh profile.
+            won = sorted({w for m_ in runs for w in m_.get('missions_won', [])})
+            r.metrics['missions_won'] = len(won)
+            r.log('missions won: %s' % ', '.join(won))
+            lost = False
+            for m_ in runs:
+                if m_.get('result') == 'lost':
+                    lost = True
+                    r.log('%s: lost (the game declared a defeat)' % m_['name'])
+                elif m_.get('result') != 'won':
+                    if lost:
+                        r.log('%s: not open after the defeat' % m_['name'])
+                    else:
+                        r.fail('%s: neither won nor lost' % m_['name'])
+        if name == 'ingame-load' and runs and not runs[0].get('save_reads'):
+            r.fail('the in-game Load did not read the save back')
         if name == 'defeat' and runs and not any(k == 'defeat' for _, k in runs[0].get('endings', [])):
             r.fail('no defeat')
     fn.__doc__ = 'soak.py %s for %d minutes (%s)' % (' '.join(extra), minutes, GAMES[kind]['title'])
@@ -1044,7 +1100,7 @@ def soak_fn(name, kind, extra, minutes):
 
 for _n, _k, _e, _m in SOAKS:
     CHECKS.append(Check('soak/%s-%s' % (_k, _n), 'soak', soak_fn(_n, _k, _e, _m), _k,
-                        (_m + 6) * 3 if _n == 'chain' else _m + 10 + (12 if _n == 'victory-load' else 0)))
+                        soak_budget(_n, _e, _m) + (2 if _n == 'victory-load' else 0)))
 
 
 # ==== L4: the real screen ========================================================================

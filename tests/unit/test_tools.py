@@ -3,8 +3,11 @@ tools/lift_check.py, and tools/test.py's image and --fps-log readers.
 
     py -3 -m unittest -v tests.unit.test_tools        (tools/test.py --level unit runs it)
 """
+import argparse
+import importlib
 import json
 import os
+import random
 import sys
 import tempfile
 import unittest
@@ -24,6 +27,8 @@ SetDisplayMode(800, 600, 8)
 [keys] 20.0s click 345,250
 [keys] 21.0s click 600,168
 [host] open sound\stream\won1.mp3 -> ok
+[host] open campaign\media\xc1s5_end.mm -> ok
+[host] open savegame\soak7.gax -> ok
 [keys] 30.0s key 48
 ICALL: unresolved VA 0x005648A0 from 0x00406E20
   nearest below: sub_0056480C (+0x94)
@@ -51,6 +56,8 @@ class SoakTools(unittest.TestCase):
         self.assertEqual(m['modes'], ['800x600'])
         self.assertTrue(m['watchdog'])
         self.assertEqual(m['endings'], [['21', 'victory']])
+        self.assertEqual(m['missions_won'], ['xc1s5'])
+        self.assertEqual(m['save_opens'], [['21', 'soak7']])
 
     def test_pick(self):
         s = soak.Script()
@@ -58,6 +65,116 @@ class SoakTools(unittest.TestCase):
         self.assertEqual(t, 12.5)
         (ax, ay), (ix, iy), step = soak.DD_SIZE
         self.assertEqual(s.steps, [(10, 'click:%d:%d' % (ax, ay)), (11.2, 'click:%d:%d' % (ix, iy + 2 * step))])
+
+
+class SoakPlans(unittest.TestCase):
+    """The campaign, in-game Load and --screen scripts. soak's coordinates are module globals
+    that --cc and --screen change: each test starts from a fresh import."""
+
+    def setUp(self):
+        global soak
+        soak = importlib.reload(soak)
+
+    def tearDown(self):
+        global soak
+        soak = importlib.reload(soak)
+
+    def args(self, **kw):
+        a = dict(campaign='', first=1, last=None, unlocked=False, minutes=5, speed='fast', save=True,
+                 screen=None)
+        a.update(kw)
+        return argparse.Namespace(**a)
+
+    def test_missions_pass_through(self):
+        s = soak.Script()
+        end, what = soak.plan_missions(s, random.Random(1), 'o', self.args(campaign='Boss Nass', first=3), 'g', 7)
+        self.assertEqual(what['missions'], [3, 4, 5, 6, 7])
+        self.assertEqual(what['passed_through'], [1, 2])
+        text = s.text()
+        boxes = soak.MISSION_BOXES['Boss Nass']
+        clicks = [ln.split(':', 1)[1] for ln in text.splitlines()]
+        for xy in boxes:                                   # every box, in order
+            self.assertIn('click:%d:%d' % xy, clicks)
+        order = [clicks.index('click:%d:%d' % xy) for xy in boxes]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual(text.count('score_m'), 2 * 7)                # each mission's score screen, two shots
+        self.assertEqual(sum(1 for c in clicks if c == 'click:%d:%d' % soak.CAMPAIGN_OK), 1)   # mission 1 only
+        self.assertEqual(sum(1 for c in clicks if c == 'click:%d:%d' % soak.SCORE_MENU), 7)
+        self.assertGreater(end, 5 * 5 * 60)
+
+    def test_missions_unlocked(self):
+        s = soak.Script()
+        _, what = soak.plan_missions(s, random.Random(1), 'o', self.args(campaign='OOM-9', first=6, unlocked=True),
+                                     'g', 7)
+        self.assertEqual((what['missions'], what['passed_through']), ([6, 7], []))
+        self.assertNotIn('click:%d:%d' % soak.CAMPAIGN_OK, s.text())
+
+    def test_republic_after_confederacy(self):
+        soak.clone_campaigns()
+        s = soak.Script()
+        _, what = soak.plan_missions(s, random.Random(1), 'o', self.args(campaign='Galactic Republic', first=2),
+                                     'g', 7)
+        self.assertEqual(what['passed_through'], ['Confederacy %d' % m for m in range(1, 8)] + [1])
+        self.assertEqual(what['missions'], list(range(2, 8)))
+        text = s.text()
+        self.assertLess(text.index('click:%d:%d' % soak.CAMPAIGNS['Confederacy']),
+                        text.index('click:%d:%d' % soak.CAMPAIGNS['Galactic Republic']))
+        self.assertEqual(runner.soak_missions(['--mode', 'missions', '--campaign', 'Galactic Republic',
+                                               '--first', '2']), (6, 8))
+
+    def test_cc_tables(self):
+        soak.clone_campaigns()
+        self.assertEqual(sorted(soak.MISSION_BOXES), ['Confederacy', 'Galactic Republic'])
+        self.assertEqual(soak.SAVE_EXT, '.ga1')
+        for boxes in soak.MISSION_BOXES.values():
+            self.assertEqual(boxes[0], soak.CAMPAIGN_MISSION1)
+
+    def test_screen_1024(self):
+        soak.use_screen(1024)
+        self.assertEqual(soak.GAME_MENU['save'], (520, 302))      # centred: +112, +84
+        self.assertEqual(soak.GAME_MENU_LOAD, (520, 335))
+        self.assertEqual(soak.LOAD_YES, (417, 412))
+        self.assertEqual(soak.SAVE_OK, (227, 727))                # scaled by 1.28
+        self.assertEqual(soak.HUD_RIGHT['menu'], (983, 624))
+        x0, y0, x1, y1 = soak.MAP_VIEW
+        self.assertEqual((x1, y1 < 768 - 200), (1023, True))
+
+    def test_ingame_load(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, 'SaveGame'))
+            for n in ('aaa.gax', 'zzz.gax', 'other.ga1'):
+                open(os.path.join(d, 'SaveGame', n), 'w').close()
+            s = soak.Script()
+            end, what = soak.plan_ingame_load(s, random.Random(2), 'o', self.args(minutes=10), d, 9)
+        self.assertEqual(what['save'], 'soak9')
+        self.assertEqual(what['save_row'], 1)                     # aaa, soak9, zzz
+        text = s.text()
+        load = text.index('click:%d:%d' % soak.GAME_MENU_LOAD)
+        self.assertLess(text.index('click:%d:%d' % soak.GAME_MENU['save']), load)
+        self.assertLess(load, text.index('click:%d:%d' % soak.LOAD_YES))
+        self.assertIn('click:300:%d' % (soak.INGAME_LOAD[1] + soak.INGAME_LOAD[2]), text)
+
+    def test_monkey_leaves_room_for_a_save(self):
+        # Its panels and game menu end with Escapes 5-6 s later: none may land on a save at t1.
+        for seed in range(200):
+            s = soak.Script()
+            soak.monkey(s, random.Random(seed), 0, 100, 'o')
+            late = [st for st in s.steps if st[0] > 100 and not st[1].startswith('shot=')]
+            self.assertTrue(all(t < 102.1 for t, _ in late), (seed, late))
+
+    def test_saved_row_counts_recorded_games(self):
+        # Clone Campaigns' list: its saves and its recorded games, alphabetical.
+        soak.clone_campaigns()
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, 'SaveGame'))
+            for n in ('eh.ga1', 'recorded game -  21-Jan-2023.mg1', 'zz.gax', 'b.mgx'):
+                open(os.path.join(d, 'SaveGame', n), 'w').close()
+            self.assertEqual(soak.saved_row(d, 'soak9'), 2)
+
+    def test_screen_option_and_check(self):
+        s = soak.Script()
+        soak.set_screen(s, 12, 1280)
+        self.assertEqual(s.steps, [(12, 'click:40:490'), (18, 'click:453:443')])
 
 
 class LiftCheck(unittest.TestCase):
