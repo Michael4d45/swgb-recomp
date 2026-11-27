@@ -243,10 +243,14 @@ host's share is the same work.
 25-minute busy LAN game with A on the `/O1` host and B on the `/O2` one
 (`SWGB_MP_ANY_BUILD=1` lets the join accept another build): 156 checkpoints
 (312 sync records, 46.9 minutes of game, turn 6,210), none different; no
-fault, drop or out-of-sync message. Clone Campaigns the same way: below in
-[multiplayer.md](multiplayer.md#tests). A soak of the `/O2` host (`soak.py`,
-two 25-minute skirmishes) and the functional gate on it: see ROADMAP.md,
-track 8.
+fault, drop or out-of-sync message. Clone Campaigns the same way, 20
+minutes: 127 checkpoints (254 records, 38.2 minutes of game, turn 5,050),
+none different. Soaks of the `/O2` hosts (`soak.py`): two 25-minute base
+skirmishes (1 and 2 computers, Giant and Medium maps) and a 20-minute Clone
+Campaigns one against 7 computers (Large Sea), no fault, stub or unresolved
+call. The functional gate on the `/O2` build (both hosts):
+`test.py --level functional --cc`, 35 passed, 0 flaky, 0 failed (17.9 min);
+its frame-rate check at `--fps 60`: 6% and 5% of a core.
 
 ## The GPU: `--present d3d11`
 

@@ -302,6 +302,7 @@ Shots every five minutes and at the end, `summary.json` in `--out`.
 | `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (37.9 min of game time) | PASS: 125 checkpoints (250 records), none differ; 10,800 messages each way; no fault, drop or out-of-sync message |
 | A this build, B the same source linked a minute earlier | the join | refused as another build; B shows "Unable to join game." |
 | `--run-b`: A the lifted C at `/O1`, B at `/O2` (2026-11-26), `--minutes 25 --activity busy --seed 5` | 25 min (46.9 min of game time, turn 6,210) | PASS: let in with `SWGB_MP_ANY_BUILD`; 156 checkpoints (312 records), none differ; no fault, drop or out-of-sync message ([performance.md](performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default)) |
+| the same, `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (38.2 min of game time, turn 5,050) | PASS: 127 checkpoints (254 records), none differ |
 
 ## What's left
 

@@ -297,8 +297,9 @@ what needs research or a new subsystem.
   (122 to 130 a second at 2560x1440); a light skirmish and the menus are
   unchanged. The profile: pcrecomp's flag and x87 helpers -33% (inlined).
   Same results: `mp_pair.py --run-b` with A at `/O1` and B at `/O2`, 25
-  minutes, 312 sync records, none differ; a 2x25-minute soak of `/O2`, no
-  event.
+  minutes, 312 sync records, none differ (Clone Campaigns: 20 minutes, 254,
+  none); soaks of the `/O2` hosts (2x25 min base, 20 min Clone Campaigns
+  with 7 computers), no event; the functional gate on it 35/35.
 - **Left:** callbacks into the window procedure without an exception each
   (pcrecomp); the shared `swgb_gen.lib` is `/O1` until the next integration
   build; `/GL`, PGO untried.
