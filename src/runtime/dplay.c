@@ -41,6 +41,7 @@
  */
 #ifdef SWGB_WIN32HLE
 #include <stdarg.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <ifaddrs.h>
 #include "winport.h"
@@ -487,8 +488,12 @@ static void host_frame(int c, int type, rbuf* r) {
         GUID inst;
         rb_get(r, &inst, sizeof inst);
         DWORD theirs = rb_u32(r), mine = build_stamp();
-        if (theirs != mine) LOG("a client with another build (%08lX; this one is %08lX): refused", theirs, mine);
-        int ok = theirs == mine && IsEqualGUID(&inst, &g_sd.guidInstance) &&
+        /* SWGB_MP_ANY_BUILD=1: let it in anyway (mp_pair.py --run-b: two builds of one source at
+         * other flags, whose sync records then show whether they simulate alike) */
+        int any = getenv("SWGB_MP_ANY_BUILD") && *getenv("SWGB_MP_ANY_BUILD") == '1';
+        if (theirs != mine) LOG("a client with another build (%08lX; this one is %08lX): %s", theirs, mine,
+                                any ? "let in (SWGB_MP_ANY_BUILD)" : "refused");
+        int ok = (theirs == mine || any) && IsEqualGUID(&inst, &g_sd.guidInstance) &&
                  !(g_sd.dwFlags & (DPSESSION_JOINDISABLED | DPSESSION_NEWPLAYERSDISABLED)) &&
                  (!g_sd.dwMaxPlayers || g_sd.dwCurrentPlayers < g_sd.dwMaxPlayers);
         wb_begin(&w, T_WELCOME);

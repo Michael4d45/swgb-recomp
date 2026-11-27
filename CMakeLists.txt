@@ -85,13 +85,15 @@ target_link_options(swgb PRIVATE "/WHOLEARCHIVE:$<IF:$<BOOL:${SWGB_GEN_LIB}>,${S
 target_link_options(swgb PRIVATE /BASE:0x60000000 /FIXED:NO /DYNAMICBASE:NO
                                        /NXCOMPAT /LARGEADDRESSAWARE /STACK:0x1000000
                                        /MANIFESTUAC:NO /MANIFEST:NO)
-# /O1, not /O2: 3.9M lines of generated C. /O2 stalled the farm on Shogo's
-# lift; /O1 keeps most of the speed at a fraction of the compile time.
-set(GEN_OPT "/O1" CACHE STRING "optimization for the generated C")
+# /O2 for all 3.9M lines of generated C (docs/performance.md, "The whole lift
+# at /O2"): a late game is 8-11% cheaper a frame than at /O1 (pcrecomp's flag
+# and x87 helpers get inlined), and the build takes 34 min instead of 31 (one
+# file, recomp_0039.c, is most of either). -DGEN_OPT=/O1 for the old build.
+set(GEN_OPT "/O2" CACHE STRING "optimization for the generated C")
 # The few generated files the game spends its time in, at GEN_HOT_OPT instead
 # (docs/performance.md: tools/profile_report.py --hot picks them; a re-lift
-# moves functions between files, so pick them again after one).
-# They compile at /O2 as fast as at /O1 (27 s for the largest, recomp_0040.c).
+# moves functions between files, so pick them again after one). Only matters
+# when GEN_OPT is something else: they compile at /O2 as fast as at /O1.
 set(GEN_HOT_FILES "recomp_0022.c;recomp_0040.c;recomp_0050.c;recomp_0051.c" CACHE STRING
     "generated files (names, ;-separated) compiled with GEN_HOT_OPT")
 set(GEN_HOT_OPT "/O2" CACHE STRING "optimization for GEN_HOT_FILES")

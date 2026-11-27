@@ -189,7 +189,7 @@ Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
 | `smooth`, `smooth_cc` | `tests/unit/smooth_test.c` | `smooth.c` (`--smooth`) itself with a fake clock and fake objects: a walk moves at most 2 px a frame and is never drawn ahead of the object, a stop ends where it stopped, teleports, new objects, a new game and a pause are drawn where they are, other callers are left alone, nothing is written; at the base and Clone Campaigns addresses |
 | `keys` | `tests/unit/keys_test.c` | `keyscript.c`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
 | `cdaudio` | `tests/unit/cdaudio_test.c` | `cdaudio.c`'s core: `tests/data/tone.ogg` decoded (length, rate, tones, level) and seeked (the same samples as from the start); a disc of three copies: MCI_STATUS's counts, lengths and positions in ms, MSF and TMSF; a play from track 2 to 3 puts exactly that track on the output and notifies; the CD line's volume halves it, other lines are WINMM's; stop, pause and a second play abort or supersede the notification; no tracks or `--music off` fail the open ([music.md](music.md)) |
-| `tools` | `tests/unit/test_tools.py` | the Python side, as above |
+| `tools` | `tests/unit/test_tools.py` | the Python side, as above, and `perf_ab.py`'s figures, its round-by-round ratio and that every game sets its Screen Size, and `mp_pair.py`'s sync-record compare |
 
 They run on GitHub Actions (`.github/workflows/unit.yml`, `windows-latest`):
 pcrecomp is fetched at a pinned commit for its headers, and nothing of the game

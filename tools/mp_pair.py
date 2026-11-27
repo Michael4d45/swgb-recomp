@@ -1,11 +1,15 @@
 """A LAN game between two recomp instances on this machine, played and checked.
 
     py -3 tools\\mp_pair.py [--minutes M] [--activity idle|habits|busy] [--seed S] [--cc]
-                            [--run EXE] [--exe GUEST] [--game DIR] [--out DIR] [--port N]
+                            [--run EXE] [--run-b EXE] [--exe GUEST] [--game DIR] [--out DIR] [--port N]
                             [--extra SWITCHES] [--extra-a SWITCHES] [--extra-b SWITCHES]
 
 --cc plays Clone Campaigns (swgbrecomp_cc.exe, battlegrounds_x1.exe): the main menu's Multiplayer
 button and the Multiplayer screen's Create (beside a Restore) are elsewhere.
+
+--run-b EXE: B runs this host instead of --run (another build of the same source, e.g. the lifted C
+at /O2 against /O1: docs/performance.md). The join normally refuses another build; both runs then
+get SWGB_MP_ANY_BUILD=1, and the sync records say whether the two builds simulate alike.
 
 Two headless --multi runs of the host (docs/multiplayer.md): A hosts, B joins over 127.0.0.1,
 both through the host's own DirectPlay (src/runtime/dplay.c). A goes Multiplayer -> Create and
@@ -146,6 +150,7 @@ def main():
     ap.add_argument('--cc', action='store_true', help='Clone Campaigns')
     ap.add_argument('--run', default=None, help=r'the host (A:\Games\star\builds\multiplayer\swgbrecomp.exe; '
                     r'--cc: ...\multiplayer-cc\swgbrecomp_cc.exe)')
+    ap.add_argument('--run-b', default=None, help="B's host, when it is another build than A's (--run)")
     ap.add_argument('--exe', default=None, help=r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe '
                     r'(--cc: battlegrounds_x1.exe there)')
     ap.add_argument('--game', default=GAME_DEFAULT)
@@ -178,6 +183,9 @@ def main():
     soak.ensure_game(args.game, game_b)
     procs = {}
     ends = {}
+    env = dict(os.environ)
+    if args.run_b and os.path.abspath(args.run_b) != os.path.abspath(args.run):
+        env['SWGB_MP_ANY_BUILD'] = '1'   # dplay.c: the join lets another build in
     for who, game in (('a', args.game), ('b', game_b)):
         d = os.path.join(out, who)
         os.makedirs(d, exist_ok=True)
@@ -187,9 +195,10 @@ def main():
         open(keys, 'w').write(s.text())
         wd = int(end + 20) if who == 'a' else int(end + 10)   # B stops first: A sees a player leave, not a lost host
         ends[who] = wd
-        cmd = [args.run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
+        cmd = [args.run_b if who == 'b' and args.run_b else args.run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
                '--watchdog', str(wd), '--keys', '@' + keys, '--mp-port', str(args.port)] + args.extra.split() +               (args.extra_a if who == 'a' else args.extra_b).split()
-        procs[who] = subprocess.Popen(cmd, cwd=d, stdout=open(os.path.join(d, 'run.log'), 'w'), stderr=subprocess.STDOUT)
+        procs[who] = subprocess.Popen(cmd, cwd=d, stdout=open(os.path.join(d, 'run.log'), 'w'), stderr=subprocess.STDOUT,
+                                      env=env)
         print('%s: pid %d, %d s' % (who, procs[who].pid, wd), flush=True)
         if who == 'a':
             time.sleep(B_DELAY)
@@ -213,6 +222,7 @@ def main():
     summary = {
         'switches': {'a': ' '.join((args.extra + ' ' + args.extra_a).split()),
                      'b': ' '.join((args.extra + ' ' + args.extra_b).split())},
+        'hosts': {'a': args.run, 'b': args.run_b or args.run},
         'exit': rc, 'sync_records': {'a': len(ra), 'b': len(rb), 'shared': len(shared), 'differ': len(bad)},
         'events': {'a': eva, 'b': evb}, 'lost': {'a': losta, 'b': lostb},
         'turns_checked': len({k[1] for k in shared}),
