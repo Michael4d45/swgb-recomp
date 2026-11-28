@@ -78,9 +78,13 @@ class Script(runner.Script):
         return path
 
     def skirmish(self, t, size=None):
-        """[Options -> Screen Size SIZE ->] Single Player -> Standard Game -> Start Game.
-        Returns the time the map is up."""
-        return screens.to_skirmish(self, LAY[800], t + 3, size) + LOAD
+        """[Options -> Screen Size SIZE ->] Single Player -> Standard Game (1 computer, Easiest)
+        -> Start Game. Returns the time the map is up."""
+        t = screens.to_setup(self, LAY[800], t + 3, size)
+        t = screens.pick(self, t, screens.DD_OTHERS, 0)         # a fresh folder's saved 7-Hardest
+        t = screens.pick(self, t, screens.DD_DIFFICULTY, 0)     # setup can kill the idle player mid-run
+        self.click(t + 1, screens.SETUP_START)
+        return t + 1 + LOAD
 
     def quit_to_menus(self, t, prefix):
         """At 1024x768: the HUD's Menu, Quit Current Game, Yes; the score screen; Main Menu.

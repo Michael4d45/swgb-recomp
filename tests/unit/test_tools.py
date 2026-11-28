@@ -59,6 +59,24 @@ class Screens(unittest.TestCase):
             self.assertEqual(clicks[-1], (start, 'click:%d:%d' % screens.SETUP_START))
             self.assertTrue(all(b[0] - a[0] >= 5 for a, b in zip(clicks, clicks[1:])), clicks)
 
+    def test_present_check_skirmish_sets_size_and_easy_opponent(self):
+        try:
+            import present_check
+        except ImportError:
+            self.skipTest('no numpy/PIL')
+        s = present_check.Script('out')
+        end = s.skirmish(20, 800)
+        clicks = [w for _, w in s.steps]
+        self.assertLess(clicks.index('click:%d:%d' % screens.SCREEN_RADIO[800]),
+                        clicks.index('click:%d:%d' % screens.MAIN_SINGLE))
+        i_start = clicks.index('click:%d:%d' % screens.SETUP_START)
+        for dd in (screens.DD_OTHERS, screens.DD_DIFFICULTY):
+            self.assertIn('click:%d:%d' % dd[0], clicks[:i_start])
+            self.assertIn('click:%d:%d' % dd[1], clicks[:i_start])
+        t_start, w_start = s.steps[-1]
+        self.assertEqual(w_start, 'click:%d:%d' % screens.SETUP_START)
+        self.assertEqual(end, t_start + present_check.LOAD)
+
     def test_hud_inside_the_screen_and_its_panels(self):
         # every HUD place is on the interface band under the map, the minimap's centre in its panel
         for size in (800, 1024, 1280, (1920, 1080), (1366, 768), (1024, 600)):
