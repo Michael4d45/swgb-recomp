@@ -72,11 +72,17 @@ try 1 failed for more than time`, and each try's line says `FAIL (timing)` or
 `FAIL`; `summary.json`'s `tries` has `hard` for each. The retry still runs
 there: it shows whether the failure happens every time. Why not `--retry 0`:
 a gate that fails on noise teaches people to rerun it until it is green, which
-is worse than a retry that excuses only time. Why not every retry: the one
-FLAKY check in the record before this rule (films/base, 2026-11-23) was a real
-fault, `0xC0000005` opening `xlogo1.avi`, which a passing retry hid. The
-failures from load in that record were unit tests on the wall clock
-(`present`, `recaudio`, `cdaudio`), which `--retry` never covered.
+is worse than a retry that excuses only time. Why not every retry: when this
+rule was written, the one FLAKY check in the record (films/base, 2026-11-23)
+was a real fault, `0xC0000005` opening `xlogo1.avi`, which a passing retry hid.
+The price: a failure that load may explain, but that is about what the game
+did, stays FAIL too. Two runs of other branches, still on the old rule, since
+had one pass on retry: `mp/cc-restore` (2026-11-27, neither game had started
+by the end of its script) and `smooth/base` (2026-11-28, no object moved);
+neither cause was established. `present/A`'s pacing case has twice shown fewer
+than its 510 frames a second (507 and 502, 2026-11-27), both with the game at
+1280x1024 by mistake; the 25 recorded runs at 800x600 showed 523-596. If such a
+check fails again, fix its wait or its threshold rather than widen "timing".
 
 Each retry runs in a folder of its
 own beside the first, `<check>-retry1` (then `-retry2`), so the first try's
