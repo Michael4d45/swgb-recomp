@@ -113,6 +113,13 @@ versions follow [SemVer](https://semver.org/).
 - `softdd.c` checks `fwrite` / `fflush` to the `--record` ffmpeg pipe: if
   ffmpeg exits early, recording closes cleanly with one message and the game
   continues.
+- `--res`: a game loaded or restarted from the game menu kept the 800 x 600
+  layout in the top-left corner of the screen, with uncleared memory around
+  it, because the mode was already WxH and the game never asked for a new
+  layout. `widescreen.c` lays the new screen out itself, and clears to black
+  whatever a game screen leaves of a WxH frame. `res_check.py load` and the
+  `res/load/*` checks save, load, switch Screen Size, load again and
+  restart at 2560x1440, in both games.
 - `test.py --retry`: a retry ran in the first try's folder and overwrote its
   `run.log` and shots (and could pass on a shot the first try left). Each
   retry now has a folder of its own, `<check>-retry1`, and the report lists

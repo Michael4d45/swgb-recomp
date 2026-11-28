@@ -3,6 +3,7 @@
   py -3 tools/res_check.py 800|1024|1280 [--out DIR] [--game DIR] [--no-options]
   py -3 tools/res_check.py ingame [--res WxH] [--cc] [--out DIR] [--game DIR]
   py -3 tools/res_check.py popups [--size 800|1024|1280|wide] [--res WxH] [--cc] [--out DIR] [--game DIR]
+  py -3 tools/res_check.py load --res WxH [--cc] [--out DIR] [--game DIR]
 
 800, 1024, 1280 (800x600, 1024x768, 1280x1024): the run picks the Screen Size on
 the main menu's Options, starts a Standard Game and takes shots:
@@ -33,6 +34,14 @@ Objectives, Chat, Diplomacy (dialogs: centred on the screen), the tech tree
 Saved Game screen and Cancel) and About. At WxH the Save and Load screens are
 the largest of the game's sizes that fits, centred, black around them
 (widescreen.c, "full screens shown in a game").
+
+load: a skirmish at WxH (the third size), saved, then the game menu's Load
+(Yes, the save, OK); Options to 1024x768 and back to WxH, Load again; then
+Restart. Each new game is made while the mode is already WxH, so the game
+never asks to lay its screen out again (widescreen.c, lay_out_skipped): its
+interface band must match the first game's (shots b_loaded, d_loaded,
+e_restarted against a_map), its game menu centred, and the log must have no
+screen that covered only part of WxH.
 
 Each check prints PASS or FAIL lines; the exit code is 1 on any FAIL. Shots
 land in DIR as PNG. The game runs with --headless --multi, so it has its own
@@ -327,9 +336,99 @@ def run_popups(a):
     return 1 if rep.fails else 0
 
 
+def run_load(a):
+    lay = screens.layout(a.kind, a.res)
+    w, h = lay.w, lay.h
+    name = 'resload'
+    saves = os.path.join(a.game, 'SaveGame')
+    for f in os.listdir(saves) if os.path.isdir(saves) else []:
+        if f.lower().startswith(name):
+            os.remove(os.path.join(saves, f))
+    row = screens.saved_row(lay, a.game, name)
+    lx, l0, ls, load_ok = lay.load_list
+    sc = Shots(a.out)
+    t = screens.to_skirmish(sc, lay, 13, 1280) + LOAD
+    sc.snap(t, 'a_map')
+    # Save Game: a name, OK
+    sc.click(t + 1, lay.hud['menu'])
+    sc.click(t + 3, lay.game_menu['save'])
+    sc.click(t + 8, lay.save_name)
+    for k, c in enumerate(name):
+        sc.at(t + 9 + k * 0.3, c)
+    sc.click(t + 13, lay.save_ok)
+    sc.move(t + 14, SAFE)
+    t += 20
+
+    def new_game(t, tag, button):
+        """The game menu's BUTTON ('load' or 'restart') and Yes (quit this game); for Load, the
+        save and OK. Shots of the new game and of its game menu."""
+        sc.click(t + 1, lay.hud['menu'])
+        sc.click(t + 3, lay.game_menu[button])
+        sc.click(t + 5, lay.yes)
+        if button == 'load':
+            sc.snap(t + 12, tag + '_list')
+            sc.click(t + 13, (int(round(lx)), int(round(l0 + ls * row))))
+            sc.click(t + 15, load_ok)
+        sc.move(t + 16, SAFE)
+        sc.snap(t + 75, tag)
+        sc.move(t + 76, lay.hud['menu'])
+        sc.snap(t + 77.8, tag + '_before')   # just before: the game runs, its units move
+        sc.click(t + 78, lay.hud['menu'])
+        sc.snap(t + 81, tag + '_menu')
+        sc.at(t + 82, 'esc')
+        return t + 84
+
+    t = new_game(t, 'b_loaded', 'load')
+    # Options: Screen Size 1024x768, then the third size again
+    for size, cw_ch in ((1024, (w, h)), (1280, (1024, 768))):
+        c_lay = screens.layout(a.kind, cw_ch)
+        sc.click(t + 2, c_lay.hud['menu'])
+        sc.click(t + 5, c_lay.game_menu['options'])
+        sc.click(t + 8, c_lay.options_radio[size])
+        sc.click(t + 9.5, c_lay.options_ok)
+        sc.move(t + 10, SAFE)
+        t += 16
+    sc.snap(t, 'c_switched')
+    t = new_game(t + 2, 'd_loaded', 'load')
+    t = new_game(t, 'e_restarted', 'restart')
+    rc, text = run_game(a, sc, t + 4, ['--res', '%dx%d' % a.res])
+    rep = Report()
+    modes = runner.modes(text)
+    print('SetDisplayMode calls:', ', '.join('%dx%d' % m for m in modes) or 'none')
+    rep.ok(os.path.isdir(saves) and any(f.lower().startswith(name) for f in os.listdir(saves)),
+           'the save %s is in SaveGame (row %d)' % (name, row))
+    ref = grey(a, 'a_map')
+    check_game(rep, ref, (w, h), 'the map')
+    check_game(rep, grey(a, 'c_switched'), (w, h), 'Screen Size 1024x768 and back')
+    for tag, what in (('b_loaded', 'loaded'), ('d_loaded', 'loaded after the Screen Size switches'),
+                      ('e_restarted', 'Restart')):
+        img = grey(a, tag)
+        check_game(rep, img, (w, h), what)
+        check_layout(rep, ref, img, what)
+        check_centred(rep, grey(a, tag + '_before'), grey(a, tag + '_menu'), what + ': the game menu')
+    # widescreen.c clears what a screen not laid out for WxH leaves, and says so
+    uncovered = re.findall(r'\[res\] game screen \w+ covers .*', text)
+    rep.ok(not uncovered, 'every game screen laid out for %dx%d%s' % (w, h, ''.join('; ' + u for u in uncovered)))
+    rep.ok(rc == 4 and not runner.events(text), 'no fault, no unresolved call: exit %d (4: the watchdog)' % rc)
+    return 1 if rep.fails else 0
+
+
+def check_layout(rep, ref, img, what):
+    """A new game laid out as the first: the interface band (the rows under the map, the same
+    civilization's art) pixel for pixel as in the first game's shot, but for its counters and
+    minimap."""
+    if ref is None or img is None or ref.shape != img.shape:
+        return rep.ok(False, '%s: no shot to compare' % what)
+    h, w = img.shape
+    bh = screens.HUD[screens.hud_base(w, h)]['rows']
+    rows = slice(h - bh * 3 // 4, h)
+    same = float((abs(img[rows] - ref[rows]) <= 24).mean())
+    return rep.ok(same >= 0.8, '%s: the interface band %.1f%% as in the first game' % (what, same * 100))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=['800', '1024', '1280', 'ingame', 'popups'])
+    ap.add_argument("what", choices=['800', '1024', '1280', 'ingame', 'popups', 'load'])
     ap.add_argument("--out", default="res_shots")
     ap.add_argument("--game", help="the game folder (default: GAMES/res-check-base or -cc, made on first use)")
     ap.add_argument("--exe", help="the game's exe (default: work/ of the main checkout)")
@@ -357,6 +456,10 @@ def main():
         return run_ingame(a)
     if a.what == 'popups':
         return run_popups(a)
+    if a.what == 'load':
+        if not a.res:
+            sys.exit('load needs --res WxH')
+        return run_load(a)
     return run_size(a)
 
 

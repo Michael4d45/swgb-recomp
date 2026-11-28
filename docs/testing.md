@@ -16,7 +16,7 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 |---|---|---|---|---|
 | L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (`tools/swgb`'s screens, paths and game folders, soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
-| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), `--record` with its sound (a film, a skirmish's clicks, the victory music; the sound stream as long as the video, loud where they play: [recording.md](recording.md)), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), the CD music (a skirmish on a disc of 2-second tracks: tracks 2-49 on time, the notification, the game's repeat; [music.md](music.md)), the frame-rate check (below), and two multiplayer games through `mp_pair.py`: three players with chat and one dropped (base game), a save restored (Clone Campaigns) | as L1, ffmpeg |
+| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080) and `load` (both games at 2560x1440: below), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), `--record` with its sound (a film, a skirmish's clicks, the victory music; the sound stream as long as the video, loud where they play: [recording.md](recording.md)), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), the CD music (a skirmish on a disc of 2-second tracks: tracks 2-49 on time, the notification, the game's repeat; [music.md](music.md)), the frame-rate check (below), and two multiplayer games through `mp_pair.py`: three players with chat and one dropped (base game), a save restored (Clone Campaigns) | as L1, ffmpeg |
 | L3 | `soak` | about 4 h at 5 games at once (20 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat), every campaign's missions past the first (`missions`: OOM-9 6-7, Boss Nass, Chewbacca, Darth Vader, Princess Leia, Basic Training), the in-game Load, the monkey at 1024x768 and 1280x1024; Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns from mission 1 and past it, the in-game Load. Multiplayer (`mp_pair.py`): four players for 20 minutes with chat, a quit, the host dropped (host migration), a save restored, in both games. `--soak-scale 0.2` for a shorter trial. | as L2 |
 | L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
 
@@ -237,6 +237,19 @@ without a body, a lower function count, or any changed or vanished function
 (new ones pass: seeds add them). After an intended re-lift, record the new
 baseline with `--save` (`test.py --update-baselines`). The baseline holds
 hashes only.
+
+### Games made at WxH (L2): `res/load/base`, `res/load/cc`
+
+`res_check.py load --res 2560x1440`: a skirmish at the third Screen Size,
+saved; the game menu's Load (Yes, the save, OK); Options to 1024x768 and
+back; Load again; Restart. Each new game is made while the mode is already
+2560x1440, which the game never lays out again by itself (building.md,
+"Any resolution"). Each must show the first game's interface band (the
+bottom three quarters of the interface rows, grey levels within 24, at
+least 80% of the pixels: the same civilization's art; the counters and
+minimap differ), its game menu centred, and the log no `[res] game screen
+... covers` line (a screen that left part of the frame). Before the fix, the
+loaded game's band matched 11.6%.
 
 ### The widescreen checks (L2)
 

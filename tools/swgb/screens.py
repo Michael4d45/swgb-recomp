@@ -112,7 +112,7 @@ HUD = {
 }
 HUD_BUTTONS = ('menu', 'objectives', 'chat', 'diplomacy', 'techtree')
 # The game menu's buttons, from the screen's middle (x + 8); "quit and load?" / "quit?" Yes.
-GAME_MENU = {'quit': -122, 'save': -82, 'load': -49, 'options': 17, 'about': 50, 'cancel': 90}
+GAME_MENU = {'quit': -122, 'save': -82, 'load': -49, 'restart': -16, 'options': 17, 'about': 50, 'cancel': 90}
 YES = (-95, 28)
 # The in-game Options dialog at 800x600, centred on a bigger screen: Speed Fast, OK and the
 # Screen Size radio buttons (the third: 1280x1024, or WxH with --res).
