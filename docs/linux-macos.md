@@ -93,7 +93,7 @@ are answered in `src/linux/shims.c`, registered ahead of win32hle:
 |---|---|---|
 | `MCIWndCreateA` (MSVFW32) | NULL: no movie, as on a PC without the films | Track 6's player (below) |
 | `ICInfo` (MSVFW32) | FALSE: no codecs | the same |
-| `mciSendCommandA`, `mciGetErrorStringA`, `mixer*` (WINMM) | `cdaudio.c`: CD audio from the Ogg tracks, the mixer's CD line its volume (gap 5, [music.md](music.md)) | the same |
+| `mciSendCommandA`, `mciGetErrorStringA`, `mixer*` (WINMM) | `cdaudio.c`: CD audio from the Ogg tracks, both mixer lines (CD music and wave-out sound effects via `hle_dsound_set_buffer_gain`, gap 5, [music.md](music.md)) | the same |
 | `DPLAYX` #1 | stub `IDirectPlay4` (Create must succeed or boot MessageBox-exits) | multiplayer still empty |
 | `DPLAYX` #2, #4 | empty enum / `DPERR_UNAVAILABLE` | the same: DirectPlay MP out of scope |
 | `GetFileVersionInfo*` / `VerQueryValueA` | FIXEDFILEINFO 4.06.03.0516 (DirectX 6.1a) | the same, or win32hle VERSION later |
@@ -200,7 +200,9 @@ the recompiled game had no music there.
 The MCI commands the game sends (open, set, status, play, seek, stop, pause,
 close, and `MM_MCINOTIFY`) over `Music\TrackNN.ogg`, decoded with
 stb_vorbis, played on win32hle's audio stream here and on `waveOut` on
-Windows; the mixer's CD line is its volume. It replaces `shims.c`'s old
+Windows; both mixer lines (CD music and wave-out sound effects via
+`hle_dsound_set_buffer_gain`, pcrecomp `e70a0ab`) are handled in `cdaudio.c`
+so the sliders behave the same on both hosts. It replaces `shims.c`'s old
 `s_mciSendCommandA`. Checked on WSL Ubuntu (clang `-m32`): `unit/cdaudio`
 and `music/base` pass (tracks 2-49 in order, 48 two-second tracks in 95.7
 s, the notification and the game's repeat).

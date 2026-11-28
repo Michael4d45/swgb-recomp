@@ -19,8 +19,10 @@ is the steps.
   done", and [testing.md](testing.md), "On Linux".
 - pcrecomp: branch `swgb-linux-palette` of the fork
   (`Michael4d45/pcrecomp`), pinned in `tools/pcrecomp_pin.sh` (now
-  `eb608a2`: Enter reaches a text field as a key, as on Windows; the EDIT
-  ignores control characters). `build-linux.sh` checks the pin.
+  `e70a0ab`: `hle_dsound_set_buffer_gain`, the sound slider on the game's
+  DirectSound buffers alone; before it `eb608a2`: Enter reaches a text field
+  as a key, as on Windows; the EDIT ignores control characters).
+  `build-linux.sh` checks the pin.
 
 - Branch `track/linux-macos` on the fork, PR
   [Michael4d45/swgb-recomp#1](https://github.com/Michael4d45/swgb-recomp/pull/1).
