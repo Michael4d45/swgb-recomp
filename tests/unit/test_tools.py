@@ -177,11 +177,13 @@ class Paths(unittest.TestCase):
         # PIL maps a BMP's file: a name kept for the image held it, and Windows refused the remove
         from PIL import Image
         with tempfile.TemporaryDirectory() as d:
-            Image.new('P', (800, 600), 7).save(os.path.join(d, 'shot.bmp'))     # as the host's shots are
+            im = Image.new('P', (800, 600), 7)
+            im.putpalette([i for i in range(256) for _ in range(3)])
+            im.save(os.path.join(d, 'shot.bmp'))                           # as the host's shots are
             self.assertEqual(swgb_runner.to_png(d), [os.path.join(d, 'shot.png')])
             self.assertEqual(os.listdir(d), ['shot.png'])
-            with Image.open(os.path.join(d, 'shot.png')) as im:
-                self.assertEqual(im.getpixel((5, 5)), 7)
+            with Image.open(os.path.join(d, 'shot.png')) as png:
+                self.assertEqual(png.getpixel((5, 5)), 7)
 
     def test_ensure_game_completes_a_cut_copy(self):
         with tempfile.TemporaryDirectory() as d:
@@ -642,6 +644,13 @@ class Runner(unittest.TestCase):
         a.level, a.cc = 'smoke', False
         self.assertFalse(any(c.game == 'cc' for c in runner.select(a)))
 
+    def test_skirmish_and_civ_steps_pick_800(self):
+        for steps, _ in (runner.skirmish_steps('base', 'o'),
+                         runner.civ_skirmish('base', 'Galactic Empire', ['Gungans'], 'o', 2, 's')):
+            clicks = [w for _, w in sorted(steps) if w.startswith('click:')]
+            self.assertLess(clicks.index('click:%d:%d' % screens.SCREEN_RADIO[800]),
+                            clicks.index('click:%d:%d' % screens.MAIN_SINGLE))
+
 
 class PerfAB(unittest.TestCase):
     """tools/perf_ab.py (two builds, the same games) and mp_pair.py's sync-record compare."""
@@ -755,6 +764,8 @@ class MpPair(unittest.TestCase):
         self.assertFalse(any('drop_after' in s for _, s in plan_c))
         text, wd = self.mp.script(BASE, 'b', 1, 3, a, 'out')
         self.assertTrue(text.startswith('on:%s\n' % self.mp.ON_MENU))
+        self.assertLess(text.index('click:%d:%d' % screens.SCREEN_RADIO[800]),
+                        text.index('click:%d:%d' % BASE.main_multi))
         self.assertIn('click:%d:%d' % BASE.main_multi, text)
         self.assertIn('click:%d:%d' % CC.main_multi, self.mp.script(CC, 'b', 1, 3, a, 'out')[0])
         _, wd_a = self.mp.script(BASE, 'a', 0, 3, a, 'out')
@@ -768,6 +779,8 @@ class MpPair(unittest.TestCase):
             mp.who_arg('e=--smooth')
         runs = mp.per_player([('b', 'o2'), ('all', 'o1')], 3, lambda old, new: new)
         self.assertEqual(runs, {'a': 'o1', 'b': 'o2', 'c': 'o1'})      # a player's own beats `all`
+        self.assertEqual(mp.per_player([('all', 'default'), ('b', 'o2')], 3, lambda old, new: new),
+                         {'a': 'default', 'b': 'o2', 'c': 'default'})
         import shlex
         args = mp.per_player([('a', shlex.split('--smooth --fps 120')), ('all', ['--mp-cross']), ('all', [])], 2,
                              lambda old, new: old + new)

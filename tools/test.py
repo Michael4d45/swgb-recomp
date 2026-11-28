@@ -571,8 +571,8 @@ def skirmish_steps(kind, out, t_menu=18):
     lay = LAYOUT[kind]
     s = Script()
     s.shot(t_menu, os.path.join(out, 'menu.bmp'))
-    start = screens.to_skirmish(s, lay, 21)
-    s.shot(46, os.path.join(out, 'setup.bmp'))       # 10 s after Standard Game
+    start = screens.to_skirmish(s, lay, 21, 800)
+    s.shot(start - 8, os.path.join(out, 'setup.bmp'))       # 10 s after Standard Game
     s.shot(start + 44, os.path.join(out, 'map.bmp'))
     s.click(start + 47, lay.command_center)
     s.shot(start + 50, os.path.join(out, 'selected.bmp'))
@@ -1191,7 +1191,7 @@ def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):
     Fast speed, then the idle player and a save 40% of the way in. Returns (steps, end)."""
     lay = LAYOUT[kind]
     s = Script()
-    t = screens.to_setup(s, lay, 20)
+    t = screens.to_setup(s, lay, 13, 800)
     t = screens.pick(s, t, screens.DD_OTHERS, len(civs) - 1)
     t = screens.pick(s, t, screens.DD_SIZE, 1)
     t = screens.pick(s, t, screens.DD_DIFFICULTY, 0)
@@ -1220,8 +1220,9 @@ def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):
 
 def load_steps(kind, row, out, minutes):
     s = Script()
-    s.at(47, 'shot=%s' % os.path.join(out, 'load_list.bmp'))
-    start = screens.saved_game(s, LAYOUT[kind], 20, row) + 62
+    t0 = screens.set_screen(s, 12, 800)
+    s.at(t0 + 27, 'shot=%s' % os.path.join(out, 'load_list.bmp'))
+    start = screens.saved_game(s, LAYOUT[kind], t0, row) + 62
     s.at(start, 'shot=%s' % os.path.join(out, 'loaded.bmp'))
     end = start + minutes * 60
     for ts in range(start + 5, int(end) - 5, 20):
@@ -1291,7 +1292,7 @@ for _k, _sets in CIV_SETS.items():
 def fixed_setup(s, lay):
     """The frame-rate check's setup (perf_ab.py's too): one Easiest computer, a Tiny Savannah
     map. Returns when it is set."""
-    t = screens.to_setup(s, lay, 20)
+    t = screens.to_setup(s, lay, 13, 800)
     t = screens.pick(s, t, screens.DD_OTHERS, 0)          # one computer
     t = screens.pick(s, t, screens.DD_LOCATION, 13)       # Savannah
     t = screens.pick(s, t, screens.DD_SIZE, 0)            # Tiny

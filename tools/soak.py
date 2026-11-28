@@ -748,8 +748,8 @@ def run_one(args, lay, i, mode, seed, out_root, game):
     out = os.path.join(out_root, name)
     os.makedirs(out, exist_ok=True)
     s = Script()
-    # The plan's first click: on the main menu, after the Screen Size when --screen sets one.
-    t0 = screens.set_screen(s, 12, args.screen) if args.screen else 20
+    # Pick Screen Size on Options first so the run always matches `lay`, regardless of the hive's stored value.
+    t0 = screens.set_screen(s, 12, args.screen or 800)
     if mode in ENDGAME:
         end, what = ENDGAME[mode](s, lay, rnd, out, args, game, seed, t0)
     else:

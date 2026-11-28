@@ -221,7 +221,7 @@ def main():
     if "A" in only:
         s = Script(a.out)
         s.at(14, "setcursor")                       # on the menus
-        t = s.skirmish(20)
+        t = s.skirmish(20, 800)
         s.at(t - 3, "move:400:300")
         s.at(t - 2, "setcursor")                    # in the game, the cursor (back) in the window
         t = s.battery(t, "own size")
@@ -285,7 +285,7 @@ def main():
     if "C" in only:
         s = Script(a.out)
         s.wshot(8, "C_menus")
-        t = s.skirmish(10)
+        t = s.skirmish(10, 800)
         t = s.battery(t, "--fullscreen at launch", overshoot=True)
         text = run(a, "C", s, ["--fullscreen"], results)
         judge_edges(results, "C", text, s)

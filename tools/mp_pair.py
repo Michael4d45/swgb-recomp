@@ -117,33 +117,37 @@ WSL_CHECKOUT = os.environ.get('WSL_CHECKOUT', '')   # a Linux path: the checkout
 
 def start_at(n, restore=False):
     """When A clicks Start Game (seconds after its main menu): every joiner has clicked I'm Ready
-    (the last at 45 + B_DELAY * (n - 1) on A's clock), with room for a slow one."""
-    return 66 + B_DELAY * (n - 2) + (10 if restore else 0)
+    (the last at 57 + B_DELAY * (n - 1) on A's clock), with room for a slow one."""
+    return 78 + B_DELAY * (n - 2) + (10 if restore else 0)
 
 
 def menu_part(s, lay, who, k, n, out, restore=False):
     """The menus, timed from this player's main menu."""
     start = start_at(n, restore)
-    s.click(2, lay.main_multi)
-    s.at(14 if who == 'a' else 28, 'shot=%s' % os.path.join(out, 'multiplayer.bmp'))
+    # Pick 800x600 on Options first: the live game's HUD and dialog clicks are 800x600,
+    # regardless of what Screen Size the folder's registry hive inherited.
+    t0 = screens.set_screen(s, 2, 800)
+    o = t0 - 2
+    s.click(2 + o, lay.main_multi)
+    s.at((14 if who == 'a' else 28) + o, 'shot=%s' % os.path.join(out, 'multiplayer.bmp'))
     if who == 'a' and restore:
-        s.click(16, MP_RESTORE)
-        s.at(22, 'shot=%s' % os.path.join(out, 'restore_list.bmp'))
-        s.click(23, screens.SAVED_OK)    # the newest save is selected
-        s.click(43, SETUP_READY)
+        s.click(16 + o, MP_RESTORE)
+        s.at(22 + o, 'shot=%s' % os.path.join(out, 'restore_list.bmp'))
+        s.click(23 + o, screens.SAVED_OK)    # the newest save is selected
+        s.click(43 + o, SETUP_READY)
     elif who == 'a':
-        s.click(16, MP_CREATE)
-        s.click(33, SETUP_READY)
+        s.click(16 + o, MP_CREATE)
+        s.click(33 + o, SETUP_READY)
     else:
         # the LAN connection: its games appear by themselves. A folder that last used it
         # (the Windows farm's) has it selected already; a new one has "Internet", whose
         # Show Games asks for an address.
         r = 10 if restore else 0      # A's Restore takes a list and a load first
-        s.click(22 + r, MP_LAN)
-        s.click(29 + r, MP_ROW0)
-        s.click(34 + r, MP_ROW0)   # again: Clone Campaigns' list drops the selection when it refreshes
-        s.click(35 + r, MP_JOIN)
-        s.click(45 + r, SETUP_READY)
+        s.click(22 + r + o, MP_LAN)
+        s.click(29 + r + o, MP_ROW0)
+        s.click(34 + r + o, MP_ROW0)   # again: Clone Campaigns' list drops the selection when it refreshes
+        s.click(35 + r + o, MP_JOIN)
+        s.click(45 + r + o, SETUP_READY)
     s.at(start - 3 - B_DELAY * k, 'shot=%s' % os.path.join(out, 'setup.bmp'))
     if who == 'a':
         s.click(start, SETUP_START)
@@ -678,10 +682,7 @@ def main():
     kind = 'cc' if args.cc else 'base'
     args.lay = screens.layout(kind)
     P = runner.paths()
-    args.runs = per_player(args.run or [('all', P.host(kind))], args.players, lambda old, new: new)
-    if len(args.runs) < args.players:
-        ap.error('--run: no host for %s (give --run EXE for every player)'
-                 % ', '.join(w for w in WHO[:args.players] if w not in args.runs))
+    args.runs = per_player([('all', P.host(kind))] + args.run, args.players, lambda old, new: new)
     if any(w in args.wsl for w, _ in args.run if w != 'all'):
         ap.error('--run: a WSL player runs WSL_CHECKOUT\'s build-linux/')
     args.host_args = per_player([(w, shlex.split(v)) for w, v in args.host_arg] + [('all', [])],
