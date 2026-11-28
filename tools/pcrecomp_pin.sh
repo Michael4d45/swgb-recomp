@@ -3,7 +3,8 @@
 #
 # The native host needs win32hle changes that are not in pcrecomp's upstream
 # main yet: 8-bit GDI text, the EDIT paint, hle_lookup_manual_hook,
-# DestroyWindow's focus, GetClipper's error, the EDIT's keys. They are
+# DestroyWindow's focus, GetClipper's error, the EDIT's keys, a gain on the
+# DirectSound buffers alone (the sound slider). They are
 # on the branch below of the fork, and the build is pinned to one commit of
 # it. A checkout whose HEAD contains that commit is fine (a newer one too).
 # When the changes are upstream, the pin moves to upstream main.
@@ -16,7 +17,7 @@
 
 PCRECOMP_PIN_URL=https://github.com/Michael4d45/pcrecomp.git
 PCRECOMP_PIN_BRANCH=swgb-linux-palette
-PCRECOMP_PIN=eb608a2defc492813d2e120a60faa7089215bb7f
+PCRECOMP_PIN=e70a0abbdfd6a8144a458cd0ff0fea6642dea216
 
 # 0 when $1 is a git checkout whose HEAD has the pinned commit in its history.
 pcrecomp_pin_ok() {

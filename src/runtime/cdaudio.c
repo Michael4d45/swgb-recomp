@@ -22,7 +22,9 @@
  *              and when none is outstanding it plays the next track, or the
  *              range again.
  *   volume     its music slider (0-100) -> -100*v -> the CD line's volume
- *              control, linearly over the control's range.
+ *              control, linearly over the control's range; the sound
+ *              slider the same way to the wave-out line (0x00542DD0). Both
+ *              lines are ours (the mixer, below).
  *   pause      on WM_ACTIVATEAPP: MCI_PAUSE, and MCI_PLAY with no flags to
  *              go on (to the disc's end, no notify).
  *   save       MCI_STATUS MCI_STATUS_POSITION, kept with the game.
@@ -42,6 +44,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #endif
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,6 +67,10 @@
 #endif
 
 #include "cdaudio.h"
+#if defined(_WIN32) && !defined(CDAUDIO_NO_SHIMS)
+#include "recaudio.h"
+#define REC 1                    /* the music in --record's mp4: recaudio's stream tap */
+#endif
 
 /* stb_vorbis, the one file of it (third_party/stb_vorbis, public domain or MIT). */
 #if defined(_MSC_VER)
@@ -157,7 +164,7 @@ static char g_dir[1024];         /* --music DIR */
 static int g_off, g_native;      /* --music off / native */
 static int g_open;               /* MCI_OPEN'd (and how many times: shareable) */
 static uint32_t g_format = FMT_MSF;
-static float g_gain = 1.0f;
+static float g_gain = 1.0f;      /* the music's: the CD line's volume, as a gain */
 static uint32_t g_t0;            /* the first MCI_OPEN: the log's clock */
 
 /* What plays, under g_lock. The player thread plays g_pos..g_end while
@@ -170,18 +177,21 @@ static CRITICAL_SECTION g_lock;
 static int g_lock_ok;
 static HANDLE g_wake, g_thread;
 static volatile uint32_t g_gen;
-static volatile int g_quit;
 static uint32_t g_mode = MODE_STOP;
 static int64_t g_pos, g_end;
 static uint32_t g_notify_hwnd;   /* a play with MCI_NOTIFY outstanding: its callback */
 
-int cdaudio_test_instant;
-void (*cdaudio_pcm_hook)(const int16_t* pcm, int frames);
+int (*cdaudio_test_sink)(const int16_t* pcm, int frames);
 void (*cdaudio_notify_hook)(uint32_t hwnd, uint32_t code, uint32_t dev);
+#if defined(CDAUDIO_NO_SHIMS)
+void (*cdaudio_effects_volume)(float gain);
+#elif defined(SWGB_WIN32HLE)
+void (*cdaudio_effects_volume)(float gain) = hle_dsound_set_buffer_gain;
+#else
+void (*cdaudio_effects_volume)(float gain) = recaudio_set_effects_gain;
+#endif
 
 void cdaudio_set_dir(const char* dir) { snprintf(g_dir, sizeof g_dir, "%s", dir ? dir : ""); }
-void cdaudio_set_gain(float gain) { g_gain = gain < 0 ? 0 : gain > 1 ? 1 : gain; }
-float cdaudio_gain(void) { return g_gain; }
 
 int cdaudio_arg(int argc, char** argv, int i) {
     if (strcmp(argv[i], "--music") || i + 1 >= argc) return 0;
@@ -333,11 +343,17 @@ static int from_format(uint32_t v, int64_t* pos) {   /* 0: out of range */
     return 1;
 }
 
-/* ---- the output: waveOut, win32hle's stream, a clock, or as fast as it comes ----
+/* ---- the output: waveOut, win32hle's stream, a clock, or the test's sink ----
  * All of it 44.1 kHz stereo s16. played() is how much of what was written
  * has been heard. */
+typedef enum {
+    OUT_CLOCK,                   /* no audio device: the tracks keep time on GetTickCount */
+    OUT_WAVEOUT,                 /* Windows */
+    OUT_STREAM,                  /* win32hle's audio stream */
+    OUT_SINK                     /* cdaudio_test_sink: heard as soon as it takes it */
+} out_kind;
 static int64_t g_written, g_clock0;
-static int g_out_kind;           /* 0: clock, 1: waveOut, 2: win32hle stream, 3: instant */
+static out_kind g_out = OUT_CLOCK;
 #ifdef _WIN32
 #define NBUF 8
 #define BUF_FRAMES 2205          /* 50 ms */
@@ -345,6 +361,9 @@ static HWAVEOUT g_wo;
 static WAVEHDR g_hdr[NBUF];
 static int16_t g_pcm[NBUF][BUF_FRAMES * 2];
 static HANDLE g_wo_event;
+#ifdef REC
+static int g_rec = -1;
+#endif
 #elif !defined(CDAUDIO_NO_SHIMS)
 static int g_stream = -1;
 #endif
@@ -352,7 +371,10 @@ static int g_stream = -1;
 static uint32_t now_ms(void) { return GetTickCount(); }
 
 static void out_open(void) {
-    if (cdaudio_test_instant) { g_out_kind = 3; return; }
+    if (cdaudio_test_sink) { g_out = OUT_SINK; return; }
+#ifdef REC
+    g_rec = recaudio_stream_open(RATE, 2);       /* -1 without --record */
+#endif
 #ifdef _WIN32
     WAVEFORMATEX wf = { WAVE_FORMAT_PCM, 2, RATE, RATE * 4, 4, 16, 0 };
     g_wo_event = CreateEventA(NULL, FALSE, FALSE, NULL);
@@ -363,34 +385,34 @@ static void out_open(void) {
             waveOutPrepareHeader(g_wo, &g_hdr[i], sizeof g_hdr[i]);
             g_hdr[i].dwFlags |= WHDR_DONE;
         }
-        g_out_kind = 1;
+        g_out = OUT_WAVEOUT;
         printf("[cdaudio] output: waveOut, 44100 Hz stereo\n");
         return;
     }
     g_wo = NULL;
 #elif !defined(CDAUDIO_NO_SHIMS)
     if ((g_stream = hle_audio_stream_open(RATE, 2)) >= 0) {
-        g_out_kind = 2;
+        g_out = OUT_STREAM;
         printf("[cdaudio] output: win32hle's audio stream, 44100 Hz stereo\n");
         return;
     }
 #endif
-    g_out_kind = 0;
+    g_out = OUT_CLOCK;
     printf("[cdaudio] no audio device: the tracks keep time on the clock\n");
 }
 
 static int64_t played(void) {
-    switch (g_out_kind) {
+    switch (g_out) {
 #ifdef _WIN32
-    case 1: {
+    case OUT_WAVEOUT: {
         int64_t q = 0;
         for (int i = 0; i < NBUF; i++) if (!(g_hdr[i].dwFlags & WHDR_DONE)) q += g_hdr[i].dwBufferLength / 4;
         return g_written - q;
     }
 #elif !defined(CDAUDIO_NO_SHIMS)
-    case 2: return g_written - hle_audio_stream_queued(g_stream);
+    case OUT_STREAM: return g_written - hle_audio_stream_queued(g_stream);
 #endif
-    case 3: return g_written;
+    case OUT_SINK: return g_written;
     default: {
         int64_t c = (int64_t)(uint32_t)(now_ms() - (uint32_t)g_clock0) * RATE / 1000;
         return c < g_written ? c : g_written;
@@ -400,9 +422,13 @@ static int64_t played(void) {
 
 static void out_reset(void) {                /* drop what is queued */
 #ifdef _WIN32
-    if (g_out_kind == 1) waveOutReset(g_wo);
+    if (g_out == OUT_WAVEOUT) waveOutReset(g_wo);
 #elif !defined(CDAUDIO_NO_SHIMS)
-    if (g_out_kind == 2) { hle_audio_stream_close(g_stream); g_stream = hle_audio_stream_open(RATE, 2); if (g_stream < 0) g_out_kind = 0; }
+    if (g_out == OUT_STREAM) { hle_audio_stream_close(g_stream); g_stream = hle_audio_stream_open(RATE, 2); if (g_stream < 0) g_out = OUT_CLOCK; }
+#endif
+#ifdef REC
+    recaudio_stream_close(g_rec);                /* what waveOutReset drops, the recording drops */
+    g_rec = recaudio_stream_open(RATE, 2);
 #endif
     g_written = 0;
     g_clock0 = now_ms();
@@ -411,17 +437,20 @@ static void out_reset(void) {                /* drop what is queued */
 /* Write frames, waiting for room; 0 when the job changed meanwhile. */
 static int out_write(const int16_t* pcm, int frames, uint32_t gen) {
     while (frames > 0) {
-        if (g_gen != gen || g_quit) return 0;
+        if (g_gen != gen) return 0;
         if (g_written - played() >= QUEUE) {
 #ifdef _WIN32
-            if (g_out_kind == 1) { WaitForSingleObject(g_wo_event, 20); continue; }
+            if (g_out == OUT_WAVEOUT) { WaitForSingleObject(g_wo_event, 20); continue; }
 #endif
             Sleep(10);
             continue;
         }
         int n = frames;
+#ifdef REC
+        int64_t ahead = g_written - played();     /* queued before this chunk */
+#endif
 #ifdef _WIN32
-        if (g_out_kind == 1) {
+        if (g_out == OUT_WAVEOUT) {
             int i = 0;
             while (i < NBUF && !(g_hdr[i].dwFlags & WHDR_DONE)) i++;
             if (i == NBUF) { WaitForSingleObject(g_wo_event, 20); continue; }
@@ -432,9 +461,12 @@ static int out_write(const int16_t* pcm, int frames, uint32_t gen) {
             waveOutWrite(g_wo, &g_hdr[i], sizeof g_hdr[i]);
         }
 #elif !defined(CDAUDIO_NO_SHIMS)
-        if (g_out_kind == 2) hle_audio_stream_push(g_stream, pcm, n);
+        if (g_out == OUT_STREAM) hle_audio_stream_push(g_stream, pcm, n);
 #endif
-        if (g_out_kind == 3 && cdaudio_pcm_hook) cdaudio_pcm_hook(pcm, n);
+        if (g_out == OUT_SINK && (n = cdaudio_test_sink(pcm, n)) <= 0) { Sleep(10); continue; }
+#ifdef REC
+        recaudio_stream_write(g_rec, pcm, n, ahead * 1000.0 / RATE);
+#endif
         g_written += n;
         pcm += 2 * n;
         frames -= n;
@@ -496,8 +528,6 @@ static int decode(int t, int64_t pos, int16_t* out, int n) {
 
 static void play_job(uint32_t gen, int64_t pos, int64_t end) {
     static int16_t buf[CHUNK * 2];
-    if (cdaudio_test_instant) g_out_kind = 3;            /* the unit test switches between the two */
-    else if (g_out_kind == 3) g_out_kind = 0;
     out_reset();
     int64_t base = pos;
     int last = 0;
@@ -528,7 +558,7 @@ static void play_job(uint32_t gen, int64_t pos, int64_t end) {
     }
     /* Played to the end: wait until it has been heard, then notify. */
     while (played() < g_written) {
-        if (g_gen != gen || g_quit) { out_reset(); return; }
+        if (g_gen != gen) { out_reset(); return; }
         set_pos(base + played(), gen);
         Sleep(10);
     }
@@ -545,13 +575,14 @@ static void play_job(uint32_t gen, int64_t pos, int64_t end) {
     if (h) post(h, NOTIFY_SUCCESSFUL);
 }
 
+/* For the process's life: the game closes and opens the CD at every game's
+ * start, and its exit ends the thread and closes the device. */
 static DWORD WINAPI player(LPVOID unused) {
     (void)unused;
     out_open();
     for (;;) {
         WaitForSingleObject(g_wake, 100);
         lock();
-        if (g_quit) { unlock(); break; }
         uint32_t gen = g_gen;
         int go = g_mode == MODE_PLAY;
         int64_t pos = g_pos, end = g_end;
@@ -559,18 +590,6 @@ static DWORD WINAPI player(LPVOID unused) {
         if (go) play_job(gen, pos, end);
         else if (g_written) out_reset();
     }
-    out_reset();
-#ifdef _WIN32
-    if (g_out_kind == 1) {
-        for (int i = 0; i < NBUF; i++) waveOutUnprepareHeader(g_wo, &g_hdr[i], sizeof g_hdr[i]);
-        waveOutClose(g_wo);
-        g_wo = NULL;
-    }
-#elif !defined(CDAUDIO_NO_SHIMS)
-    if (g_out_kind == 2) hle_audio_stream_close(g_stream), g_stream = -1;
-#endif
-    if (g_dec) stb_vorbis_close(g_dec), g_dec = NULL, g_dec_track = 0;
-    return 0;
 }
 
 /* A new job (play) or none (stop, pause, seek): the player drops the old one. */
@@ -604,7 +623,6 @@ static uint32_t c_open(uint32_t flags, uint32_t* p, const char* type_name) {
         g_mode = MODE_STOP;
         g_pos = 0;
         if (!g_wake) g_wake = CreateEventA(NULL, FALSE, FALSE, NULL);
-        g_quit = 0;
         if (!g_thread) g_thread = CreateThread(NULL, 0, player, NULL, 0, NULL);
     }
     g_open++;
@@ -744,35 +762,56 @@ uint32_t cdaudio_command(uint32_t dev, uint32_t msg, uint32_t flags, uint32_t* p
     return rc;
 }
 
-void cdaudio_shutdown(void) {
-    if (!g_thread) return;
-    lock();
-    g_mode = MODE_STOP;
-    g_notify_hwnd = 0;
-    g_quit = 1;
-    kick();
-    unlock();
-    WaitForSingleObject(g_thread, 2000);
-    CloseHandle(g_thread);
-    g_thread = NULL;
-    g_open = 0;
-}
-
-/* ---- the mixer's CD line ----
- * The music player finds the first mixer device with a
- * MIXERLINE_COMPONENTTYPE_SRC_COMPACTDISC line, that line's volume control by
- * type, and sets the control's value: that is the music's gain here. Only
- * that line is ours. The game's other mixer user, the sound effects' volume
- * on the wave-out line (0x00542E00), still gets WINMM's mixer on Windows,
- * where Vista and later give a program's wave line its own session volume;
- * the system's CD line, where a driver still has one, is never touched. On
- * win32hle there is no other mixer: one device, with this line alone. */
+/* ---- the mixer: the CD line and the wave-out line ----
+ * The game has two mixer users, each looking for its line by component type
+ * on the mixer devices in turn, then that line's volume control by type:
+ * the music player the MIXERLINE_COMPONENTTYPE_SRC_COMPACTDISC line, the
+ * sound effects (0x00542E80) the MIXERLINE_COMPONENTTYPE_SRC_WAVEOUT line.
+ * Both lines are ours, on every device the game asks: the CD line's value
+ * is the music's gain, the wave-out line's the sound effects' (the hosts'
+ * cdaudio_effects_volume). On Windows the wave-out line was WINMM's, which
+ * on Vista and later is the process's audio session volume: the music's
+ * waveOut too, so the sound slider turned the music down. Nothing here
+ * reaches the system's mixer or the session's volume. On win32hle there is
+ * no other mixer: one device, with these two lines.
+ *
+ * The game writes its sliders (0-100, "Off" at the bottom) linearly into
+ * the control's range, and its bottom step is 1% (-100*99, then +10000).
+ * As a linear gain, Vista's session volume, that is -40 dB: faint, not off.
+ * Here a value is cubed: 50% is -18 dB, 10% -60 dB, and 1% -120 dB, below
+ * 16-bit sound's last bit (silence). docs/music.md "The sliders". */
 #define MX_HANDLE 0x0000CDA0u    /* a device of ours (no WINMM mixer at all, or win32hle) */
+#define VOLUME 0x50030001u       /* MIXERCONTROL_CONTROLTYPE_VOLUME */
+#define MX_NOT_OURS 0xFFFFFFFFu  /* forward it (Windows), or answer as win32hle does */
 #define LINE_CD 0xCDA0CDA0u
 #define CTRL_CD 0xCDA00101u
 #define SRC_CD 0x1005u
-#define VOLUME 0x50030001u       /* MIXERCONTROL_CONTROLTYPE_VOLUME */
-#define MX_NOT_OURS 0xFFFFFFFFu  /* forward it (Windows), or answer as win32hle does */
+#define LINE_WAVE 0xCDA0A0A0u
+#define CTRL_WAVE 0xCDA00102u
+#define SRC_WAVE 0x1008u
+
+enum { MX_MUSIC, MX_EFFECTS };
+static const struct {
+    uint32_t src, line, ctrl, target;   /* target: MIXERLINE_TARGETTYPE_AUX, _WAVEOUT */
+    const char *name, *ctrl_name, *target_name, *what;
+} g_line[2] = {
+    { SRC_CD, LINE_CD, CTRL_CD, 5, "CD Audio", "CD Audio Volume", "Music (TrackNN.ogg)", "music" },
+    { SRC_WAVE, LINE_WAVE, CTRL_WAVE, 1, "Wave", "Wave Volume", "Sound effects", "effects" },
+};
+static uint32_t g_level[2] = { 0xFFFF, 0xFFFF };   /* the controls' values, as set */
+static int g_level_set[2];
+
+/* A control's value (0..0xFFFF) as a gain. */
+static float level_gain(uint32_t v) {
+    float x = v / 65535.0f;
+    return x * x * x;
+}
+
+static int line_by(uint32_t* l, uint32_t how) {   /* MIXERLINEA by component type or line id: MX_ or -1 */
+    for (int i = 0; i < 2; i++)
+        if (((how & 0xF) == 3 && l[6] == g_line[i].src) || ((how & 0xF) == 2 && l[3] == g_line[i].line)) return i;
+    return -1;
+}
 
 static void put_str(uint32_t* at, const char* s, int n) {
     size_t k = strlen(s) < (size_t)n ? strlen(s) : (size_t)n - 1;
@@ -781,59 +820,71 @@ static void put_str(uint32_t* at, const char* s, int n) {
 }
 
 static uint32_t mixer_line(uint32_t* l, uint32_t how) {   /* MIXERLINEA, 168 bytes */
-    int ours = ((how & 0xF) == 3 && l[6] == SRC_CD) || ((how & 0xF) == 2 && l[3] == LINE_CD);
-    if (!ours) return MX_NOT_OURS;
+    int i = line_by(l, how);
+    if (i < 0) return MX_NOT_OURS;
     memset(l + 1, 0, 168 - 4);
-    l[2] = 0x1000;               /* dwSource: one no real device numbers */
-    l[3] = LINE_CD;              /* dwLineID */
+    l[2] = 0x1000 + (uint32_t)i; /* dwSource: ones no real device numbers */
+    l[3] = g_line[i].line;       /* dwLineID */
     l[4] = 0x1 | 0x80000000u;    /* MIXERLINE_LINEF_ACTIVE | _SOURCE */
-    l[6] = SRC_CD;
+    l[6] = g_line[i].src;
     l[7] = 2;                    /* cChannels */
     l[9] = 1;                    /* cControls */
-    put_str(l + 10, "CD Audio", 16);
-    put_str(l + 14, "CD Audio", 64);
-    l[30] = 5;                   /* Target.dwType: MIXERLINE_TARGETTYPE_AUX */
-    put_str(l + 34, "Music (TrackNN.ogg)", 32);
+    put_str(l + 10, g_line[i].name, 16);
+    put_str(l + 14, g_line[i].name, 64);
+    l[30] = g_line[i].target;    /* Target.dwType */
+    put_str(l + 34, g_line[i].target_name, 32);
     return 0;
 }
 
 static uint32_t mixer_controls(uint32_t* c, uint32_t how) {   /* MIXERLINECONTROLSA */
     uint32_t q = how & 0xF;
-    if (q == 1 ? c[2] != CTRL_CD : c[1] != LINE_CD) return MX_NOT_OURS;   /* by id, or the line's */
-    if (q == 2 && c[2] != VOLUME) return 1025;                              /* MIXERR_INVALCONTROL */
-    if (c[4] < 148 || !c[5]) return 11;                                     /* MMSYSERR_INVALPARAM */
+    int i = 0;
+    while (i < 2 && (q == 1 ? c[2] != g_line[i].ctrl : c[1] != g_line[i].line)) i++;   /* by id, or the line's */
+    if (i == 2) return MX_NOT_OURS;
+    if (q == 2 && c[2] != VOLUME) return 1025;                                    /* MIXERR_INVALCONTROL */
+    if (c[4] < 148 || !c[5]) return 11;                                           /* MMSYSERR_INVALPARAM */
     uint32_t* m = CD_PTR(c[5]);
     memset(m, 0, 148);
     m[0] = 148;
-    m[1] = CTRL_CD;
+    m[1] = g_line[i].ctrl;
     m[2] = VOLUME;
     m[3] = 0x1;                  /* MIXERCONTROL_CONTROLF_UNIFORM */
     put_str(m + 5, "Volume", 16);
-    put_str(m + 9, "CD Audio Volume", 64);
+    put_str(m + 9, g_line[i].ctrl_name, 64);
     m[25] = 0;                   /* Bounds.dwMinimum */
     m[26] = 0xFFFF;              /* Bounds.dwMaximum */
     m[31] = 0xFFFF;              /* Metrics.cSteps */
-    c[1] = LINE_CD;
+    c[1] = g_line[i].line;
     c[3] = 1;
     return 0;
 }
 
 static uint32_t mixer_details(uint32_t* d, int set) {   /* MIXERCONTROLDETAILS, one unsigned per channel */
-    if (d[1] != CTRL_CD) return MX_NOT_OURS;
+    int i = d[1] == CTRL_CD ? MX_MUSIC : d[1] == CTRL_WAVE ? MX_EFFECTS : -1;
+    if (i < 0) return MX_NOT_OURS;
     if (d[4] < 4 || !d[5]) return 11;
     uint32_t* v = CD_PTR(d[5]);
     uint32_t n = d[2] ? d[2] : 1;
     if (n > 2) n = 2;
     if (!set) {
-        for (uint32_t i = 0; i < n; i++) v[i] = (uint32_t)(g_gain * 0xFFFF + 0.5f);
+        for (uint32_t k = 0; k < n; k++) v[k] = g_level[i];
         return 0;
     }
     uint32_t val = v[0];
     if (n == 2 && v[1] > val) val = v[1];
     if (val > 0xFFFF) val = 0xFFFF;
-    float g = val / 65535.0f;
-    if (g != g_gain) printf("[cdaudio] volume %d%%\n", (int)(g * 100 + 0.5f));
-    cdaudio_set_gain(g);
+    float g = level_gain(val);
+    if (!g_level_set[i] || val != g_level[i]) {
+        int pct = (int)(val * 100 / 65535.0 + 0.5);
+        double db = g > 0 ? 20 * log10(g) : -120.0;
+        if (db > -0.05) db = 0.0;
+        if (g > 0) printf("[cdaudio] %s volume %d%% (%.1f dB)\n", g_line[i].what, pct, db);
+        else printf("[cdaudio] %s volume %d%% (off)\n", g_line[i].what, pct);
+    }
+    g_level_set[i] = 1;
+    g_level[i] = val;
+    if (i == MX_MUSIC) g_gain = g;
+    else if (cdaudio_effects_volume) cdaudio_effects_volume(g);
     return 0;
 }
 

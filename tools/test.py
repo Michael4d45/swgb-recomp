@@ -489,10 +489,9 @@ UNITS = {
     'keys': (['tests/unit/keys_test.c', RT + 'keyscript.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib'], [],
              'the --keys parser: every step kind, @FILE, drags, modifiers, live steps'),
     'cdaudio': (['tests/unit/cdaudio_test.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['winmm.lib'], [],
-                'the CD music: Ogg decode and seek, the disc tracks and positions, play/notify/stop, the CD line volume'),
+                'the CD music: Ogg decode and seek, disc tracks/positions, play/notify/stop, CD & wave-out mixer lines, cubic taper, effects isolation'),
     'recaudio': (['tests/unit/recaudio_test.c', RT + 'recaudio.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib', 'ole32.lib'], [],
-                 '--record\'s sound: the DirectSound proxy over a fake one (a one-shot\'s time and pitch, volume, pan, '
-                 'a looping buffer rewritten), the stream tap (its time, resampling, a pause), the length cut to the video\'s'),
+                 '--record\'s sound and sound-slider proxy over a fake DirectSound on a simulated clock: one-shot, volume/pan, rewrite, stream tap, drift, effects gain, WAV length'),
 }
 
 
@@ -1120,7 +1119,7 @@ def music_fn(kind):
             r.fail('the game did not get 50 tracks from MCI_STATUS')
         if not any(l.startswith('[cdaudio] output: ') for l in lines):
             r.fail('no output was opened')
-        if not any(l.startswith('[cdaudio] volume ') for l in lines):
+        if not any(l.startswith('[cdaudio] music volume ') for l in lines):
             r.fail('the game never set the CD line\'s volume')
         plays = [(i, float(m.group(1))) for i, l in enumerate(lines)
                  for m in [re.match(r'\[cdaudio\] play from track 2 0:00 to track 50 0:00, notify at ([\d.]+) s', l)] if m]
@@ -1278,6 +1277,118 @@ def record_fn(kind):
 
 for _k in GAMES:
     CHECKS.append(Check('record/' + _k, 'functional', record_fn(_k), _k, 3.2))
+
+
+OPTIONS_MUSIC_UP, OPTIONS_MUSIC_DOWN = (451, 254), (451, 334)   # the main menu's Options: the sliders' arrows,
+OPTIONS_SOUND_UP, OPTIONS_SOUND_DOWN = (529, 254), (529, 334)   # 10% a click
+
+
+def stereo_windows(mp4, a, b):
+    """The sound of a file over [a, b) seconds: (left rms, right rms, left's zero crossings a second)."""
+    import array
+    import math
+    raw = subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-ss', str(a), '-t', str(b - a), '-i', mp4, '-map', '0:a:0',
+                          '-ac', '2', '-ar', '44100', '-f', 's16le', '-'], capture_output=True).stdout
+    s = array.array('h', raw[:len(raw) // 4 * 4])
+    left, right = s[0::2], s[1::2]
+    if not left:
+        return 0.0, 0.0, 0.0
+    rl = math.sqrt(sum(x * x for x in left) / len(left)) / 32768
+    rr = math.sqrt(sum(x * x for x in right) / len(right)) / 32768
+    zc = sum(1 for i in range(1, len(left)) if (left[i - 1] < 0) != (left[i] < 0))
+    return rl, rr, zc / 2 / (len(left) / 44100)
+
+
+def sliders_fn(kind):
+    def fn(ctx, r):
+        import math
+        if not WIN:
+            return r.skip('--record has no sound on the win32hle host yet (docs/recording.md, "Not done")')
+        if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+            return r.skip('no ffmpeg or ffprobe on PATH: --record needs them')
+        g = GAMES[kind]
+        disc = os.path.join(r.dir, 'disc')
+        os.makedirs(disc, exist_ok=True)
+        tone = os.path.join(ROOT, 'tests', 'data', 'tone.ogg')    # 441 Hz left, 882 right, at 1/16 of full scale
+        for t in range(2, 51):
+            shutil.copyfile(tone, os.path.join(disc, 'Track%02d.ogg' % t))
+        # Options: the sound slider to the top (17-22 s: the menu's MP3 at full), to the
+        # bottom (26.5-33 s: silence), the music slider to the bottom then the top; then a
+        # skirmish, its music the fixture's tone while the sound slider stays at the bottom
+        s = [(12, 'move:%d:%d' % MAIN_OPTIONS), (12.5, 'click:%d:%d' % MAIN_OPTIONS)]
+        s += [(13 + 0.3 * k, 'click:%d:%d' % OPTIONS_SOUND_UP) for k in range(12)]
+        s += [(22 + 0.3 * k, 'click:%d:%d' % OPTIONS_SOUND_DOWN) for k in range(12)]
+        s += [(26 + 0.3 * k, 'click:%d:%d' % OPTIONS_MUSIC_DOWN) for k in range(12)]
+        s += [(30 + 0.3 * k, 'click:%d:%d' % OPTIONS_MUSIC_UP) for k in range(12)]
+        s += [(36, 'move:%d:%d' % MAIN_SINGLE), (37, 'click:%d:%d' % MAIN_SINGLE),
+              (51, 'move:%d:%d' % g['sp_standard']), (52, 'click:%d:%d' % g['sp_standard']),
+              (71, 'move:%d:%d' % SETUP_START), (72, 'click:%d:%d' % SETUP_START),
+              (140, 'shot=%s' % os.path.join(r.dir, 'map.bmp'))]
+        mp4 = os.path.join(r.dir, 'record.mp4')
+        saved_vols = None
+        hive_sub = None
+        if WIN:
+            import winreg
+            hive_sub = (r'Software\swgb-recomp\hives\%s\Software\LucasArts Entertainment Company LLC'
+                        r'\Star Wars Galactic Battlegrounds\1.0') % re.sub(r'[\\/:]', '_', os.path.abspath(r.game))
+            saved_vols = {}
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, hive_sub) as k:
+                    for name, default in (('Sound Volume', 0), ('Music Volume', 5000)):
+                        try:
+                            saved_vols[name] = winreg.QueryValueEx(k, name)[0]
+                        except OSError:
+                            saved_vols[name] = default
+            except OSError:
+                saved_vols = {'Sound Volume': 0, 'Music Volume': 5000}
+        try:
+            rc, text = run_host(ctx, r, kind, s, 145, extra=('--music', disc, '--record', mp4))
+        finally:
+            if WIN and saved_vols is not None and hive_sub:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, hive_sub, 0, winreg.KEY_SET_VALUE) as k:
+                        for name, val in saved_vols.items():
+                            winreg.SetValueEx(k, name, 0, winreg.REG_DWORD, int(val))
+                except OSError:
+                    pass
+        expect_exit(r, rc)
+        events(r, text)
+        r.image(png_of(os.path.join(r.dir, 'map.bmp')), 'the skirmish')
+        lines = [l.strip() for l in text.splitlines() if l.startswith('[cdaudio]')]
+        for want in ('[cdaudio] effects volume 100% (0.0 dB)', '[cdaudio] effects volume 1% (-120.0 dB)',
+                     '[cdaudio] music volume 1% (-120.0 dB)', '[cdaudio] music volume 100% (0.0 dB)'):
+            if want not in lines:
+                return r.fail('no "%s": the game did not set its line there' % want)
+        r.log('the sliders: effects 100%, then 1% (-120 dB); music 1% (-120 dB), then 100% (0 dB)')
+        if not os.path.exists(mp4):
+            return r.fail('no %s' % os.path.basename(mp4))
+        full, _, _ = stereo_windows(mp4, 17, 22)
+        bottom, bottom_r, _ = stereo_windows(mp4, 26.5, 33)
+        r.metrics.update(menu_full=round(full, 4), menu_bottom=round(max(bottom, bottom_r), 6))
+        r.log('the menu\'s music (DirectSound): rms %.4f with the sound slider at the top, %.6f at its bottom' % (full, max(bottom, bottom_r)))
+        if full < 0.005:
+            r.fail('the menu\'s music is not heard with the sound slider at the top (rms %.4f)' % full)
+        if max(bottom, bottom_r) > 0.0005:
+            r.fail('the sound slider\'s bottom is not silent (rms %.6f)' % max(bottom, bottom_r))
+        played = [float(m.group(1)) for m in re.finditer(r'\[cdaudio\] play from track 2 0:00 to track 50 0:00, notify at ([\d.]+) s', text)]
+        if not played:
+            return r.fail('the game never played the CD')
+        # the log's clock starts at the first MCI_OPEN, a few seconds into the recording: the
+        # window is well inside the play, which lasts 96 s
+        rl, rr, hz = stereo_windows(mp4, 125, 135)
+        want = 1448 / 32768                                          # the fixture's left rms
+        r.metrics.update(music_rms=round(rl, 4), music_hz=round(hz))
+        r.log('in the skirmish, the sound slider at its bottom: left rms %.4f (the track %.4f), %.0f Hz, right %.4f' % (rl, want, hz, rr))
+        if abs(20 * math.log10(max(rl, 1e-9) / want)) > 1.5:
+            r.fail('the music is %.1f dB from the track\'s own level: the sound slider moved it' % (20 * math.log10(max(rl, 1e-9) / want)))
+        if abs(hz - 441) > 15:
+            r.fail('the left channel is at %.0f Hz, not the track\'s 441: something else is heard' % hz)
+    fn.__doc__ = ('the sliders: the sound slider\'s bottom silences the menu\'s music, the music slider\'s top with the '
+                  'sound slider at its bottom plays the CD at its own level (%s)' % GAMES[kind]['title'])
+    return fn
+
+
+CHECKS.append(Check('audio/base', 'functional', sliders_fn('base'), 'base', 3.0))
 
 
 def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):
