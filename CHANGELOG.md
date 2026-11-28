@@ -53,8 +53,20 @@ versions follow [SemVer](https://semver.org/).
 ### Changed
 - The README's status brought up to date (the lift, campaigns, Linux,
   multiplayer, tests) and its documentation list completed.
+- `tests/unit/recaudio_test.c` and `tests/unit/cdaudio_test.c` moved off
+  wall-clock waits onto an injectable clock (`recaudio_test_clock_ms`) and
+  output sink (`cdaudio_test_sink`), split one function per case; `cdaudio.c`'s
+  bare `g_out_kind` test mode and unused `cdaudio_shutdown` removed; added
+  the `audio/base` functional check (`tools/test.py`).
 
 ### Fixed
+- Music and sound volume sliders ([docs/music.md](docs/music.md)): `cdaudio.c`
+  now owns both the CD and wave-out mixer lines with a cubic gain taper so
+  the bottom step (1%) is digital silence (-120 dB) and the sound slider scales
+  only DirectSound secondary buffers (`recaudio.c`'s always-on proxy on
+  Windows, `hle_dsound_set_buffer_gain` in win32hle on Linux via pcrecomp pin
+  `e70a0ab`), leaving CD music, films, and the Windows volume untouched;
+  in-game CD music is also tapped into `--record`.
 - `test.py --retry`: a retry ran in the first try's folder and overwrote its
   `run.log` and shots (and could pass on a shot the first try left). Each
   retry now has a folder of its own, `<check>-retry1`, and the report lists

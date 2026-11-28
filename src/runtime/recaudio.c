@@ -1,16 +1,22 @@
 /*
- * recaudio: the sound in --record's mp4.
+ * recaudio: the game's DirectSound behind a proxy, for the sound slider and
+ * for the sound in --record's mp4.
  *
- * The game's sound is Windows' DirectSound, the films' is the host's own
- * waveOut (movie.c), and test runs mute the process's audio session, which
- * mutes a loopback capture of the process too. So nothing here listens to
- * what reaches the speakers: the mix is made again from what the game asks
- * for, on the recording's clock, whatever the speakers do.
+ * The sound slider: DirectSoundCreate (DSOUND.dll#1) always hands the game a
+ * proxy over the real IDirectSound, and every buffer it creates is a proxy
+ * over the real buffer. Every call still goes to the real one, but a
+ * secondary buffer's volume gets the sound effects' gain on it
+ * (recaudio_set_effects_gain: the wave-out line of cdaudio.c's mixer), and
+ * GetVolume answers what the game set. On Windows that line was WINMM's, the
+ * process's audio session volume, which turned the CD music down too.
  *
- * - DirectSound: with --record, DirectSoundCreate (DSOUND.dll#1) hands the
- *   game a proxy over the real IDirectSound, and every buffer it creates is a
- *   proxy over the real buffer. Every call still goes to the real one, so the
- *   game sounds and behaves as before. Beside it each buffer keeps a shadow:
+ * The recording: the game's sound is Windows' DirectSound, the films' is the
+ * host's own waveOut (movie.c), and test runs mute the process's audio
+ * session, which mutes a loopback capture of the process too. So nothing
+ * here listens to what reaches the speakers: the mix is made again from what
+ * the game asks for, on the recording's clock, whatever the speakers do.
+ *
+ * - DirectSound: with --record, beside each proxied buffer a shadow:
  *   a copy of its samples (taken at each Unlock), its format, volume, pan,
  *   frequency, and whether and where it plays. The mixer plays the shadows at
  *   their own rate and follows the real play cursors (a looping buffer the
@@ -20,8 +26,8 @@
  * - Everything else the host plays itself (the films, the CD music) comes in
  *   by the stream tap, recaudio_stream_write, with when it will be heard.
  *
- * The mixer is a thread of ours, every 10 ms: 44.1 kHz 16-bit stereo, up to
- * the recording clock's now, into a WAV beside the mp4. The clock is the one
+ * The mixer is a thread of ours, every 10 ms (recaudio_tick): 44.1 kHz 16-bit
+ * stereo, up to the recording clock's now, into a WAV beside the mp4. The clock is the one
  * softdd times the video's frames by (recaudio_clock_ms), so a sample and a
  * frame for the same moment are at the same place in the file, however long
  * it runs. At the end the sound is cut or padded to the video's exact length
@@ -49,11 +55,20 @@ static const GUID kIID_IDirectSoundBuffer = { 0x279AFA85, 0x4981, 0x11CE, { 0xA5
 
 static int g_on;
 static CRITICAL_SECTION g_cs;
+static int g_cs_ok;
 static double g_qpc_ms;           /* ms per QPC tick */
 static LARGE_INTEGER g_qpc0;
 
+/* Before any other thread can call in: DirectSoundCreate, recaudio_init. */
+static void cs_init(void) {
+    if (!g_cs_ok) InitializeCriticalSection(&g_cs), g_cs_ok = 1;
+}
+
+double (*recaudio_test_clock_ms)(void);
+
 double recaudio_clock_ms(void) {
     LARGE_INTEGER t;
+    if (recaudio_test_clock_ms) return recaudio_test_clock_ms();
     if (!g_qpc_ms) {
         LARGE_INTEGER f;
         QueryPerformanceFrequency(&f);
@@ -111,10 +126,20 @@ typedef struct PDS {
 static PBuf* g_buf[MAX_BUFS];
 static int   g_nbuf;
 static float g_master = 1.0f;     /* the primary buffer's volume */
+static float g_fx = 1.0f;         /* the sound effects' gain: the sound slider */
+
+/* A buffer's volume as the real one gets it: the game's, with the sound
+ * effects' gain on it (a secondary buffer's; the primary's is the game's). */
+static LONG real_volume(const PBuf* b) {
+    if (b->primary || g_fx >= 1.0f) return b->volume;
+    if (g_fx <= 0.0f) return DSBVOLUME_MIN;
+    LONG v = b->volume + (LONG)lrintf(2000.0f * log10f(g_fx));
+    return v < DSBVOLUME_MIN ? DSBVOLUME_MIN : v;
+}
 
 static float db_gain(LONG hundredths) { return hundredths <= -10000 ? 0.0f : powf(10.0f, (float)hundredths / 2000.0f); }
 static void gains(PBuf* b) {
-    float v = db_gain(b->volume), l = 1.0f, r = 1.0f;
+    float v = db_gain(real_volume(b)), l = 1.0f, r = 1.0f;
     if (b->pan < 0) r = db_gain(b->pan);
     if (b->pan > 0) l = db_gain(-b->pan);
     b->gl = v * l, b->gr = v * r;
@@ -127,8 +152,10 @@ static float sample(const PBuf* b, uint32_t f, int ch) {
 }
 
 static void list_add(PBuf* b) {
-    if (g_nbuf < MAX_BUFS) g_buf[g_nbuf++] = b;
-    else b->mixable = 0;
+    static int told;
+    if (g_nbuf < MAX_BUFS) { g_buf[g_nbuf++] = b; return; }
+    b->mixable = 0;
+    if (!told++) LOG("more than %d sound buffers: the newest are not recorded and keep the sound slider of their creation", MAX_BUFS);
 }
 static void list_remove(PBuf* b) {
     for (int i = 0; i < g_nbuf; i++)
@@ -159,7 +186,7 @@ static PBuf* wrap_buffer(IDirectSoundBuffer* real, Data* shared) {
         b->block = wf.nChannels * wf.wBitsPerSample / 8;
         b->rate0 = b->rate = (int)wf.nSamplesPerSec;
     }
-    if (!b->primary && b->block && b->bytes && b->rate0) {
+    if (g_on && !b->primary && b->block && b->bytes && b->rate0) {
         b->frames = b->bytes / (DWORD)b->block;
         if (shared) { b->data = shared; InterlockedIncrement(&shared->refs); }
         else if ((b->data = (Data*)calloc(1, sizeof *b->data)) != NULL) {
@@ -170,8 +197,9 @@ static PBuf* wrap_buffer(IDirectSoundBuffer* real, Data* shared) {
         if (!shared && b->data && b->bits == 8) memset(b->data->bytes, 0x80, b->bytes);
         b->mixable = b->data != NULL;
     }
-    gains(b);
     EnterCriticalSection(&g_cs);
+    gains(b);
+    if (!b->primary && g_fx < 1.0f) IDirectSoundBuffer_SetVolume(real, real_volume(b));   /* a new buffer is at 0 */
     list_add(b);
     g_buffers++;
     LeaveCriticalSection(&g_cs);
@@ -215,7 +243,11 @@ static ULONG STDMETHODCALLTYPE b_Release(IDirectSoundBuffer* This) {
 static HRESULT STDMETHODCALLTYPE b_GetCaps(IDirectSoundBuffer* This, LPDSBCAPS c) { return IDirectSoundBuffer_GetCaps(REAL, c); }
 static HRESULT STDMETHODCALLTYPE b_GetCurrentPosition(IDirectSoundBuffer* This, LPDWORD p, LPDWORD w) { return IDirectSoundBuffer_GetCurrentPosition(REAL, p, w); }
 static HRESULT STDMETHODCALLTYPE b_GetFormat(IDirectSoundBuffer* This, LPWAVEFORMATEX f, DWORD n, LPDWORD got) { return IDirectSoundBuffer_GetFormat(REAL, f, n, got); }
-static HRESULT STDMETHODCALLTYPE b_GetVolume(IDirectSoundBuffer* This, LPLONG v) { return IDirectSoundBuffer_GetVolume(REAL, v); }
+static HRESULT STDMETHODCALLTYPE b_GetVolume(IDirectSoundBuffer* This, LPLONG v) {
+    HRESULT hr = IDirectSoundBuffer_GetVolume(REAL, v);
+    if (SUCCEEDED(hr) && !B->primary) *v = B->volume;   /* the game's, without the sound slider's */
+    return hr;
+}
 static HRESULT STDMETHODCALLTYPE b_GetPan(IDirectSoundBuffer* This, LPLONG v) { return IDirectSoundBuffer_GetPan(REAL, v); }
 static HRESULT STDMETHODCALLTYPE b_GetFrequency(IDirectSoundBuffer* This, LPDWORD v) { return IDirectSoundBuffer_GetFrequency(REAL, v); }
 static HRESULT STDMETHODCALLTYPE b_GetStatus(IDirectSoundBuffer* This, LPDWORD s) { return IDirectSoundBuffer_GetStatus(REAL, s); }
@@ -282,12 +314,13 @@ static HRESULT STDMETHODCALLTYPE b_SetCurrentPosition(IDirectSoundBuffer* This, 
 }
 static HRESULT STDMETHODCALLTYPE b_SetVolume(IDirectSoundBuffer* This, LONG v) {
     EnterCriticalSection(&g_cs);
-    HRESULT hr = IDirectSoundBuffer_SetVolume(REAL, v);
+    LONG was = B->volume;
+    B->volume = v;
+    HRESULT hr = IDirectSoundBuffer_SetVolume(REAL, real_volume(B));
     if (SUCCEEDED(hr)) {
-        B->volume = v;
         gains(B);
         if (B->primary) g_master = db_gain(v);
-    }
+    } else B->volume = was;
     LeaveCriticalSection(&g_cs);
     return hr;
 }
@@ -346,6 +379,12 @@ static ULONG STDMETHODCALLTYPE d_Release(IDirectSound* This) {
 }
 static HRESULT STDMETHODCALLTYPE d_CreateSoundBuffer(IDirectSound* This, LPCDSBUFFERDESC desc, LPDIRECTSOUNDBUFFER* out, LPUNKNOWN outer) {
     IDirectSoundBuffer* real = NULL;
+    DSBUFFERDESC d;
+    if (desc && desc->dwSize >= sizeof(DSBUFFERDESC1) && desc->dwSize <= sizeof d && !(desc->dwFlags & DSBCAPS_PRIMARYBUFFER)) {
+        memcpy(&d, desc, desc->dwSize);
+        d.dwFlags |= DSBCAPS_CTRLVOLUME;   /* the sound slider needs it on every buffer */
+        desc = &d;
+    }
     HRESULT hr = IDirectSound_CreateSoundBuffer(REAL, desc, &real, outer);
     if (out) *out = SUCCEEDED(hr) && real ? (IDirectSoundBuffer*)wrap_buffer(real, NULL) : real;
     return hr;
@@ -368,6 +407,7 @@ static HRESULT STDMETHODCALLTYPE d_DuplicateSoundBuffer(IDirectSound* This, LPDI
         EnterCriticalSection(&g_cs);
         b->volume = o->volume, b->pan = o->pan, b->rate = o->rate;
         gains(b);
+        IDirectSoundBuffer_SetVolume(real, real_volume(b));
         LeaveCriticalSection(&g_cs);
         *out = (IDirectSoundBuffer*)b;
     }
@@ -387,6 +427,7 @@ static const IDirectSoundVtbl g_dvt = {
 };
 
 long recaudio_wrap(void* real_dsound, void** out) {
+    cs_init();
     PDS* d = (PDS*)calloc(1, sizeof *d);
     if (!d) return E_OUTOFMEMORY;
     d->lpVtbl = &g_dvt;
@@ -396,9 +437,22 @@ long recaudio_wrap(void* real_dsound, void** out) {
     return S_OK;
 }
 
+void recaudio_set_effects_gain(float gain) {
+    cs_init();
+    EnterCriticalSection(&g_cs);
+    g_fx = gain < 0 ? 0 : gain > 1 ? 1 : gain;
+    for (int i = 0; i < g_nbuf; i++)
+        if (!g_buf[i]->primary) {
+            IDirectSoundBuffer_SetVolume(g_buf[i]->real, real_volume(g_buf[i]));
+            gains(g_buf[i]);
+        }
+    LeaveCriticalSection(&g_cs);
+}
+
 long recaudio_DirectSoundCreate(const void* guid, void** out, void* outer) {
     typedef HRESULT (WINAPI *create_t)(LPCGUID, LPDIRECTSOUND*, LPUNKNOWN);
     static create_t create;
+    cs_init();
     if (!create) {
         HMODULE h = LoadLibraryA("dsound.dll");
         create = h ? (create_t)(void*)GetProcAddress(h, (LPCSTR)1) : NULL;   /* DirectSoundCreate */
@@ -408,9 +462,9 @@ long recaudio_DirectSoundCreate(const void* guid, void** out, void* outer) {
     HRESULT hr = create((LPCGUID)guid, &real, (LPUNKNOWN)outer);
     if (!out) return hr;
     *out = real;
-    if (g_on && SUCCEEDED(hr) && real) {
+    if (SUCCEEDED(hr) && real) {
         recaudio_wrap(real, out);
-        LOG("DirectSound: the game's sound is recorded (a proxy over the real one)");
+        if (g_on) LOG("DirectSound: the game's sound is recorded (a proxy over the real one)");
     } else if (g_on) LOG("DirectSoundCreate failed (0x%08lX): the recording has no game sound", (unsigned long)hr);
     return hr;
 }
@@ -622,25 +676,29 @@ static void mix_to(int64_t end) {
     }
 }
 
+void recaudio_tick(void) {
+    EnterCriticalSection(&g_cs);
+    mix_to(now_samples());
+    LeaveCriticalSection(&g_cs);
+}
+
 static volatile LONG g_stop;
 static HANDLE g_thread;
 static DWORD WINAPI mixer(LPVOID unused) {
     (void)unused;
     while (!g_stop) {
         Sleep(10);
-        EnterCriticalSection(&g_cs);
-        mix_to(now_samples());
-        LeaveCriticalSection(&g_cs);
+        recaudio_tick();
     }
     return 0;
 }
 
 void recaudio_init(void) {
     if (g_on) return;
-    InitializeCriticalSection(&g_cs);
+    cs_init();
     g_m0 = recaudio_clock_ms();
     g_on = 1;
-    g_thread = CreateThread(NULL, 0, mixer, NULL, 0, NULL);
+    if (!recaudio_test_clock_ms) g_thread = CreateThread(NULL, 0, mixer, NULL, 0, NULL);
 }
 
 int recaudio_on(void) { return g_on; }

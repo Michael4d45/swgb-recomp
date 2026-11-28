@@ -1,16 +1,28 @@
-/* recaudio: the sound in --record's mp4 (recaudio.c, docs/movies.md "The sound"). */
+/* recaudio: the game's DirectSound behind a proxy, for the sound slider and
+ * the sound in --record's mp4 (recaudio.c, docs/movies.md "The sound",
+ * docs/music.md "The sliders"). */
 #ifndef RECAUDIO_H
 #define RECAUDIO_H
 #include <stdint.h>
 
-/* --record: start the mixer, before the game runs. Without it every call
- * below does nothing (and DirectSound is the game's own, unwrapped). */
+/* --record: start the mixer, before the game runs. Without it the calls
+ * below for the recording do nothing (the proxy only carries the sound
+ * slider's gain). */
 void recaudio_init(void);
 int  recaudio_on(void);
 
 /* The recording's clock, in ms: softdd times its frames by it and the mixer
  * its samples, so the two never drift apart. */
 double recaudio_clock_ms(void);
+/* Tests: the clock in place of QPC, set before recaudio_init. There is no
+ * mixer thread then: the test calls recaudio_tick as its time passes. */
+extern double (*recaudio_test_clock_ms)(void);
+/* The mixer's step (its thread's, every 10 ms): mixed up to the clock's now. */
+void recaudio_tick(void);
+
+/* The sound slider (cdaudio.c's wave-out line), 0..1: on the volume of
+ * every secondary buffer the game has or makes, and in the recording. */
+void recaudio_set_effects_gain(float gain);
 
 /* softdd: the first frame went out at t0 (recaudio_clock_ms), the mp4 is
  * mp4. Then, after ffmpeg has closed the video: frames frames at fps were

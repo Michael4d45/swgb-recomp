@@ -37,14 +37,16 @@ RMS 0.5 of 32768. Instead, the mix is made again from what the game asks
 for, on the recording's clock.
 
 - **The game's sound is DirectSound** (`DSOUND.dll#1`, `DirectSoundCreate`).
-  With `--record` the host's shim hands the game a proxy over the real
-  `IDirectSound`, and every buffer it creates (or duplicates) is a proxy over
-  the real buffer. Every call still goes to the real one, so the game sounds
-  and behaves as it does without `--record`. Beside it each buffer keeps a
-  shadow: a copy of its samples (taken at each `Unlock`, before the real
-  buffer has them back), its format, volume, pan and frequency, the primary
-  buffer's volume as the master, and when it was played and stopped (the
-  clock's time of the call, not the mixer's next tick).
+  The host's shim always hands the game a proxy over the real
+  `IDirectSound`, and every secondary buffer it creates (or duplicates) is a
+  proxy over the real buffer so `recaudio_set_effects_gain` can apply the
+  sound slider to sound effects alone (adding `DSBCAPS_CTRLVOLUME` and hiding
+  the slider's offset from `GetVolume`). Without `--record`, no shadows or
+  mixer thread are created. With `--record`, beside each buffer each proxy
+  keeps a shadow: a copy of its samples (taken at each `Unlock`, before the
+  real buffer has them back), its format, volume, pan and frequency, the
+  primary buffer's volume as the master, and when it was played and stopped
+  (the clock's time of the call, not the mixer's next tick).
 - **The game streams its music** (`sound\stream\*.mp3`: the menus, the
   game, `won1.mp3` and `lost.mp3`) into a looping buffer it rewrites behind
   the play cursor. A shadow must read it where the real one reads, so every
@@ -64,10 +66,10 @@ for, on the recording's clock.
   That keeps a long stream from drifting with its sound card's clock. Pausing
   holds a stream; closing it drops what was not heard yet, as `waveOutReset`
   does.
-- **The CD music** (the `music` track's `cdaudio` module) plays on waveOut as
-  the films do: it is to call the same four functions, `recaudio_stream_open`,
-  `_write`, `_pause`, `_close` (`recaudio.h`). Without `--record` they do
-  nothing (`open` gives -1).
+- **The CD music** (`cdaudio.c`) plays on `waveOut` as the films do and calls
+  the same stream tap functions (`recaudio_stream_open`, `_write`, `_close`
+  in `recaudio.h`), so in-game CD music is recorded into `--record`'s mp4 as
+  well. Without `--record` they do nothing (`open` gives -1).
 
 The mixer is a thread of ours: every 10 ms it mixes 44.1 kHz stereo (linear
 interpolation, DirectSound's volume and pan in hundredths of a dB) up to the
@@ -96,11 +98,13 @@ are under the victory fanfare).
 ## Checking it
 
 - `py -3 tools\test.py --level unit --only unit/recaudio`: the proxy over a
-  fake DirectSound (a one-shot's time and pitch, volume, pan, a looping
-  buffer rewritten while it plays), the stream tap (its time, 22050 Hz mono
-  resampled, a pause), a player whose sound card runs 3% fast for 4 s kept
-  within 60 ms (120 ms uncorrected), and the WAV cut to the video's exact
-  length. No sound card needed.
+  fake DirectSound driven on a simulated clock (`recaudio_test_clock_ms` and
+  `recaudio_tick`, no real-time sleeps), split into one case per check: a
+  one-shot's time and pitch, volume and pan, a looping buffer rewritten while
+  it plays, the stream tap (its time, 22050 Hz mono resampled, a pause), a
+  player whose sound card runs 3% fast for 4 s kept within 60 ms (120 ms
+  uncorrected), the sound slider's effects gain (with and without `--record`),
+  and the WAV cut to the video's exact length. No sound card needed.
 - `record/base` and `record/cc` (L2, about 3 minutes each): the logo film
   with its sound, the intro skipped, a skirmish (the command center clicked,
   its hotkey), then `skywalker` and the victory music over the score screen,
