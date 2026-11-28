@@ -242,8 +242,9 @@ def png_of(bmp):
         return None
     from PIL import Image
     png = bmp[:-4] + '.png'
-    with Image.open(bmp) as im:
-        im.save(png)
+    # No name kept for the image: PIL maps a BMP's file, and on Windows the map (alive as long as
+    # the image is) keeps the BMP from being removed.
+    Image.open(bmp).save(png)
     os.remove(bmp)
     return png
 

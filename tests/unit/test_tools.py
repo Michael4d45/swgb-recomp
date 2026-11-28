@@ -173,6 +173,16 @@ class Paths(unittest.TestCase):
             with self.assertRaises(ValueError):
                 swgb_runner.paths(env={}, root=root)
 
+    def test_to_png_removes_the_bmp(self):
+        # PIL maps a BMP's file: a name kept for the image held it, and Windows refused the remove
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as d:
+            Image.new('P', (800, 600), 7).save(os.path.join(d, 'shot.bmp'))     # as the host's shots are
+            self.assertEqual(swgb_runner.to_png(d), [os.path.join(d, 'shot.png')])
+            self.assertEqual(os.listdir(d), ['shot.png'])
+            with Image.open(os.path.join(d, 'shot.png')) as im:
+                self.assertEqual(im.getpixel((5, 5)), 7)
+
     def test_ensure_game_completes_a_cut_copy(self):
         with tempfile.TemporaryDirectory() as d:
             tpl, dst, prof = os.path.join(d, 'tpl'), os.path.join(d, 'g'), os.path.join(d, 'prof')
