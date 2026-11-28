@@ -70,3 +70,6 @@ e*.txt
 !docs/screenshots/*.png
 
 play.sh
+
+# This machine's paths for the tools (tools/swgb/runner.py, docs/parallel-work.md)
+tools/local.json

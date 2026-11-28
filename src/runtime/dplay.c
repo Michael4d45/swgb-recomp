@@ -5,7 +5,7 @@
  * be counted on: it is an optional feature, it is not on Linux, and it needs
  * dplaysvr.exe to own UDP and TCP port 47624. On a machine with WSL's mirrored
  * networking that port is inside the block Windows hands to Linux for its
- * ephemeral ports (44620-48715 here), so dplaysvr cannot bind it and every
+ * ephemeral ports, so dplaysvr cannot bind it and every
  * Open(DPOPEN_CREATE) fails with DPERR_GENERIC, for the original game too
  * (docs/multiplayer.md). --dplay native keeps the real one.
  *

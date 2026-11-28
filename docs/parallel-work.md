@@ -4,6 +4,34 @@ Several agents (or people) work on separate roadmap tracks at once, each
 in its own git worktree on its own branch. This page is what they share,
 and the rules that keep them from breaking each other's work.
 
+## The shared workspace (one integrator's setup)
+
+The tracks share one folder, STAR, laid out like this (the integrator's is
+`A:\Games\star`):
+
+| Path | What |
+|---|---|
+| `STAR\swgb-recomp` | the main checkout: the lift (`src\recomp\gen*`), `work\*.exe`, the installed game in `game\`. Integration only. |
+| `STAR\builds\integration` | the main checkout's build: the hosts the gate and the user's launcher run |
+| `STAR\builds\<track>` | each track's build |
+| `STAR\games` | game folders: each track's, and the tools' (`testing-*`, `soak-*`, ...) |
+| `STAR\shared` | `swgb_gen.lib` and the locks (`heavy-build.lock`, `test-gate.lock`) |
+| `STAR\pcrecomp` | the pcrecomp checkout every build uses |
+| `STAR\test-baselines`, `STAR\test-results` | `tools\test.py`'s |
+
+The tools find it through `tools\swgb\runner.py`'s `paths()`: `SWGB_STAR`,
+or `tools\local.json` in the main checkout (git ignores it; every worktree
+of that checkout reads it), e.g.
+
+```json
+{"star": "A:\\Games\\star", "max_jobs": 8}
+```
+
+Without either, every tool uses its own checkout instead (`build\`, `game\`,
+`work\`: [testing.md](testing.md)). `max_jobs` caps the games
+`tools\test.py` runs at once whatever `--jobs` asks (else the machine's
+cores): the integrator plays on the same machine, so it keeps 8.
+
 ## Setup, once per worktree
 
 ```powershell
@@ -12,22 +40,23 @@ powershell -File tools\worktree_env.ps1 -Name <track> -Build
 
 It builds against the shared, prebuilt lifted code (seconds, not 30+
 minutes), makes the worktree a game folder of its own, and prints the
-command line to run. Rebuild after a change with the same command.
+command line to run. Rebuild after a change with the same command. It needs
+STAR (above) or `-Root STAR`.
 
 ## What is shared, and how
 
 | Resource | Shared how | Rule |
 |---|---|---|
 | Lifted C, `src\recomp\gen` | read by every worktree (`GEN_DIR`) | Never re-lift in the main checkout while tracks are open. A track that re-lifts (Clone Campaigns) uses its own gen directory and `-OwnGen`. |
-| `swgb_gen.lib` | `A:\Games\star\shared\swgb_gen.lib`, linked by every worktree (`SWGB_GEN_LIB`) | Frozen: replaced only by the integrator, between merges. |
+| `swgb_gen.lib` | `STAR\shared\swgb_gen.lib`, linked by every worktree (`SWGB_GEN_LIB`) | Frozen: replaced only by the integrator, between merges. |
 | `work\Battlegrounds.exe` | the main checkout's, passed with `--exe` | Read-only. |
-| Game data | `A:\Games\star\games\<track>`: hard links to the main checkout's `game\` | Hard links share the bytes: never edit, patch or delete a game file there. What the game writes (player profiles, `SaveGame`, `Scenario`) is a real copy. `-FreshGame` resets it. |
+| Game data | `STAR\games\<track>`: hard links to the main checkout's `game\` | Hard links share the bytes: never edit, patch or delete a game file there. What the game writes (player profiles, `SaveGame`, `Scenario`) is a real copy. `-FreshGame` resets it. |
 | The game's options (Screen Size, speeds, volumes) | HKCU, keys under `LucasArts Entertainment Company LLC` | With `--multi`, the host gives each run a private copy per `--game` folder (seeded from the real keys on first use), so a run never changes the user's options or another worktree's. |
-| Build output | `A:\Games\star\builds\<track>` | Your own. |
+| Build output | `STAR\builds\<track>` | Your own. |
 | The game's one-copy check | a named mutex | Always run with `--multi`, or your run ends another agent's (or the user's) game. |
 | The screen, mouse and keyboard | the user's | `--headless` only. Never run a window, or the original game fullscreen (it takes over the main monitor and mouse), without asking the user first. |
 | CPU | everyone's | A full build of the lifted C is 30+ minutes on all cores: only a re-lifting track does one, and says so. |
-| `pcrecomp` | `A:\Games\star\pcrecomp`, used by every build | Read-only. A track that needs pcrecomp changes (Linux, macOS) works in a pcrecomp worktree of its own and points `PCRECOMP` at it. |
+| `pcrecomp` | `STAR\pcrecomp`, used by every build | Read-only. A track that needs pcrecomp changes (Linux, macOS) works in a pcrecomp worktree of its own and points `PCRECOMP` at it. |
 | `ffmpeg` | on `PATH` | For `--record` and frame checks. |
 
 ## Git

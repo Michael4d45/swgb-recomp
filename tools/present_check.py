@@ -29,6 +29,11 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from swgb import runner, screens  # noqa: E402
+
+LAY = {size: screens.layout('base', size) for size in (800, 1024)}
+LOAD = 47           # seconds from Start Game to the map
 SCROLLED = 0.10     # share of the frame that changes when the view scrolls (about half; a cursor sprite is under 0.3%)
 STILL = 0.03        # ... and that may change with nothing scrolling (animations, a tooltip, the cursor)
 PACE_HZ = 600       # --refresh for group A: a headless game presents ~700-1,000 times a second, so presents are 1.2-1.6x the refresh
@@ -45,46 +50,46 @@ def changed(a, b):
     return float((np.abs(a - b) > 24).mean())
 
 
-class Script:
+class Script(runner.Script):
     """A --keys script written to a file: times in seconds, and the probes in it."""
 
     def __init__(self, out):
+        super().__init__()
         self.out = out
-        self.steps = []
         self.t = 0.0
         self.moves = []      # [label, ...] one per wmove step, in order: the host logs each
         self.probes = []     # dicts: see probe()
         self.cfgs = []
 
     def at(self, t, what):
-        self.steps.append((t, what))
+        super().at(t, what)
         self.t = max(self.t, t)
 
     def wmove(self, t, x, y, label=""):
         self.at(t, f"wmove:{x}:{y}")
         self.moves.append(label)
 
-    def shot(self, t, name):
-        path = os.path.join(self.out, name + ".bmp")
-        self.at(t, f"shot={path}")
-        return path
+    def snap(self, t, name):
+        return self.shot(t, os.path.join(self.out, name + ".bmp"))
 
     def wshot(self, t, name):
         path = os.path.join(self.out, name + ".bmp")
         self.at(t, f"wshot={path}")
         return path
 
-    def skirmish(self, t, radio=None):
-        """Menu -> Single Player -> Standard Game -> Start Game (tools/res_check.py's route).
+    def skirmish(self, t, size=None):
+        """[Options -> Screen Size SIZE ->] Single Player -> Standard Game -> Start Game.
         Returns the time the map is up."""
-        if radio:
-            self.at(t + 2, "move:40:490"); self.at(t + 3, "click:40:490")      # Options
-            self.at(t + 9, f"move:{radio[0]}:{radio[1]}"); self.at(t + 10, f"click:{radio[0]}:{radio[1]}")
-            t += 14
-        self.at(t + 4, "move:345:250"); self.at(t + 5, "click:345:250")        # Single Player
-        self.at(t + 12, "move:600:168"); self.at(t + 13, "click:600:168")      # Standard Game
-        self.at(t + 21, "move:118:568"); self.at(t + 22, "click:118:568")      # Start Game
-        return t + 22 + 47
+        return screens.to_skirmish(self, LAY[800], t + 3, size) + LOAD
+
+    def quit_to_menus(self, t, prefix):
+        """At 1024x768: the HUD's Menu, Quit Current Game, Yes; the score screen; Main Menu.
+        Returns the time of the last shot, on the menus."""
+        yes = screens.quit_game(self, LAY[1024], t + 1)
+        self.wshot(yes + 8, prefix + "_score")
+        self.click(yes + 10, screens.SCORE_MENU)
+        self.wshot(yes + 18, prefix + "_menus_again")
+        return yes + 18
 
     def battery(self, t, cfg, bars=True, overshoot=False):
         """The probes at one window shape. cfg names the shape; the picture's rectangle (to know
@@ -113,28 +118,23 @@ class Script:
             # every probe starts from the same view: H centres the game on the command center
             self.at(t, "h")
             self.wmove(t + 0.7, "C", "C", "centre")
-            before = self.shot(t + 1.4, f"{stem}_{len(self.probes)}a")
+            before = self.snap(t + 1.4, f"{stem}_{len(self.probes)}a")
             self.wmove(t + 1.7, x, y, f"{cfg}:{name}")
             self.wmove(t + 1.7 + HOLD, "C", "C", "centre")
-            after = self.shot(t + 1.7 + HOLD + 1.0, f"{stem}_{len(self.probes)}b")
+            after = self.snap(t + 1.7 + HOLD + 1.0, f"{stem}_{len(self.probes)}b")
             self.probes.append(dict(cfg=cfg, name=name, expect=expect, side=side, need=need, before=before, after=after,
                                     move_index=len(self.moves) - 2))
             t += 1.7 + HOLD + 1.6
         return t
 
     def write(self, name):
-        path = os.path.join(self.out, name + ".keys")
-        self.steps.sort(key=lambda s: s[0])
-        with open(path, "w") as f:
-            f.write("\n".join(f"{t:.2f}:{w}" for t, w in self.steps))
-        return path
+        return super().write(os.path.join(self.out, name + ".keys"))
 
 
 def run(a, name, script, extra, results):
     keys = script.write(name)
     log = os.path.join(a.out, name + ".log")
-    cmd = [a.run, "--run", "--multi", "--headless", "--exe", a.exe, "--game", a.game, "--present-log",
-           "--watchdog", str(int(script.t + 25)), "--keys", "@" + keys] + extra
+    cmd = runner.host_cmd(a.run, a.exe, a.game, script.t + 25, keys, "--present-log", *extra)
     t0 = time.time()
     print(f"[{name}] running ({script.t + 25:.0f} s at most): {' '.join(extra)}", flush=True)
     with open(log, "w") as f:
@@ -205,11 +205,15 @@ def judge_edges(results, group, text, script, mode_hint=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="A,B,C,D,E")
-    ap.add_argument("--run", default=r"A:\Games\star\builds\presentation\swgbrecomp.exe")
-    ap.add_argument("--game", default=r"A:\Games\star\games\presentation")
-    ap.add_argument("--exe", default=r"A:\Games\star\swgb-recomp\work\Battlegrounds.exe")
+    ap.add_argument("--run", help="the host (default: the build of tools/swgb/runner.paths())")
+    ap.add_argument("--game", help="the game folder (default: GAMES/present-check-base, made on first use)")
+    ap.add_argument("--exe", help="the game's exe (default: work/ of the main checkout)")
     ap.add_argument("--out", default=os.path.join(os.environ.get("TEMP", "."), "present_check"))
     a = ap.parse_args()
+    P = runner.paths()
+    a.run = a.run or P.host("base")
+    a.exe = a.exe or P.exe("base")
+    a.game = a.game or P.game("present-check", "base")
     os.makedirs(a.out, exist_ok=True)
     only = set(a.only.upper().split(","))
     results = []
@@ -258,17 +262,10 @@ def main():
         s = Script(a.out)
         s.at(6, "alt+enter")
         s.wshot(8, "B_menus_fullscreen")
-        t = s.skirmish(10, radio=(453, 413))             # Options: 1024 x 768, then a game
+        t = s.skirmish(10, 1024)                         # Options: 1024 x 768, then a game
         s.wshot(t - 4, "B_game_1024")
         t = s.battery(t, "1024x768 game in fullscreen", overshoot=True)
-        # Quit Current Game: the HUD's Menu button, Quit, Yes, Main Menu
-        s.at(t, "move:980:624"); s.at(t + 1, "click:980:624")
-        s.at(t + 5, "move:512:262"); s.at(t + 6, "click:512:262")
-        s.at(t + 9, "move:417:412"); s.at(t + 10, "click:417:412")
-        s.wshot(t + 18, "B_score")
-        s.at(t + 19, "move:709:514"); s.at(t + 20, "click:709:514")
-        s.wshot(t + 28, "B_menus_again")
-        s.t = t + 28
+        s.quit_to_menus(t, "B")
         text = run(a, "B", s, [], results)
         judge_edges(results, "B", text, s, mode_hint=(1024, 768))
         sizes = {}
@@ -298,7 +295,7 @@ def main():
 
     if "D" in only:
         s = Script(a.out)
-        t = s.skirmish(10, radio=(453, 443))
+        t = s.skirmish(10, 1280)
         s.at(t - 3, "size:1600:900")
         t = s.battery(t, "--res 1920x1080 in a 16:9 window")
         s.at(t, "alt+enter"); t = s.battery(t + 1.5, "--res 1920x1080 fullscreen", overshoot=True)
@@ -313,16 +310,11 @@ def main():
         s = Script(a.out)
         s.at(5, "size:1100:620")                          # the player sizes the window on the menus
         s.wshot(7, "E_menus_sized")
-        t = s.skirmish(8, radio=(453, 413))               # Options: 1024 x 768, then a game
+        t = s.skirmish(8, 1024)                           # Options: 1024 x 768, then a game
         s.wshot(t - 3, "E_game_1024")
         t = s.battery(t, "a sized window after a mode change")
-        s.at(t, "move:980:624"); s.at(t + 1, "click:980:624")      # Menu, Quit Current Game, Yes
-        s.at(t + 5, "move:512:262"); s.at(t + 6, "click:512:262")
-        s.at(t + 9, "move:417:412"); s.at(t + 10, "click:417:412")
-        s.wshot(t + 18, "E_score")
-        s.at(t + 19, "move:709:514"); s.at(t + 20, "click:709:514")   # Main Menu
-        s.wshot(t + 28, "E_menus_again")
-        t = s.skirmish(t + 28)                            # a second game: the mode changes again
+        t = s.quit_to_menus(t, "E")
+        t = s.skirmish(t)                                 # a second game: the mode changes again
         s.wshot(t - 3, "E_game_again")
         s.t = t
         text = run(a, "E", s, [], results)

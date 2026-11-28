@@ -53,7 +53,7 @@ def main():
     cab = os.path.join(out, 'BGUpdate1_1.cab')
     open(cab, 'wb').write(decode(exe))
     if os.name == 'nt':
-        expand = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'expand.exe')
+        expand = os.path.join(os.environ['SystemRoot'], 'System32', 'expand.exe')
         cmd = [expand, '-F:*', cab, out]
     else:   # cabextract (its own package): the same folders, with / in them
         cmd = ['cabextract', '-q', '-d', out, cab]

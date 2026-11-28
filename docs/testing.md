@@ -14,7 +14,7 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 
 | Level | Name | Time | What it runs | Needs |
 |---|---|---|---|---|
-| L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
+| L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (`tools/swgb`'s screens, paths and game folders, soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
 | L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) and `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), `--record` with its sound (a film, a skirmish's clicks, the victory music; the sound stream as long as the video, loud where they play: [recording.md](recording.md)), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), the CD music (a skirmish on a disc of 2-second tracks: tracks 2-49 on time, the notification, the game's repeat; [music.md](music.md)), the frame-rate check (below), and two multiplayer games through `mp_pair.py`: three players with chat and one dropped (base game), a save restored (Clone Campaigns) | as L1, ffmpeg |
 | L3 | `soak` | about 4 h at 5 games at once (20 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat), every campaign's missions past the first (`missions`: OOM-9 6-7, Boss Nass, Chewbacca, Darth Vader, Princess Leia, Basic Training), the in-game Load, the monkey at 1024x768 and 1280x1024; Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns from mission 1 and past it, the in-game Load. Multiplayer (`mp_pair.py`): four players for 20 minutes with chat, a quit, the host dropped (host migration), a save restored, in both games. `--soak-scale 0.2` for a shorter trial. | as L2 |
@@ -30,25 +30,40 @@ merged build, exit 0. **Nightly**: `--level soak` (`tools\test_nightly.ps1`;
 **After a re-lift**: `--level smoke` at least: the lift check says whether the
 C changed.
 
+**Where things are.** Every default path of the tools comes from one function,
+`paths()` in `tools/swgb/runner.py` (`py -3 tools/swgb/runner.py` prints
+them):
+
+| Set | The defaults |
+|---|---|
+| `SWGB_STAR`, or `"star"` in `tools/local.json` (git ignores it; a worktree reads its main checkout's) | a shared workspace, laid out as [parallel-work.md](parallel-work.md) describes: `STAR/swgb-recomp` (the lift, `work/*.exe`, `game/`), `STAR/builds/integration` (the hosts), `STAR/games`, `STAR/test-baselines`, `STAR/test-results` |
+| neither | this checkout: `build/` (`build-linux/`, `build-macos/`), `game/`, `work/*.exe`, and `work/games`, `work/test-baselines`, `work/test-results` |
+
+`tools/local.json` can also set each of them by name (`main`, `build`,
+`games`, `baselines`, `results`, `cc_profiles`, `max_jobs`); an unknown key is
+an error. Below, GAMES, BUILD and so on are these.
+
 **Games at once.** Every game is `--headless --multi`, in a game folder of its
-own, `A:\Games\star\games\testing-<base|cc>-<k>` (hard links to the shared
-install, real copies of profiles and saves, as `worktree_env.ps1` makes them;
-made on first use and kept). `--jobs` games run at once (default 5, at most 8
-whatever is asked: the user plays on this machine). The tool stops only the
-processes it started, by PID (`taskkill /T /PID`), when one runs past its
-time or on Ctrl-C.
+own, `GAMES/testing-<base|cc>-<k>` (hard links to the shared install, real
+copies of profiles and saves, as `worktree_env.ps1` makes them; made on first
+use and kept; a copy cut short is completed by the next run). `--jobs` games
+run at once: default 5, at most `max_jobs` whatever is asked
+(`SWGB_MAX_JOBS` or local.json's; else the machine's cores). The tool stops
+only the processes it started, by PID (`taskkill /T /PID`), when one runs past
+its time or on Ctrl-C.
 
 Clone Campaigns' folders take their player profile (`player.nf*`) from
-`A:\Games\star\games\clone-campaigns` (`--cc-profiles`): the shared
+`GAMES/clone-campaigns` when that folder exists (`--cc-profiles`; one with no
+profile in it is an error), else from the install itself. A Steam
 install's was saved by Steam's `battlegrounds_cc.exe` with its widescreen mod
 at 2560x1440, and the game's Options dialog (Fast speed) switches to it. Run
 that way, without `--res`, the host draws a broken frame (the map in a corner,
 flat colour over the rest): the first L2 run found it.
 
-`--build` is the folder with both hosts (default `builds\integration`);
+`--build` is the folder with both hosts (default BUILD);
 `--build-cc` takes Clone Campaigns' from another folder.
 
-One run at a time owns the `testing-*` folders (`games\testing.lock`, its
+One run at a time owns the `testing-*` folders (`GAMES/testing.lock`, its
 PID): a second run at once is refused unless it passes `--prefix NAME` (its
 own `NAME-*` folders). Two games in one folder share its saves, profile and
 registry hive; two runs that did made every edge case of `present_check` fail.
@@ -67,14 +82,14 @@ fullscreen edge cases saw the game read the cursor at 400,300 (what the host
 reports while another window is active) although the view scrolled. The other
 two runs passed all 48 cases.
 
-**Results.** `A:\Games\star\test-results\<time>-<level>\`: `summary.json`
+**Results.** `RESULTS/<time>-<level>/`: `summary.json`
 (every check: status, time, lines, figures, shots), `report.md` and
 `report.html` (the shots inline), and a folder per check with its logs, keys
 and shots. Exit code 0 when nothing failed or errored; a SKIP (no Clone
 Campaigns host, no ffmpeg) is listed but passes.
 
-**Baselines** live outside the repository, in `A:\Games\star\test-baselines`
-(`--baselines`): they are made from the game's files. A missing one is
+**Baselines** live outside the repository, in BASELINES (`--baselines`):
+they are made from the game's files. A missing one is
 recorded by the first run that needs it; `--update-baselines` records them all
 again after an intended change. Screenshots are compared as grey levels: a
 pixel differs when it is more than 24 levels off, and a check allows a share
@@ -98,12 +113,11 @@ for a Steam copy, as setup.sh makes it, else disc 2's mount point. Without it
 (and no `~/.steam` Saga to fall back on) the base game stops on "insert a
 game CD".
 
-Off Windows its defaults are this checkout's: the hosts in `build-linux/`
-(`build-macos/` on a Mac: `swgbrecomp`, `swgbrecomp_cc`), the lift and
-`work/*.exe` here, and the game folders, baselines and results under `work/`
-(`work/games/testing-*`, `work/test-baselines`, `work/test-results`); set
-`SWGB_STAR` to share them like the Windows farm does. Each game runs in a
-process group of its own, which is what a timeout or Ctrl-C ends.
+Its defaults are `paths()`'s, as on Windows: without `SWGB_STAR` or a
+`tools/local.json`, this checkout's (the hosts in `build-linux/`, or
+`build-macos/` on a Mac; the lift and `work/*.exe` here; `work/games/testing-*`,
+`work/test-baselines`, `work/test-results`). Each game runs in a process group
+of its own, which is what a timeout or Ctrl-C ends.
 
 Clone Campaigns' folders take their profile (`player.nf1`) from
 `work/games/clone-campaigns` (`--cc-profiles`), as on Windows; the base
@@ -189,11 +203,14 @@ Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
 | `smooth`, `smooth_cc` | `tests/unit/smooth_test.c` | `smooth.c` (`--smooth`) itself with a fake clock and fake objects: a walk moves at most 2 px a frame and is never drawn ahead of the object, a stop ends where it stopped, teleports, new objects, a new game and a pause are drawn where they are, other callers are left alone, nothing is written; at the base and Clone Campaigns addresses |
 | `keys` | `tests/unit/keys_test.c` | `keyscript.c`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
 | `cdaudio` | `tests/unit/cdaudio_test.c` | `cdaudio.c`'s core: `tests/data/tone.ogg` decoded (length, rate, tones, level) and seeked (the same samples as from the start); a disc of three copies: MCI_STATUS's counts, lengths and positions in ms, MSF and TMSF; a play from track 2 to 3 puts exactly that track on the output and notifies; the CD line's volume halves it, other lines are WINMM's; stop, pause and a second play abort or supersede the notification; no tracks or `--music off` fail the open ([music.md](music.md)) |
-| `tools` | `tests/unit/test_tools.py` | the Python side, as above, and `perf_ab.py`'s figures, its round-by-round ratio and that every game sets its Screen Size, and `mp_pair.py`'s sync-record compare |
+| `tools` | `tests/unit/test_tools.py` | the Python side, as above, and `perf_ab.py`'s figures, its round-by-round ratio and that every game sets its Screen Size, `mp_pair.py`'s per-player options and sync-record compare, and `machine_paths.py` |
 
 They run on GitHub Actions (`.github/workflows/unit.yml`, `windows-latest`):
 pcrecomp is fetched at a pinned commit for its headers, and nothing of the game
-is downloaded, built or uploaded. Each unit was checked against a deliberate
+is downloaded, built or uploaded. A step before them, `tools/machine_paths.py`,
+fails on a Windows drive path (`X:\...`) in `tools/`, `src/`, `cmake/` or a
+script: a default that works on one machine only (the game's own drives, C:
+and D: inside the recompiled game, are on its allow-list). Each unit was checked against a deliberate
 break of the code it covers (the cache keeping every answer, the pacing
 catching up after a hitch, `xNAME.avi` looked for first, the decoder's state
 never marked used): each one fails.
@@ -291,7 +308,7 @@ It always runs `--multi`. In a worktree, point it at your build, your game
 folder and the shared executable:
 
 ```
-py -3 tools\conformance.py A:\Games\star\builds\<track>\swgbrecomp.exe --game A:\Games\star\games\<track> --exe A:\Games\star\swgb-recomp\work\Battlegrounds.exe
+py -3 tools\conformance.py BUILD\swgbrecomp.exe --game GAMES\<track> --exe MAIN\work\Battlegrounds.exe
 ```
 
 ## Into a skirmish
@@ -324,9 +341,9 @@ py -3 tools\soak.py [--mode skirmish|monkey|campaign|mixed|defeat|allied|victory
 ```
 
 Headless and `--multi`, each run in a game folder of its own (job k > 0 gets
-`DIR-soakK`, hard links like `worktree_env.ps1` makes). The defaults are this
-track's build (`A:\Games\star\builds\coverage`) and game folder; pass
-`--run` and `--game` for another.
+`DIR-soakK`, hard links like `worktree_env.ps1` makes). The defaults are
+BUILD's host, MAIN's `work\*.exe` and `GAMES\soak-base` (`soak-cc`), made on
+first use; pass `--run` and `--game` for others.
 
 | Mode | What it does after the main menu |
 |---|---|
@@ -373,9 +390,9 @@ The clicks are 800x600 game pixels unless `--screen` says otherwise: run it
 in a game folder whose Screen Size is 800 (it warns if the game sets another
 mode). `--screen 1024|1280` (base game) picks that Screen Size on the main
 menu's Options panel first and moves every in-game click to that size: the
-HUD is the game's own art per width (`HUD_LAYOUTS`, read off shots of each:
-the map view, the command grid, the minimap and its buttons, the four icons
-above the panel, the buttons on the right), the game menu and its Options
+HUD is the game's own art per width (`tools/swgb/screens.py`'s `HUD`: the
+map view, the command grid, the minimap and its buttons, the four icons above
+the panel, the buttons on the right), the game menu and its Options
 dialog are centred, the Save and Load screens are the 800x600 one scaled. The
 menus, the setup screen and the score screen stay 800x600. A run that did not
 get the size it asked for counts as a problem. The game stores the Screen
@@ -388,7 +405,7 @@ its panels and the game menu end with Escapes 5-6 seconds later, and one
 such Escape closed the Save screen of the first in-game Load run (no save was
 written, and the Load read an older game).
 
-**The mission boxes** (`MISSION_BOXES`) were found by winning each mission in
+**The mission boxes** (`screens.py`'s `BASE_MISSIONS`, `CC_MISSIONS`) were found by winning each mission in
 turn with a live script (`--keys-live`) and diffing the campaign screen before
 and after: the new box is the largest change. Every campaign has seven
 missions except Princess Leia's eight. A won mission opens its end briefing,
@@ -549,13 +566,15 @@ for `seeds_from_logs.py --cc`.
 ```
 py -3 tools\mp_pair.py [--players 2-4] [--minutes 20] [--activity idle|habits|busy] [--seed S] [--cc]
                        [--chat] [--drop WHO@MIN] [--quit WHO@MIN] [--resign WHO@MIN] [--save MIN [--restore]]
-                       [--wsl WHO] [--run EXE] [--run-b EXE] [--game DIR] [--port N]
-                       [--extra SWITCHES] [--extra-a=SWITCHES] [--extra-b=SWITCHES]
+                       [--wsl WHO] [--run [WHO=]EXE ...] [--host-arg WHO=SWITCHES ...] [--game DIR] [--port N]
 ```
 
-`--extra-a` and `--extra-b` give one player switches the others do not
-have (`--extra-a=--smooth`: the sync records stay the same, framerate.md).
-`--run-b EXE` runs B on another build (performance.md).
+WHO is a player (a, b, c, d) or `all`. `--host-arg WHO=SWITCHES` gives
+that player more host switches, split as a POSIX shell would (write paths
+with `/`): `--host-arg a=--smooth` (the sync records stay the same,
+framerate.md), `--host-arg all=--mp-cross` with a WSL player. `--run b=EXE`
+runs B on another build (performance.md); `--run EXE` alone is everyone's
+(default BUILD's). Both repeat; a player's own beats `all`.
 
 Two to four headless `--multi` runs on this machine: one hosts, the others
 join over 127.0.0.1, all start a game and play `--minutes`. It passes when
@@ -570,21 +589,21 @@ the game. Details and results in [multiplayer.md](multiplayer.md).
 The joiner selects "Local (LAN) TCP/IP Connection" first: its games appear
 by themselves. A folder that last used it (the Windows farm's) has it
 selected already; a new one has "Internet", whose Show Games asks for an
-address. On Linux (`python3 tools/mp_pair.py`, `build-linux/` and
-`work/games/multiplayer` by default; `--cc --game DIR` with a Clone Campaigns
-profile in DIR), 2026-11-23: base game and Clone Campaigns, 3 minutes each,
+address. A's folder defaults to `GAMES/multiplayer-base` (`-cc`), made on
+first use. On Linux (`python3 tools/mp_pair.py`; `--cc --game DIR` with a
+Clone Campaigns profile in DIR), 2026-11-23: base game and Clone Campaigns, 3 minutes each,
 46 sync records in both logs, none different, no out-of-sync message.
 
 ## The game's three resolutions
 
 ```
-py -3 toolses_check.py 800|1024|1280 [--out DIR] [--game DIR] [--no-options]
+py -3 tools\res_check.py 800|1024|1280 [--out DIR] [--game DIR] [--no-options]
 ```
 
 Headless (`--headless --multi`). It picks Screen Size on the 800x600 Options
 menu (radio buttons 800x600 at 453,383, 1024x768 at 453,413, 1280x1024 at
 453,443), clicks Single Player, Standard Game and Start Game, and after the map
-loads (~85 s) takes shots into DIR (BMP and PNG): `a_start`, `b_selected` (the
+loads (~85 s) takes shots into DIR (PNG): `a_start`, `b_selected` (the
 command center clicked, near the centre of the map view), `c_left`, `d_right`,
 `e_top`, `f_bottom` (the cursor held on each map edge: the view scrolls),
 `g_minimap` (a click on the minimap), `h_menu` (the HUD's Menu button), then
@@ -607,7 +626,7 @@ run a private copy of the game's HKCU keys per `--game` folder
 (`HKCU\Software\swgb-recomp\hives\...`), so your Screen Size never reaches the
 user's game or another worktree's. To check that it persists: pick a size, end
 the game from the main menu (Exit at 40,565) and run
-`toolses_check.py SIZE --no-options`: it reaches that size without touching
+`tools\res_check.py SIZE --no-options`: it reaches that size without touching
 Options. A `--keys` click is in game pixels, posted at the window pixel that maps
 to it, so it goes through the letterbox as the real mouse does; window pixels
 themselves are `wmove`/`wclick` (next section).
@@ -615,7 +634,7 @@ themselves are `wmove`/`wclick` (next section).
 ### Switching in the game: `res_check.py ingame`
 
 ```
-py -3 toolses_check.py ingame [--res WxH] [--cc] [--out DIR] [--game DIR] [--run EXE] [--exe EXE]
+py -3 tools\res_check.py ingame [--res WxH] [--cc] [--out DIR] [--game DIR] [--run EXE] [--exe EXE]
 ```
 
 A skirmish at 800x600 (picked on the main Options first), then the game menu's
@@ -646,7 +665,7 @@ proportion. The check parks the cursor at 400,300 (inside every size).
 ### Windows over the map: `res_check.py popups`
 
 ```
-py -3 toolses_check.py popups [--size 800|1024|1280|wide] [--res WxH] [--cc] [--out DIR] ...
+py -3 tools\res_check.py popups [--size 800|1024|1280|wide] [--res WxH] [--cc] [--out DIR] ...
 ```
 
 A skirmish at `--size` (`wide`: the third size, WxH with `--res`; the

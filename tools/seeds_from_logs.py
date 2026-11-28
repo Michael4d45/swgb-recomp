@@ -17,7 +17,8 @@ which run_lift.py reads; then re-lift and rebuild (docs/lifting.md).
     py -3 tools/seeds_from_logs.py LOG [LOG...]    # these logs only
     py -3 tools/seeds_from_logs.py --cc LOG ...    # Clone Campaigns (run_lift.py --build cc)
 
-The default logs: A:/Games/star/logs/play-*.log (the launcher's), work/*.log
+The default logs: STAR/logs/play-*.log (the launcher's, in the shared workspace of
+tools/swgb/runner.py's paths(), if there is one), work/*.log
 (conformance), and work/soak/**/*.log (tools/soak.py). Logs written by
 PowerShell's Tee are UTF-16; both encodings are read.
 """
@@ -30,6 +31,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+from swgb import runner  # noqa: E402
 
 LINE = re.compile(r'(ICALL|ITAIL): unresolved VA (0x[0-9A-Fa-f]{1,8})(?: from (0x[0-9A-Fa-f]{1,8}))?')
 CODE = (0x00401000, 0x006509B9)       # .text and THIS_COD
@@ -46,7 +49,8 @@ def read_log(path):
 
 
 def default_logs():
-    pats = [r'A:\Games\star\logs\play-*.log',
+    star = runner.paths().star
+    pats = ([os.path.join(star, 'logs', 'play-*.log')] if star else []) + [
             os.path.join(ROOT, 'work', '*.log'),
             os.path.join(ROOT, 'work', 'soak', '**', '*.log')]
     out = []

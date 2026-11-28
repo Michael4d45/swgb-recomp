@@ -3,18 +3,22 @@
     py -3 tools\\mp_pair.py [--players N] [--minutes M] [--activity idle|habits|busy] [--seed S] [--cc]
                             [--chat] [--drop WHO@MIN] [--quit WHO@MIN] [--resign WHO@MIN]
                             [--save MIN [--restore]] [--wsl WHO]
-                            [--run EXE] [--run-b EXE] [--exe GUEST] [--game DIR] [--out DIR] [--port N]
-                            [--extra ARGS] [--extra-a ARGS] [--extra-b ARGS]
+                            [--run [WHO=]EXE ...] [--host-arg WHO=ARGS ...]
+                            [--exe GUEST] [--game DIR] [--out DIR] [--port N]
 
 --cc plays Clone Campaigns (swgbrecomp_cc.exe, battlegrounds_x1.exe): the main menu's Multiplayer
 button and the Multiplayer screen's Create (beside a Restore) are elsewhere.
 
---run-b EXE: B runs this host instead of --run (another build of the same source, e.g. the lifted C
-at /O2 against /O1: docs/performance.md). The join normally refuses another build; every run then
-gets SWGB_MP_ANY_BUILD=1, and the sync records say whether the two builds simulate alike.
+WHO is a player (a, b, c, d) or all; a later option for a player beats an earlier `all`.
 
---extra-a and --extra-b give one player switches the others do not have: --extra-a=--smooth
-checks that drawing between steps (docs/framerate.md) leaves the simulation alone.
+--run WHO=EXE: that player runs this host (another build of the same source, e.g. the lifted C
+at /O2 against /O1: docs/performance.md); --run EXE alone is every player's. The join normally
+refuses another build; when the players' hosts differ, every run gets SWGB_MP_ANY_BUILD=1, and
+the sync records say whether the builds simulate alike.
+
+--host-arg WHO=ARGS: more host switches for that player (split as a POSIX shell would: write
+paths with /), e.g. --host-arg a=--smooth checks that drawing between steps (docs/framerate.md)
+leaves the simulation alone; --host-arg all=--mp-cross for a game with a WSL player. Repeatable.
 
 N headless --multi runs of the host (docs/multiplayer.md), players a, b, c, d: A hosts, the others
 join, all through the host's own DirectPlay (src/runtime/dplay.c). A goes Multiplayer -> Create and
@@ -75,17 +79,16 @@ import json
 import os
 import random
 import re
-import shutil
+import shlex
 import subprocess
 import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import soak  # noqa: E402  (its screens, its Script, ensure_game)
+import soak  # noqa: E402  (its idle player)
+from swgb import runner, screens  # noqa: E402
 
-MAIN_MULTI = (275, 390)          # the main menu: Multiplayer
-MAIN_MULTI_CC = (290, 405)       # ... in Clone Campaigns
 # The Multiplayer screen: Create, the width of the panel; with a multiplayer save in SaveGame\Multi
 # (Clone Campaigns: always, the template's "Out of Sync Save"s), Create on the left and Restore
 # on the right. (515, 452) is Create in both.
@@ -97,12 +100,11 @@ MP_ROW0 = (600, 238)             # ... the first game in the list
 SETUP_READY = (88, 517)          # the multiplayer setup screen: I'm Ready!
 SETUP_START = (118, 568)         # ... Start Game (the host's)
 # The game menu in a multiplayer game (F10): Quit Current Game, Resign, Save, Save And Exit,
-# Options, About, Cancel. Single player's (soak.GAME_MENU) has no Resign: Save is a row higher.
+# Options, About, Cancel. Single player's (Layout.game_menu) has no Resign: Save is a row higher.
 MP_MENU = {'quit': (408, 178), 'resign': (408, 218), 'save': (408, 251), 'save_exit': (408, 284)}
 MENU_YES = (305, 328)            # "Are you sure you want to resign?" (or quit): Yes
 STATUS_CONTINUE = (445, 369)     # Multiplayer Status (a player dropped): vote Continue Game
 STATUS_BOX = 'CreateWindowExA "" style 40000080 at 67,463 441x21'   # ... its chat line, opening
-GAME_DEFAULT = r'A:\Games\star\games\multiplayer'
 B_DELAY = 5                      # each joiner starts this many seconds after the one before
 WHO = 'abcd'
 ON_MENU = 'open.mp3'             # the main menu's music: the menus' times count from it
@@ -119,15 +121,15 @@ def start_at(n, restore=False):
     return 66 + B_DELAY * (n - 2) + (10 if restore else 0)
 
 
-def menu_part(s, who, k, n, out, restore=False):
+def menu_part(s, lay, who, k, n, out, restore=False):
     """The menus, timed from this player's main menu."""
     start = start_at(n, restore)
-    s.click(2, MAIN_MULTI)
+    s.click(2, lay.main_multi)
     s.at(14 if who == 'a' else 28, 'shot=%s' % os.path.join(out, 'multiplayer.bmp'))
     if who == 'a' and restore:
         s.click(16, MP_RESTORE)
         s.at(22, 'shot=%s' % os.path.join(out, 'restore_list.bmp'))
-        s.click(23, soak.SAVED_OK)    # the newest save is selected
+        s.click(23, screens.SAVED_OK)    # the newest save is selected
         s.click(43, SETUP_READY)
     elif who == 'a':
         s.click(16, MP_CREATE)
@@ -173,10 +175,10 @@ def game_end(k, minutes):
     return minutes * 60 - STEP * k
 
 
-def game_plan(rnd, who, k, n, args, out, phase=''):
+def game_plan(rnd, lay, who, k, n, args, out, phase=''):
     """The game: [(seconds from its start, step)], for --keys-live. (Shots of chat lines are
     taken as they arrive: play().)"""
-    s = soak.Script()
+    s = runner.Script()
     end = game_end(k, args.minutes)
     s.at(5, 'shot=%s' % os.path.join(out, 'start.bmp'))
     for ts in range(300, int(end), 300):
@@ -186,29 +188,29 @@ def game_plan(rnd, who, k, n, args, out, phase=''):
     if args.chat:
         for t, w, words in chat_times(n, args.minutes, leave_at(args)):
             if w == who:
-                soak.chat(s, t, words)
+                screens.chat(s, t, words)
                 quiet.append((t - 2, t + 5 + 0.3 * len(words)))
     if args.save is not None and not phase:
         t = args.save * 60
         if who == 'a':   # the game menu, Save, OK: the name the game offers ("Multiplayer Save - <date>")
-            s.click(t, soak.HUD_RIGHT['menu'])
+            s.click(t, lay.hud['menu'])
             s.click(t + 2, MP_MENU['save'])
             s.at(t + 5, 'shot=%s' % os.path.join(out, 'save_screen.bmp'))
-            s.click(t + 6, soak.SAVE_OK)
+            s.click(t + 6, lay.save_ok)
         s.at(t + 21, 'shot=%s' % os.path.join(out, 'saved.bmp'))
         quiet.append((t - 2, t + 22))
     stop = end - 10
     for spec, how in ((args.quit, 'quit'), (args.resign, 'resign')):
         if spec and spec[0] == who and not phase:
             t = spec[1] * 60
-            s.click(t, soak.HUD_RIGHT['menu'])
+            s.click(t, lay.hud['menu'])
             s.at(t + 2, 'shot=%s' % os.path.join(out, how + '_menu.bmp'))
             s.click(t + 3, MP_MENU[how])
             s.at(t + 5, 'shot=%s' % os.path.join(out, how + '_sure.bmp'))
             s.click(t + 6, MENU_YES)
             s.at(t + 14, 'shot=%s' % os.path.join(out, how + '_after.bmp'))
             if how == 'quit':
-                s.click(t + 16, soak.SCORE_MENU)
+                s.click(t + 16, screens.SCORE_MENU)
                 s.at(t + 30, 'shot=%s' % os.path.join(out, how + '_menu_after.bmp'))
             stop = t - 2
     if args.drop and args.drop[0] != who and not phase:
@@ -221,8 +223,8 @@ def game_plan(rnd, who, k, n, args, out, phase=''):
     def busy(t):
         return any(a <= t <= b for a, b in quiet)
     if args.activity in ('habits', 'busy'):
-        h = soak.Script()
-        soak.habits(h, rnd, 6, stop, None, out)
+        h = runner.Script()
+        soak.habits(h, lay, rnd, 6, stop)
         s.steps += [st for st in h.steps if not busy(st[0])]
     if args.activity == 'busy':
         t = 8
@@ -234,15 +236,15 @@ def game_plan(rnd, who, k, n, args, out, phase=''):
                 elif r < 0.75:
                     s.click(t, (rnd.randint(0, 799), rnd.randint(25, 420)), 'rclick')
                 else:
-                    s.click(t, rnd.choice(soak.COMMAND_GRID))
+                    s.click(t, rnd.choice(lay.command_grid))
             t += rnd.uniform(2, 6)
     return sorted(s.steps, key=lambda st: st[0])
 
 
-def script(who, k, n, args, out, phase=''):
+def script(lay, who, k, n, args, out, phase=''):
     """One player's --keys script (the menus) and its watchdog (seconds)."""
-    m = soak.Script()
-    menu_part(m, who, k, n, out, restore=bool(phase))
+    m = runner.Script()
+    menu_part(m, lay, who, k, n, out, restore=bool(phase))
     text = 'on:%s\n%s\n' % (ON_MENU, m.text())
     # A's watchdog: its menu, Start, the load, the game, a margin; each joiner's ends earlier
     # (it starts B_DELAY later and plays STEP less), so A sees players leave, not a lost host.
@@ -310,7 +312,7 @@ def check(log):
     its own DPID, each departure it saw [(seconds since its start, line, DPID or 'host')], when
     it left itself (its own Close or DestroyPlayer, or None) and whether its game started."""
     lines = open(log, encoding='utf-8', errors='replace').read().splitlines()
-    ev = [l for l in lines if soak.EVENTS.search(l) or '[mp] the game loaded string' in l]
+    ev = [l for l in lines if runner.EVENTS.search(l) or '[mp] the game loaded string' in l]
     chats = {m.group(5): int(m.group(1)) for m in map(CHAT_RX.match, lines) if m}
     me, deps, left, started = None, [], None, False
     for l in lines:
@@ -358,16 +360,8 @@ def chat_shown(png, player):
     return sum(1 for p in box.getdata() if p == rgb) >= 150
 
 
-def to_png(d):
-    for n in os.listdir(d):
-        if n.endswith('.bmp'):
-            f = os.path.join(d, n)
-            subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', f, f[:-4] + '.png'])
-            os.remove(f)
-
-
 def wsl_path(p):
-    """A Windows path as WSL sees it (A:\\x -> /mnt/a/x)."""
+    """A Windows path as WSL sees it: drive X becomes /mnt/x."""
     p = os.path.abspath(p)
     return '/mnt/%s%s' % (p[0].lower(), p[2:].replace('\\', '/'))
 
@@ -389,27 +383,45 @@ def launch(args, who, k, game, out, keys, live, wd):
         # on a /mnt drive): work/games/<the Windows folder's name>, hard links to the checkout's game/
         lgame = '%s/work/games/%s' % (root, os.path.basename(game.rstrip('\\/')))
         subprocess.run(['wsl.exe', '-d', WSL_DISTRO, '--cd', root, '--exec', 'python3', '-c',
-                        "import sys; sys.path.insert(0, 'tools'); import soak; soak.ensure_game('game', %r)" % lgame])
+                        "import sys; sys.path.insert(0, 'tools'); from swgb import runner; "
+                        "runner.ensure_game('game', %r)" % lgame], check=True)
         # stderr into stdout in Linux: through wsl.exe the two reach the log with their own file
         # positions, and one wrote over the other
         cmd = ['wsl.exe', '-d', WSL_DISTRO, '--cd', wsl_path(out), '--exec', 'bash', '-c', 'exec "$@" 2>&1', 'bash',
                run, '--run', '--multi', '--headless',
                '--exe', exe, '--game', lgame, '--watchdog', str(wd), '--keys', '@' + wsl_path(keys), '--keys-live', wsl_path(live),
-               '--mp-port', str(args.port)] + args.extra.split() + args.wsl_extra.split()
+               '--mp-port', str(args.port)] + args.host_args[who]
     else:
-        run = args.run_b if who == 'b' and args.run_b else args.run
-        cmd = [run, '--run', '--multi', '--headless', '--exe', args.exe, '--game', game,
-               '--watchdog', str(wd), '--keys', '@' + keys, '--keys-live', live, '--mp-port', str(args.port)]
-        cmd += args.extra.split() + own_switches(args, who).split()
+        cmd = runner.host_cmd(args.runs[who], args.exe, game, wd, keys, '--keys-live', live,
+                              '--mp-port', str(args.port), *args.host_args[who])
     env = dict(os.environ)
-    if args.run_b and os.path.abspath(args.run_b) != os.path.abspath(args.run):
+    if len({os.path.abspath(r) for w, r in args.runs.items() if w not in args.wsl}) > 1:
         env['SWGB_MP_ANY_BUILD'] = '1'   # dplay.c: the join lets another build in
-    return subprocess.Popen(cmd, cwd=out, stdout=log, stderr=subprocess.STDOUT, env=env)
+    return runner.popen(cmd, cwd=out, stdout=log, stderr=subprocess.STDOUT, env=env)
 
 
-def own_switches(args, who):
-    """--extra-a / --extra-b: the switches only that player has."""
-    return {'a': args.extra_a, 'b': args.extra_b}.get(who, '')
+def who_arg(s):
+    """WHO=VALUE, WHO one of a, b, c, d, all: (WHO, VALUE)."""
+    w, eq, v = s.partition('=')
+    if not eq or w not in list(WHO) + ['all']:
+        raise argparse.ArgumentTypeError('WHO=VALUE, WHO one of a, b, c, d, all: %r' % s)
+    return w, v
+
+
+def run_arg(s):
+    """--run: WHO=EXE, or EXE alone (every player)."""
+    w, eq, v = s.partition('=')
+    return who_arg(s) if eq and w in list(WHO) + ['all'] else ('all', s)
+
+
+def per_player(pairs, n, merge):
+    """{player: value} for players a.. from [(WHO, value)]: `all` first, then each player's own
+    in order; merge(old, new) combines two values for one player."""
+    out = {}
+    for w, v in sorted(pairs, key=lambda p: p[0] != 'all'):
+        for who in (WHO[:n] if w == 'all' else w):
+            out[who] = merge(out[who], v) if who in out else v
+    return out
 
 
 class Tail:
@@ -443,13 +455,13 @@ def play(args, phase=''):
         who = WHO[k]
         game = args.game if k == 0 else args.game.rstrip('\\/') + '-mp%d' % (k + 1)
         if k:
-            soak.ensure_game(args.game, game)
+            runner.ensure_game(args.game, game)
         folders[who] = game
         rnd = random.Random(args.seed * 4 + k + (100 if phase else 0))
-        text, wd = script(who, k, n, args, outs[who], phase)
+        text, wd = script(args.lay, who, k, n, args, outs[who], phase)
         text = '\n'.join(l.split(':', 1)[0] + ':' + for_host(args, who, l.split(':', 1)[1]) if 'shot=' in l else l
                          for l in text.split('\n'))
-        plans[who] = game_plan(rnd, who, k, n, args, outs[who], phase)
+        plans[who] = game_plan(rnd, args.lay, who, k, n, args, outs[who], phase)
         keys = os.path.join(outs[who], 'keys.txt')
         open(keys, 'w').write(text)
         lives[who] = os.path.join(outs[who], 'live.txt')
@@ -506,14 +518,14 @@ def play(args, phase=''):
             if args.drop and not phase and dropped is None and t >= args.drop[1] * 60:
                 who = args.drop[0]
                 if procs[who].poll() is None:
-                    soak.kill_tree(procs[who])   # its own PID: never a name
+                    runner.kill_tree(procs[who])   # its own PID: never a name
                     dropped, drop_wall = who, time.time()
                     print('%s killed (pid %d) %.0f s into the game' % (who, procs[who].pid, t), flush=True)
                 else:
                     dropped = ''
         for w, p in procs.items():   # past its watchdog and a margin: hung
             if p.poll() is None and now - starts[w] > ends[w] + 120:
-                soak.kill_tree(p)   # only the PIDs this tool started
+                runner.kill_tree(p)   # only the PIDs this tool started
                 hung.add(w)
                 print('%s hung: killed' % w, flush=True)
         time.sleep(0.2)
@@ -523,7 +535,7 @@ def play(args, phase=''):
     if dropped:
         rc[dropped] = 'dropped'
     for who in procs:
-        to_png(outs[who])
+        runner.to_png(outs[who])
     logs = {w: os.path.join(outs[w], 'run.log') for w in procs}
     recs = {w: sync_records(l) for w, l in logs.items()}
     shared, bad = compare_all(recs)
@@ -606,8 +618,8 @@ def play(args, phase=''):
     first = {w: next(((r[1], r[2]) for _, r in recs[w]), None) for w in procs}
     summary = {
         'phase': phase or 'game', 'players': n, 'exit': rc, 'wsl': sorted(args.wsl),
-        'hosts': {w: args.run_b if w == 'b' and args.run_b else args.run for w in procs},
-        'switches': {w: ' '.join((args.extra + ' ' + own_switches(args, w)).split()) for w in procs},
+        'hosts': {w: args.runs[w] for w in procs},
+        'switches': {w: ' '.join(args.host_args[w]) for w in procs},
         'sync_records': dict({w: len(r) for w, r in recs.items()}, shared=len(shared), differ=len(bad)),
         'first_record': {w: {'world_ms': v[0], 'turn': v[1]} if v else None for w, v in first.items()},
         'events': ev, 'lost': lost, 'chat': chat_report, 'status_dialogs': votes, 'host_migration': {w: v for w, v in migr.items() if v},
@@ -645,22 +657,15 @@ def main():
     ap.add_argument('--save', type=float, default=None, help='MIN: A saves the game MIN minutes in')
     ap.add_argument('--restore', action='store_true', help='then restore that save with the same players and play on')
     ap.add_argument('--wsl', default='', help='players (e.g. "b") that run the Linux host in WSL')
-    ap.add_argument('--wsl-extra', default='', help='more host switches for the WSL players')
-    ap.add_argument('--run', default=None, help=r'the host (A:\Games\star\builds\multiplayer\swgbrecomp.exe; '
-                    r'--cc: ...\multiplayer-cc\swgbrecomp_cc.exe)')
-    ap.add_argument('--exe', default=None, help=r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe '
-                    r'(--cc: battlegrounds_x1.exe there)')
-    ap.add_argument('--game', default=GAME_DEFAULT)
+    ap.add_argument('--run', type=run_arg, action='append', default=[], metavar='[WHO=]EXE',
+                    help='the host (default: the build of tools/swgb/runner.paths()); WHO=EXE: that player\'s')
+    ap.add_argument('--host-arg', type=who_arg, action='append', default=[], metavar='WHO=ARGS',
+                    help='more host switches for player WHO (a, b, c, d) or all')
+    ap.add_argument('--exe', default=None, help='the game\'s exe (default: work/ of the main checkout)')
+    ap.add_argument('--game', default=None,
+                    help='A\'s game folder (default: GAMES/multiplayer-base or -cc); made when missing')
     ap.add_argument('--out', default=None)
     ap.add_argument('--port', type=int, default=2300)
-    ap.add_argument('--template', default=r'A:\Games\star\swgb-recomp\game' if os.name == 'nt' else None,
-                    help='the shared install a missing --game folder is made from (hard links)')
-    ap.add_argument('--profiles', default=r'A:\Games\star\games\clone-campaigns' if os.name == 'nt' else None,
-                    help='--cc: the player.nf* a new --game folder starts with (an 800x600 profile)')
-    ap.add_argument('--run-b', help='B runs this host instead of --run (another build: SWGB_MP_ANY_BUILD)')
-    ap.add_argument('--extra', default='', help='more host switches for every run')
-    ap.add_argument('--extra-a', default='', help='more host switches for A (the host) only')
-    ap.add_argument('--extra-b', default='', help='more host switches for B only')
     args = ap.parse_args()
     if args.restore and args.save is None:
         ap.error('--restore needs --save')
@@ -670,31 +675,26 @@ def main():
         ap.error('--wsl: players among %s' % WHO[:args.players])
     if args.wsl and not WSL_CHECKOUT:
         ap.error('--wsl needs WSL_CHECKOUT (the Linux path of a checkout with build-linux/ and work/)')
-    global MAIN_MULTI
-    if args.cc:
-        MAIN_MULTI = MAIN_MULTI_CC
-    if os.name == 'nt':
-        args.run = args.run or (r'A:\Games\star\builds\multiplayer-cc\swgbrecomp_cc.exe' if args.cc
-                                else r'A:\Games\star\builds\multiplayer\swgbrecomp.exe')
-        args.exe = args.exe or (r'A:\Games\star\swgb-recomp\work\battlegrounds_x1.exe' if args.cc
-                                else r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe')
-    else:   # Linux and macOS: this checkout's build and lift, a game folder under work/
-        root = os.path.dirname(HERE)
-        build = os.path.join(root, 'build-macos' if sys.platform == 'darwin' else 'build-linux')
-        args.run = args.run or os.path.join(build, 'swgbrecomp_cc' if args.cc else 'swgbrecomp')
-        args.exe = args.exe or os.path.join(root, 'work', 'battlegrounds_x1.exe' if args.cc else 'Battlegrounds.exe')
-        if args.game == GAME_DEFAULT:
-            args.game = os.path.join(root, 'work', 'games', 'multiplayer')
-        if not os.path.isdir(args.game):
-            soak.ensure_game(os.path.join(root, 'game'), args.game)
+    kind = 'cc' if args.cc else 'base'
+    args.lay = screens.layout(kind)
+    P = runner.paths()
+    args.runs = per_player(args.run or [('all', P.host(kind))], args.players, lambda old, new: new)
+    if len(args.runs) < args.players:
+        ap.error('--run: no host for %s (give --run EXE for every player)'
+                 % ', '.join(w for w in WHO[:args.players] if w not in args.runs))
+    if any(w in args.wsl for w, _ in args.run if w != 'all'):
+        ap.error('--run: a WSL player runs WSL_CHECKOUT\'s build-linux/')
+    args.host_args = per_player([(w, shlex.split(v)) for w, v in args.host_arg] + [('all', [])],
+                                args.players, lambda old, new: old + new)
+    args.exe = args.exe or P.exe(kind)
     args.out = os.path.abspath(args.out or os.path.join(os.getcwd(), 'mp-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
-    args.game = os.path.abspath(args.game)   # each run starts in its own folder
-    if not os.path.isdir(args.game) and args.template:   # A's folder, from the shared install
-        soak.ensure_game(args.template, args.game)
-        if args.cc and args.profiles and os.path.isdir(args.profiles):   # an 800x600 profile (test.py's)
-            for f in os.listdir(args.profiles):
-                if f.lower().startswith('player.nf'):
-                    shutil.copy2(os.path.join(args.profiles, f), os.path.join(args.game, f))
+    # A's folder (each run starts in its own folder); the others are copies of it
+    if args.game:
+        args.game = os.path.abspath(args.game)
+        if not os.path.isdir(args.game):
+            runner.ensure_game(P.template, args.game, P.cc_profiles if args.cc else None)
+    else:
+        args.game = P.game('multiplayer', kind)
     results = [play(args)]
     if args.restore:
         results.append(play(args, phase='r_'))

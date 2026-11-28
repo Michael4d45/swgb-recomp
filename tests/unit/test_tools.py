@@ -1,11 +1,10 @@
-"""The tools' own tests, no game needed: tools/soak.py's scripts and log reading,
-tools/lift_check.py, tools/smooth_check.py, tools/test.py's image and --fps-log readers, perf_ab.py
-and mp_pair.py's sync compare.
+"""The tools' own tests, no game needed: tools/swgb's screens, paths and game folders,
+tools/soak.py's scripts and log reading, tools/lift_check.py, tools/smooth_check.py,
+tools/test.py's image and --fps-log readers, perf_ab.py and mp_pair.py's options and sync compare.
 
     py -3 -m unittest -v tests.unit.test_tools        (tools/test.py --level unit runs it)
 """
 import argparse
-import importlib
 import json
 import os
 import random
@@ -24,6 +23,9 @@ import mp_pair  # noqa: E402
 import perf_ab  # noqa: E402
 import soak  # noqa: E402
 import test as runner  # noqa: E402
+from swgb import runner as swgb_runner, screens  # noqa: E402
+
+BASE, CC = screens.layout('base'), screens.layout('cc')
 
 LOG = r"""  registry: HKCU is private to A:\Games\star\games\testing-base-0
 entering 0x00632881
@@ -39,6 +41,168 @@ ICALL: unresolved VA 0x005648A0 from 0x00406E20
   nearest below: sub_0056480C (+0x94)
 [watchdog] 60 s: stopping
 """
+
+
+class Screens(unittest.TestCase):
+    """tools/swgb/screens.py: the layouts and the routes."""
+
+    def test_route_picks_each_screen_size(self):
+        # the main menu's Options, the size's own radio button, then Single Player: in that order,
+        # far enough apart for each screen to come up
+        for size in (800, 1024, 1280):
+            s = swgb_runner.Script()
+            start = screens.to_skirmish(s, BASE, 12, size)
+            clicks = [(t, w) for t, w in s.steps]
+            self.assertEqual([w for _, w in clicks[:3]],
+                             ['click:%d:%d' % xy for xy in (screens.MAIN_OPTIONS, screens.SCREEN_RADIO[size],
+                                                            screens.MAIN_SINGLE)])
+            self.assertEqual(clicks[-1], (start, 'click:%d:%d' % screens.SETUP_START))
+            self.assertTrue(all(b[0] - a[0] >= 5 for a, b in zip(clicks, clicks[1:])), clicks)
+
+    def test_hud_inside_the_screen_and_its_panels(self):
+        # every HUD place is on the interface band under the map, the minimap's centre in its panel
+        for size in (800, 1024, 1280, (1920, 1080), (1366, 768), (1024, 600)):
+            lay = screens.layout('base', size)
+            band = lay.h - screens.HUD[lay.base]['rows']
+            for name, (x, y) in list(lay.hud.items()) + [('grid', xy) for xy in lay.command_grid]:
+                self.assertTrue(0 <= x < lay.w and band <= y < lay.h, (size, name, x, y))
+            (mx, my, reach), (px, py, pw, ph) = lay.minimap, lay.minimap_panel
+            self.assertEqual((mx, my), (px + pw // 2, py + ph // 2), size)
+            self.assertLessEqual(reach, pw // 2 + 4, size)
+
+    def test_widescreen_moves_the_base_hud(self):
+        # WxH: the base layout at the bottom, centred; the game's own sizes: the art's places
+        self.assertEqual(BASE.hud['menu'], (768, 476))
+        self.assertEqual(screens.layout('base', 1024).hud['techtree'], (984, 731))
+        self.assertEqual(screens.layout('base', (1920, 1080)).hud['menu'], (1231 + 320, 850 + 56))
+        self.assertEqual(screens.layout('base', (1364, 768)).minimap[:2], (966 + 42, 919 - 256))
+        self.assertIsNone(screens.layout('base', (1920, 1080)).command_center)
+
+    def test_dialogs_centred_and_save_screens_scaled(self):
+        lay = screens.layout('base', 1024)
+        self.assertEqual(lay.game_menu['save'], (520, 302))              # centred: +112, +84
+        self.assertEqual(lay.game_menu['load'], (520, 335))
+        self.assertEqual(lay.yes, (417, 412))
+        self.assertEqual(lay.options_radio[1280], (133 + 112, 388 + 84))
+        self.assertEqual(lay.save_ok, (227, 727))                         # scaled by 1.28
+        wide = screens.layout('base', (1920, 1080))
+        self.assertEqual(wide.save_ok, (320 + 284, 28 + 969))             # the 1280x1024 screen, centred
+        self.assertEqual(screens.fit(1364, 768), (1024, 768))
+        self.assertEqual(screens.fit(1280, 720), (800, 600))
+
+    def test_games_differ_on_the_menus_only(self):
+        self.assertEqual(sorted(CC.missions), ['Confederacy', 'Galactic Republic'])
+        self.assertEqual(CC.save_ext, '.ga1')
+        self.assertEqual(CC.civ_items()[-1], 'Random')
+        self.assertEqual(len(CC.civ_items()), 9)
+        for boxes in list(CC.missions.values()) + list(BASE.missions.values()):
+            if boxes is not BASE.missions['Attichitcuk']:
+                self.assertEqual(boxes[0], screens.CAMPAIGN_MISSION1)
+        self.assertEqual(CC.hud, BASE.hud)
+        self.assertNotEqual(CC.sp_standard, BASE.sp_standard)
+
+    def test_layout_is_frozen(self):
+        import dataclasses
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            BASE.save_ext = '.ga1'
+
+
+def write(path, text):
+    with open(path, 'w') as f:
+        f.write(text)
+
+
+class Paths(unittest.TestCase):
+    """tools/swgb/runner.py's paths() and game folders."""
+
+    def checkout(self, d, local=None, worktree=False):
+        """A checkout in d/main (and d/wt, a worktree of it), with tools/local.json."""
+        main = os.path.join(d, 'main')
+        os.makedirs(os.path.join(main, 'tools'))
+        os.makedirs(os.path.join(main, '.git', 'worktrees', 'wt'))
+        if local is not None:
+            write(os.path.join(main, 'tools', 'local.json'), json.dumps(local))
+        if not worktree:
+            return main
+        wt = os.path.join(d, 'wt')
+        os.makedirs(os.path.join(wt, 'tools'))
+        write(os.path.join(wt, '.git'), 'gitdir: %s\n' % os.path.join(main, '.git', 'worktrees', 'wt'))
+        write(os.path.join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n')
+        return wt
+
+    def test_checkout_defaults(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self.checkout(d)
+            p = swgb_runner.paths(env={}, root=root)
+            self.assertIsNone(p.star)
+            self.assertEqual(p.main, root)
+            self.assertEqual(p.games, os.path.join(root, 'work', 'games'))
+            self.assertEqual(p.results, os.path.join(root, 'work', 'test-results'))
+            self.assertEqual(p.template, os.path.join(root, 'game'))
+            self.assertEqual(p.exe('cc'), os.path.join(root, 'work', 'battlegrounds_x1.exe'))
+            self.assertEqual(os.path.dirname(p.build), root)
+            self.assertGreaterEqual(p.max_jobs, 1)
+
+    def test_star_from_env_or_local_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            star = os.path.join(d, 'star')
+            root = self.checkout(d, local={'star': star, 'max_jobs': 3})
+            p = swgb_runner.paths(env={}, root=root)
+            self.assertEqual(p.main, os.path.join(star, 'swgb-recomp'))
+            self.assertEqual(p.build, os.path.join(star, 'builds', 'integration'))
+            self.assertIsNone(p.cc_profiles)                             # none made: the install's own
+            self.assertEqual(p.max_jobs, 3)
+            os.makedirs(os.path.join(star, 'games', 'clone-campaigns'))
+            self.assertEqual(swgb_runner.paths(env={}, root=root).cc_profiles,
+                             os.path.join(star, 'games', 'clone-campaigns'))
+            other = os.path.join(d, 'other')
+            p = swgb_runner.paths(env={'SWGB_STAR': other, 'SWGB_MAX_JOBS': '2'}, root=root)
+            self.assertEqual((p.games, p.max_jobs), (os.path.join(other, 'games'), 2))
+
+    def test_worktree_reads_the_main_checkouts_local_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            wt = self.checkout(d, local={'star': os.path.join(d, 'star'), 'build': os.path.join(d, 'b')}, worktree=True)
+            p = swgb_runner.paths(env={}, root=wt)
+            self.assertEqual((p.star, p.build), (os.path.join(d, 'star'), os.path.join(d, 'b')))
+            write(os.path.join(wt, 'tools', 'local.json'), '{}')    # its own wins
+            self.assertIsNone(swgb_runner.paths(env={}, root=wt).star)
+
+    def test_unknown_key_is_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self.checkout(d, local={'stars': 'x'})
+            with self.assertRaises(ValueError):
+                swgb_runner.paths(env={}, root=root)
+
+    def test_ensure_game_completes_a_cut_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            tpl, dst, prof = os.path.join(d, 'tpl'), os.path.join(d, 'g'), os.path.join(d, 'prof')
+            for sub in ('Data', 'SaveGame'):
+                os.makedirs(os.path.join(tpl, sub))
+            os.makedirs(prof)
+            for f in ('Data/genie.dat', 'Data/sounds.drs', 'SaveGame/a.gax', 'player.nfx'):
+                write(os.path.join(tpl, f), 'template')
+            write(os.path.join(prof, 'player.nf1'), '800x600')
+            os.makedirs(os.path.join(dst, 'Data'))                          # a copy cut short
+            os.link(os.path.join(tpl, 'Data', 'genie.dat'), os.path.join(dst, 'Data', 'genie.dat'))
+            swgb_runner.ensure_game(tpl, dst, prof)
+            self.assertTrue(os.path.exists(os.path.join(dst, 'Data', 'sounds.drs')))
+            self.assertTrue(os.path.exists(os.path.join(dst, swgb_runner.MARKER)))
+            with open(os.path.join(dst, 'player.nf1')) as f:
+                self.assertEqual(f.read(), '800x600')
+            self.assertEqual(os.stat(os.path.join(dst, 'SaveGame', 'a.gax')).st_nlink, 1)   # a copy, not a link
+            self.assertEqual(os.stat(os.path.join(dst, 'Data', 'sounds.drs')).st_nlink, 2)
+            with self.assertRaises(FileNotFoundError):                      # no profile there: said, not skipped
+                swgb_runner.ensure_game(tpl, os.path.join(d, 'g2'), os.path.join(d, 'none'))
+
+
+class MachinePaths(unittest.TestCase):
+    def test_find(self):
+        import io
+        import machine_paths
+        lines = {'tools/x.py': ["help=r'A:\\Games\\star\\builds'\n", "print('disc:\\n')\n"],
+                 'tools/setup.ps1': ['Its drive (E:\\), an .iso\n']}
+        found = machine_paths.find(sorted(lines), lambda f: io.StringIO(''.join(lines[f])))
+        self.assertEqual([(f, n) for f, n, _ in found], [('tools/x.py', 1)])   # a word before X: is no drive
 
 
 class SoakTools(unittest.TestCase):
@@ -66,10 +230,20 @@ class SoakTools(unittest.TestCase):
 
     def test_pick(self):
         s = soak.Script()
-        t = soak.pick(soak.DD_SIZE, 2, s, 10)
+        t = screens.pick(s, 10, screens.DD_SIZE, 2)
         self.assertEqual(t, 12.5)
-        (ax, ay), (ix, iy), step = soak.DD_SIZE
+        (ax, ay), (ix, iy), step = screens.DD_SIZE
         self.assertEqual(s.steps, [(10, 'click:%d:%d' % (ax, ay)), (11.2, 'click:%d:%d' % (ix, iy + 2 * step))])
+
+    def test_skirmish_civs_are_parameters(self):
+        s = soak.Script()
+        _, what = soak.setup_skirmish(s, CC, random.Random(3), 20, my_civ='Republic', civs=['Confederacy'])
+        self.assertEqual(what['my_civ'], 'Republic')
+        self.assertEqual(set(what['civs']), {'Confederacy'})
+        item = 'click:%d:%d' % (screens.CIV_ITEM_X, screens.MY_CIV_ROW + 25 + 21 * CC.civ_items().index('Republic'))
+        self.assertIn(item, [w for _, w in s.steps])
+        _, drawn = soak.setup_skirmish(soak.Script(), CC, random.Random(3), 20)   # the same seed, drawn
+        self.assertNotIn('my_civ', drawn)
 
 
 class SmoothCheck(unittest.TestCase):
@@ -107,16 +281,7 @@ class SmoothCheck(unittest.TestCase):
 
 
 class SoakPlans(unittest.TestCase):
-    """The campaign, in-game Load and --screen scripts. soak's coordinates are module globals
-    that --cc and --screen change: each test starts from a fresh import."""
-
-    def setUp(self):
-        global soak
-        soak = importlib.reload(soak)
-
-    def tearDown(self):
-        global soak
-        soak = importlib.reload(soak)
+    """The campaign, in-game Load and --screen scripts."""
 
     def args(self, **kw):
         a = dict(campaign='', first=1, last=None, unlocked=False, minutes=5, speed='fast', save=True,
@@ -126,57 +291,52 @@ class SoakPlans(unittest.TestCase):
 
     def test_missions_pass_through(self):
         s = soak.Script()
-        end, what = soak.plan_missions(s, random.Random(1), 'o', self.args(campaign='Boss Nass', first=3), 'g', 7)
+        end, what = soak.plan_missions(s, BASE, random.Random(1), 'o', self.args(campaign='Boss Nass', first=3), 'g', 7, 20)
         self.assertEqual(what['missions'], [3, 4, 5, 6, 7])
         self.assertEqual(what['passed_through'], [1, 2])
         text = s.text()
-        boxes = soak.MISSION_BOXES['Boss Nass']
+        boxes = BASE.missions['Boss Nass']
         clicks = [ln.split(':', 1)[1] for ln in text.splitlines()]
         for xy in boxes:                                   # every box, in order
             self.assertIn('click:%d:%d' % xy, clicks)
         order = [clicks.index('click:%d:%d' % xy) for xy in boxes]
         self.assertEqual(order, sorted(order))
         self.assertEqual(text.count('score_m'), 2 * 7)                # each mission's score screen, two shots
-        self.assertEqual(sum(1 for c in clicks if c == 'click:%d:%d' % soak.CAMPAIGN_OK), 1)   # mission 1 only
-        self.assertEqual(sum(1 for c in clicks if c == 'click:%d:%d' % soak.SCORE_MENU), 7)
+        self.assertEqual(sum(1 for c in clicks if c == 'click:%d:%d' % screens.CAMPAIGN_OK), 1)   # mission 1 only
+        self.assertEqual(sum(1 for c in clicks if c == 'click:%d:%d' % screens.SCORE_MENU), 7)
         self.assertGreater(end, 5 * 5 * 60)
 
     def test_missions_unlocked(self):
         s = soak.Script()
-        _, what = soak.plan_missions(s, random.Random(1), 'o', self.args(campaign='OOM-9', first=6, unlocked=True),
-                                     'g', 7)
+        _, what = soak.plan_missions(s, BASE, random.Random(1), 'o', self.args(campaign='OOM-9', first=6, unlocked=True),
+                                     'g', 7, 20)
         self.assertEqual((what['missions'], what['passed_through']), ([6, 7], []))
-        self.assertNotIn('click:%d:%d' % soak.CAMPAIGN_OK, s.text())
+        self.assertNotIn('click:%d:%d' % screens.CAMPAIGN_OK, s.text())
 
     def test_republic_after_confederacy(self):
-        soak.clone_campaigns()
         s = soak.Script()
-        _, what = soak.plan_missions(s, random.Random(1), 'o', self.args(campaign='Galactic Republic', first=2),
-                                     'g', 7)
+        _, what = soak.plan_missions(s, CC, random.Random(1), 'o', self.args(campaign='Galactic Republic', first=2),
+                                     'g', 7, 20)
         self.assertEqual(what['passed_through'], ['Confederacy %d' % m for m in range(1, 8)] + [1])
         self.assertEqual(what['missions'], list(range(2, 8)))
         text = s.text()
-        self.assertLess(text.index('click:%d:%d' % soak.CAMPAIGNS['Confederacy']),
-                        text.index('click:%d:%d' % soak.CAMPAIGNS['Galactic Republic']))
+        self.assertLess(text.index('click:%d:%d' % CC.campaigns['Confederacy']),
+                        text.index('click:%d:%d' % CC.campaigns['Galactic Republic']))
         self.assertEqual(runner.soak_missions(['--mode', 'missions', '--campaign', 'Galactic Republic',
                                                '--first', '2']), (6, 8))
 
-    def test_cc_tables(self):
-        soak.clone_campaigns()
-        self.assertEqual(sorted(soak.MISSION_BOXES), ['Confederacy', 'Galactic Republic'])
-        self.assertEqual(soak.SAVE_EXT, '.ga1')
-        for boxes in soak.MISSION_BOXES.values():
-            self.assertEqual(boxes[0], soak.CAMPAIGN_MISSION1)
-
-    def test_screen_1024(self):
-        soak.use_screen(1024)
-        self.assertEqual(soak.GAME_MENU['save'], (520, 302))      # centred: +112, +84
-        self.assertEqual(soak.GAME_MENU_LOAD, (520, 335))
-        self.assertEqual(soak.LOAD_YES, (417, 412))
-        self.assertEqual(soak.SAVE_OK, (227, 727))                # scaled by 1.28
-        self.assertEqual(soak.HUD_RIGHT['menu'], (983, 624))
-        x0, y0, x1, y1 = soak.MAP_VIEW
-        self.assertEqual((x1, y1 < 768 - 200), (1023, True))
+    def test_screen_1024_plays_at_1024(self):
+        # --screen 1024: the size picked first, then every in-game click on the 1024 layout
+        lay = screens.layout('base', 1024)
+        s = soak.Script()
+        t0 = screens.set_screen(s, 12, 1024)
+        soak.plan_play(s, lay, random.Random(4), 'o', self.args(mode='monkey', idle_campaign=False, my_civ=None, civs=[]),
+                       'monkey', 9, t0)
+        clicks = [w for _, w in s.steps if w.startswith('click:')]
+        self.assertEqual(clicks[1], 'click:%d:%d' % screens.SCREEN_RADIO[1024])
+        self.assertIn('click:%d:%d' % lay.hud['menu'], clicks)
+        self.assertNotIn('click:%d:%d' % BASE.hud['menu'], clicks)
+        self.assertIn('click:%d:%d' % lay.save_ok, clicks)
 
     def test_ingame_load(self):
         with tempfile.TemporaryDirectory() as d:
@@ -184,36 +344,30 @@ class SoakPlans(unittest.TestCase):
             for n in ('aaa.gax', 'zzz.gax', 'other.ga1'):
                 open(os.path.join(d, 'SaveGame', n), 'w').close()
             s = soak.Script()
-            end, what = soak.plan_ingame_load(s, random.Random(2), 'o', self.args(minutes=10), d, 9)
+            end, what = soak.plan_ingame_load(s, BASE, random.Random(2), 'o', self.args(minutes=10), d, 9, 20)
         self.assertEqual(what['save'], 'soak9')
         self.assertEqual(what['save_row'], 1)                     # aaa, soak9, zzz
         text = s.text()
-        load = text.index('click:%d:%d' % soak.GAME_MENU_LOAD)
-        self.assertLess(text.index('click:%d:%d' % soak.GAME_MENU['save']), load)
-        self.assertLess(load, text.index('click:%d:%d' % soak.LOAD_YES))
-        self.assertIn('click:300:%d' % (soak.INGAME_LOAD[1] + soak.INGAME_LOAD[2]), text)
+        load = text.index('click:%d:%d' % BASE.game_menu['load'])
+        self.assertLess(text.index('click:%d:%d' % BASE.game_menu['save']), load)
+        self.assertLess(load, text.index('click:%d:%d' % BASE.yes))
+        self.assertIn('click:300:%d' % (BASE.load_list[1] + BASE.load_list[2]), text)
 
     def test_monkey_leaves_room_for_a_save(self):
         # Its panels and game menu end with Escapes 5-6 s later: none may land on a save at t1.
         for seed in range(200):
             s = soak.Script()
-            soak.monkey(s, random.Random(seed), 0, 100, 'o')
+            soak.monkey(s, BASE, random.Random(seed), 0, 100, 'o')
             late = [st for st in s.steps if st[0] > 100 and not st[1].startswith('shot=')]
             self.assertTrue(all(t < 102.1 for t, _ in late), (seed, late))
 
     def test_saved_row_counts_recorded_games(self):
         # Clone Campaigns' list: its saves and its recorded games, alphabetical.
-        soak.clone_campaigns()
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, 'SaveGame'))
             for n in ('eh.ga1', 'recorded game -  21-Jan-2023.mg1', 'zz.gax', 'b.mgx'):
                 open(os.path.join(d, 'SaveGame', n), 'w').close()
-            self.assertEqual(soak.saved_row(d, 'soak9'), 2)
-
-    def test_screen_option_and_check(self):
-        s = soak.Script()
-        soak.set_screen(s, 12, 1280)
-        self.assertEqual(s.steps, [(12, 'click:40:490'), (18, 'click:453:443')])
+            self.assertEqual(screens.saved_row(CC, d, 'soak9'), 2)
 
 
 class LiftCheck(unittest.TestCase):
@@ -264,20 +418,6 @@ class LiftCheck(unittest.TestCase):
 
 
 class ResCheck(unittest.TestCase):
-    def test_fit(self):
-        self.assertEqual(res_check.fit(1920, 1080), (1280, 1024))
-        self.assertEqual(res_check.fit(2560, 1440), (1280, 1024))
-        self.assertEqual(res_check.fit(1364, 768), (1024, 768))
-        self.assertEqual(res_check.fit(1280, 720), (800, 600))
-        self.assertEqual(res_check.fit(1024, 768), (1024, 768))
-
-    def test_hud_button(self):
-        # the game's own sizes: the art's places; WxH: the 1280 layout at the bottom, centred
-        self.assertEqual(res_check.hud_button(800, 600, 0), (768, 480))
-        self.assertEqual(res_check.hud_button(1024, 768, 4), (983, 732))
-        self.assertEqual(res_check.hud_button(1920, 1080, 0), (1230 + 320, 852 + 56))
-        self.assertEqual(res_check.hud_button(1364, 768, 0), (1230 + 42, 852 - 256))
-
     def _shots(self, w, h):
         import numpy as np
         before = np.full((h, w), 90, dtype=np.int16)       # the map
@@ -420,9 +560,9 @@ class Runner(unittest.TestCase):
         import numpy as np
         from PIL import Image
         self.assertEqual([runner.side_column(d, 3) for d in range(8)], [0, 1, 2, 2, 1, 0, 0, 1])
-        self.assertEqual(runner.hud_base(1920, 1080), (1280, 250))
-        self.assertEqual(runner.hud_base(1152, 864), (1024, 200))
-        self.assertEqual(runner.hud_base(1024, 600), (800, 170))
+        self.assertEqual(runner.hud_band(1920, 1080), (1280, 250))
+        self.assertEqual(runner.hud_band(1152, 864), (1024, 200))
+        self.assertEqual(runner.hud_band(1024, 600), (800, 170))
         W, H, bw, bh = 1920, 1080, 1280, 250
         dx, band = (W - bw) // 2, 12
         rng = np.random.default_rng(1)
@@ -523,15 +663,14 @@ class PerfAB(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             for name, (plan, extra, size) in perf_ab.SCENARIOS.items():
                 s, t0, t1 = plan('base', d, size)
-                steps = dict((t, w) for t, w in s.steps)
+                clicks = [w for _, w in sorted(s.steps) if w.startswith('click')]
                 self.assertLess(t0, t1, name)
                 if size is None:
                     continue
                 # a game folder remembers Screen Size: each game picks its own before Single Player
-                self.assertEqual(steps[12], 'click:%d:%d' % perf_ab.MAIN_OPTIONS, name)
-                self.assertEqual(steps[19], 'click:%d:%d' % perf_ab.SIZE_RADIO[size], name)
-                self.assertEqual(size == 'res', '--res' in extra, name)
-                self.assertGreater(min(t for t, w in s.steps if w.startswith('click') and t > 19), 19, name)
+                self.assertEqual(clicks[:3], ['click:%d:%d' % xy for xy in (
+                    screens.MAIN_OPTIONS, screens.SCREEN_RADIO[size], screens.MAIN_SINGLE)], name)
+                self.assertEqual(size == 1280, '--res' in extra, name)
 
     def test_mp_sync_compare(self):
         rec = lambda p, turn, ck: (0, (p, 1000 * turn, turn, 1000 * turn, ck, 7, 0, 5, 9))   # noqa: E731
@@ -594,7 +733,7 @@ class MpPair(unittest.TestCase):
         chats = self.mp.chat_times(3, 4)
         self.assertEqual(len(chats), 6)
         self.assertEqual([w for _, w, _ in chats], list('abcabc'))
-        plan = self.mp.game_plan(random.Random(1), 'b', 1, 3, a, 'out')
+        plan = self.mp.game_plan(random.Random(1), BASE, 'b', 1, 3, a, 'out')
         self.assertEqual(plan, sorted(plan, key=lambda s: s[0]))
         steps = [s for _, s in plan]
         self.assertTrue(any('drop_after' in st for st in steps))
@@ -602,12 +741,27 @@ class MpPair(unittest.TestCase):
         t_chat = next(t for t, s in plan if s == 'enter')
         near = [s for t, s in plan if t_chat - 2 <= t <= t_chat + 5 and s.startswith(('click', 'rclick'))]
         self.assertEqual(near, [])          # no clicks while typing
-        plan_c = self.mp.game_plan(random.Random(1), 'c', 2, 3, a, 'out')
+        plan_c = self.mp.game_plan(random.Random(1), BASE, 'c', 2, 3, a, 'out')
         self.assertFalse(any('drop_after' in s for _, s in plan_c))
-        text, wd = self.mp.script('b', 1, 3, a, 'out')
+        text, wd = self.mp.script(BASE, 'b', 1, 3, a, 'out')
         self.assertTrue(text.startswith('on:%s\n' % self.mp.ON_MENU))
-        _, wd_a = self.mp.script('a', 0, 3, a, 'out')
+        self.assertIn('click:%d:%d' % BASE.main_multi, text)
+        self.assertIn('click:%d:%d' % CC.main_multi, self.mp.script(CC, 'b', 1, 3, a, 'out')[0])
+        _, wd_a = self.mp.script(BASE, 'a', 0, 3, a, 'out')
         self.assertEqual(wd_a - wd, self.mp.B_DELAY + self.mp.STEP)
+
+    def test_per_player_options(self):
+        mp = self.mp
+        self.assertEqual(mp.run_arg('b=X/o2.exe'), ('b', 'X/o2.exe'))
+        self.assertEqual(mp.run_arg('build/swgbrecomp.exe'), ('all', 'build/swgbrecomp.exe'))
+        with self.assertRaises(argparse.ArgumentTypeError):
+            mp.who_arg('e=--smooth')
+        runs = mp.per_player([('b', 'o2'), ('all', 'o1')], 3, lambda old, new: new)
+        self.assertEqual(runs, {'a': 'o1', 'b': 'o2', 'c': 'o1'})      # a player's own beats `all`
+        import shlex
+        args = mp.per_player([('a', shlex.split('--smooth --fps 120')), ('all', ['--mp-cross']), ('all', [])], 2,
+                             lambda old, new: old + new)
+        self.assertEqual(args, {'a': ['--mp-cross', '--smooth', '--fps', '120'], 'b': ['--mp-cross']})
 
     def test_chat_shown(self):
         try:

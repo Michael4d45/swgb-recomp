@@ -49,41 +49,25 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import soak  # noqa: E402
+from swgb import runner, screens  # noqa: E402
 
 FPS = re.compile(r'\[fps\]\s+([0-9.]+)s mode (\d+) cpu\s+([0-9.]+)% presents ([0-9.]+)/s changed ([0-9.]+)/s'
                  r'(?:.*? steps ([0-9.]+)/s)?')
 SAVE = re.compile(r'.*\.ga[x0-9]$', re.I)     # saved games: .ga1 (the base game), .ga2, ...
 SHOWN = re.compile(r'\[present\] ([0-9.]+) s: (\d+) presents, (\d+) shown')
-EXE_DEFAULT = {'base': r'A:\Games\star\swgb-recomp\work\Battlegrounds.exe',
-               'cc': r'A:\Games\star\swgb-recomp\work\battlegrounds_x1.exe'}
-HOST = {'base': 'swgbrecomp.exe', 'cc': 'swgbrecomp_cc.exe'}
-SP_STANDARD = {'base': (600, 168), 'cc': (603, 228)}
-SP_SAVED = {'base': (603, 286), 'cc': (603, 344)}
 GAME_MINUTES = 3
-MAIN_OPTIONS = (40, 490)                         # the main menu's Options
-SIZE_RADIO = {800: (453, 383), 'res': (453, 443)}   # its Screen Size: 800x600, the third (--res)
-
-
-def screen_size(s, size):
-    """Options -> Screen Size, as test.py's widescreen check: a game folder remembers the choice
-    (its private HKCU), so every scenario in a game sets its own. Returns when the menu is back."""
-    s.click(12, MAIN_OPTIONS)
-    s.click(19, SIZE_RADIO[size])
-    return 25
 
 
 def skirmish(kind, out, size=800):
-    """test.py's perf skirmish: (steps, the game's start, the end)."""
-    s = soak.Script()
-    t = screen_size(s, size)
-    s.click(t, soak.MAIN_SINGLE)
-    s.click(t + 15, SP_STANDARD[kind])
-    t += 33
-    t = soak.pick(soak.DD_OTHERS, 0, s, t)          # one computer
-    t = soak.pick(soak.DD_LOCATION, 13, s, t)       # Savannah
-    t = soak.pick(soak.DD_SIZE, 0, s, t)            # Tiny
-    t = soak.pick(soak.DD_DIFFICULTY, 0, s, t)      # Easiest
-    s.click(t + 2, soak.SETUP_START)
+    """test.py's perf skirmish: (steps, the game's start, the end). A game folder remembers its
+    Screen Size (its private HKCU), so every scenario in a game sets its own (main menu, Options)."""
+    s = runner.Script()
+    t = screens.to_setup(s, screens.layout(kind), 12, size)
+    t = screens.pick(s, t, screens.DD_OTHERS, 0)          # one computer
+    t = screens.pick(s, t, screens.DD_LOCATION, 13)       # Savannah
+    t = screens.pick(s, t, screens.DD_SIZE, 0)            # Tiny
+    t = screens.pick(s, t, screens.DD_DIFFICULTY, 0)      # Easiest
+    s.click(t + 2, screens.SETUP_START)
     start = t + 72
     end = start + GAME_MINUTES * 60
     s.at(start, 'shot=%s' % os.path.join(out, 'start.bmp'))
@@ -94,39 +78,36 @@ def skirmish(kind, out, size=800):
 
 
 def loaded(kind, out, size=800):
-    s = soak.Script()
-    t = screen_size(s, size)
-    s.click(t, soak.MAIN_SINGLE)
-    s.click(t + 15, SP_SAVED[kind])
-    s.click(t + 25, (300, soak.SAVED_ROW0))         # row 0: the bench folder holds the one save
-    s.click(t + 28, soak.SAVED_OK)
-    start = t + 100
+    s = runner.Script()
+    lay = screens.layout(kind)
+    t = screens.saved_game(s, lay, screens.set_screen(s, 12, size), 0)   # row 0: the bench folder's one save
+    start = t + 72
     s.at(start, 'shot=%s' % os.path.join(out, 'start.bmp'))
     end = start + GAME_MINUTES * 60
     t = start + 5
     while t < end - 10:                              # the idle player: home, a worker, now and then
         s.at(t, 'h')
-        s.click(t + 1, soak.COMMAND_GRID[0])
+        s.click(t + 1, lay.command_grid[0])
         t += 30
     return s, start + 20, end - 5
 
 
 def menus(kind, out, size=None):
-    s = soak.Script()
+    s = runner.Script()
     s.at(65, 'shot=%s' % os.path.join(out, 'start.bmp'))
     return s, 20, 70
 
 
 WIDE = ['--res', '2560x1440', '--fullscreen']
-SCENARIOS = {   # name: (script, host switches, Screen Size)
+SCENARIOS = {   # name: (script, host switches, Screen Size: 800, or 1280 for the third, --res)
     'menus': (menus, [], None),
     'sk800': (skirmish, [], 800),
     'sk800-off': (skirmish, ['--fps', 'off'], 800),
-    'sk1440': (skirmish, WIDE, 'res'),
-    'sk1440-off': (skirmish, WIDE + ['--fps', 'off'], 'res'),
+    'sk1440': (skirmish, WIDE, 1280),
+    'sk1440-off': (skirmish, WIDE + ['--fps', 'off'], 1280),
     'late': (loaded, [], 800),
     'late-off': (loaded, ['--fps', 'off'], 800),
-    'late1440': (loaded, WIDE, 'res'),
+    'late1440': (loaded, WIDE, 1280),
 }
 
 
@@ -159,17 +140,15 @@ def run_one(build, exe, kind, game, scenario, out, profile=False):
     os.makedirs(out, exist_ok=True)
     plan, extra, size = SCENARIOS[scenario]
     s, t0, t1 = plan(kind, out, size)
-    keys = os.path.join(out, 'keys.txt')
-    with open(keys, 'w', newline='\n') as fh:
-        fh.write(s.text() + '\n')
+    keys = s.write(os.path.join(out, 'keys.txt'))
     wd = int(t1 + 10)
-    cmd = [os.path.join(build, HOST[kind]), '--run', '--multi', '--headless', '--exe', exe, '--game', game,
-           '--watchdog', str(wd), '--keys', '@' + keys, '--fps-log', '--present-log'] + extra
+    cmd = runner.host_cmd(os.path.join(build, runner.host_name(kind)), exe, game, wd, keys,
+                          '--fps-log', '--present-log', *extra)
     if profile:
         cmd += ['--profile', os.path.join(out, 'profile.txt'), '--profile-window', '%d:%d' % (t0, t1)]
     env = dict(os.environ, SWGB_PAINT_HEADLESS='1')
     log = os.path.join(out, 'run.log')
-    p = subprocess.Popen(cmd, cwd=out, env=env, stdout=open(log, 'w'), stderr=subprocess.STDOUT)
+    p = runner.popen(cmd, cwd=out, env=env, stdout=open(log, 'w'), stderr=subprocess.STDOUT)
     return p, log, (t0, t1), wd
 
 
@@ -177,17 +156,13 @@ def finish(p, log, window, wd):
     try:
         rc = p.wait(timeout=wd + 120)
     except subprocess.TimeoutExpired:
-        soak.kill_tree(p)                            # only the PID this tool started
+        runner.kill_tree(p)                          # only the PID this tool started
         rc = 'killed'
     text = open(log, encoding='utf-8', errors='replace').read()
-    ev = [l.strip() for l in text.splitlines() if soak.EVENTS.search(l)]
     f = figures(text, *window) or {}
-    modes = re.findall(r'SetDisplayMode\((\d+)(?:, |x)(\d+)', text)
-    f.update(exit=rc, events=len(ev), mode='%sx%s' % modes[-1] if modes else None)
-    for b in [n for n in os.listdir(os.path.dirname(log)) if n.endswith('.bmp')]:
-        bmp = os.path.join(os.path.dirname(log), b)
-        subprocess.run(['ffmpeg', '-loglevel', 'error', '-y', '-i', bmp, bmp[:-4] + '.png'])
-        os.remove(bmp)
+    modes = runner.modes(text)
+    f.update(exit=rc, events=len(runner.events(text)), mode='%dx%d' % modes[-1] if modes else None)
+    runner.to_png(os.path.dirname(log))
     return f
 
 
@@ -240,23 +215,21 @@ def report(table, builds):
 def make_save(build, exe, kind, game, minutes, out):
     """7 computers, 4 against 4, played idle for `minutes`, saved as `late`."""
     os.makedirs(out, exist_ok=True)
-    s = soak.Script()
-    soak.SHOT_DIR[0] = out
-    t, what = soak.setup_fixed(s, 20, others=7, size=3, diff=2, teams=[1, 1, 1, 1, 2, 2, 2, 2], loc=13)
+    s = runner.Script()
+    lay = screens.layout(kind)
+    t, what = soak.setup_fixed(s, lay, 20, out, others=7, size=3, diff=2, teams=[1, 1, 1, 1, 2, 2, 2, 2], loc=13)
     start = t + 70
-    t = soak.fast_speed(s, start)
+    t = screens.fast_speed(s, lay, start)
     import random
     rnd = random.Random(7)
     end = start + minutes * 60
-    soak.habits(s, rnd, t + 2, end - 25, None, out)
+    soak.habits(s, lay, rnd, t + 2, end - 25)
     soak.shots(s, start, end, out)
-    soak.save_game(s, end - 20, 'late')
-    keys = os.path.join(out, 'keys.txt')
-    open(keys, 'w', newline='\n').write(s.text() + '\n')
+    screens.save_game(s, lay, end - 20, 'late')
+    keys = s.write(os.path.join(out, 'keys.txt'))
     log = os.path.join(out, 'run.log')
-    cmd = [os.path.join(build, HOST[kind]), '--run', '--multi', '--headless', '--exe', exe, '--game', game,
-           '--watchdog', str(int(end + 15)), '--keys', '@' + keys, '--fps-log', '--files']
-    p = subprocess.Popen(cmd, cwd=out, stdout=open(log, 'w'), stderr=subprocess.STDOUT)
+    cmd = runner.host_cmd(os.path.join(build, runner.host_name(kind)), exe, game, end + 15, keys, '--fps-log', '--files')
+    p = runner.popen(cmd, cwd=out, stdout=open(log, 'w'), stderr=subprocess.STDOUT)
     print('make-save: pid %d, %d s' % (p.pid, end + 15), flush=True)
     f = finish(p, log, (start + 60, end - 30), int(end + 15))
     saved = [n for n in os.listdir(os.path.join(game, 'SaveGame')) if SAVE.match(n) and n.lower().startswith('late.')]
@@ -275,23 +248,23 @@ def main():
     ap.add_argument('--pairs', action='store_true', help="run a round's builds at once")
     ap.add_argument('--cc', action='store_true', help="Clone Campaigns' host and exe")
     ap.add_argument('--exe', default=None)
-    ap.add_argument('--game', default=r'A:\Games\star\swgb-recomp\game', help='the template game folder')
+    ap.add_argument('--game', default=None, help='the template game folder (default: game/ of the main checkout)')
     ap.add_argument('--save', default=None, help='late: the save to load (--make-save writes one)')
     ap.add_argument('--profile', action='store_true', help='one --profile run per build and scenario as well')
     ap.add_argument('--make-save', type=float, default=None, metavar='MINUTES')
-    ap.add_argument('--prefix', default='perfab', help=r'game folders: A:\Games\star\games\PREFIX-LABEL')
+    ap.add_argument('--prefix', default='perfab', help='game folders: GAMES/PREFIX-KIND-LABEL (runner.paths())')
     ap.add_argument('--out', default=None)
     a = ap.parse_args()
     kind = 'cc' if a.cc else 'base'
-    exe = a.exe or EXE_DEFAULT[kind]
+    P = runner.paths()
+    exe = a.exe or P.exe(kind)
+    a.game = a.game or P.template
     builds = [b.split('=', 1) for b in a.build]
     out = os.path.abspath(a.out or os.path.join(os.getcwd(), 'perfab-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')))
-    games_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(a.game.rstrip('\\/')))), 'games') \
-        if os.name != 'nt' else r'A:\Games\star\games'
     games = {}
     for label, _ in builds:
-        g = os.path.join(games_root, '%s-%s-%s' % (a.prefix, kind, label))
-        soak.ensure_game(a.game, g)
+        g = os.path.join(P.games, '%s-%s-%s' % (a.prefix, kind, label))
+        runner.ensure_game(a.game, g, P.cc_profiles if kind == 'cc' else None)
         games[label] = g
     if a.make_save is not None:
         label, build = builds[0]

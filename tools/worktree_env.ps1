@@ -35,13 +35,19 @@
 #>
 param(
     [Parameter(Mandatory)] [string] $Name,
-    [string] $Root = 'A:\Games\star',
+    [string] $Root = '',            # the shared workspace; default: SWGB_STAR or tools\local.json's "star"
     [switch] $Build,
     [switch] $OwnGen,
     [switch] $CloneCampaigns,
     [switch] $FreshGame
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Root) {
+    # tools\swgb\runner.py's paths(): the one place the tools' default paths come from
+    $Root = (& py -3 (Join-Path $PSScriptRoot 'swgb\runner.py') | ConvertFrom-Json).star
+    if ($LASTEXITCODE) { throw "tools\swgb\runner.py failed ($LASTEXITCODE)" }
+    if (-not $Root) { throw 'no shared workspace: set SWGB_STAR, or "star" in tools\local.json (docs\parallel-work.md)' }
+}
 $wt = (git -C $PSScriptRoot rev-parse --show-toplevel).Trim() -replace '/', '\'
 $main = Join-Path $Root 'swgb-recomp'
 $sharedGame = Join-Path $main 'game'
