@@ -454,6 +454,8 @@ UNITS = {
               'the films: AVI headers, --films names, the film palette, dithering, the A/V clock, drawing into 8 bits'),
     'keys': (['tests/unit/keys_test.c', RT + 'keyscript.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib'], [],
              'the --keys parser: every step kind, @FILE, drags, modifiers, live steps; window places, on:NAME waits'),
+    'reg_isolate': (['tests/unit/reg_isolate_test.c', RT + 'reg_isolate.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['advapi32.lib'], [],
+                    '--multi HKCU isolation: missing keys seeded, existing private values preserved, real HKCU untouched'),
     'profile': (['tests/unit/profile_test.c', RT + 'profile_core.c'], FLAT, [], [],
                 '--profile\'s shared core: return addresses, the stack scan, counting samples, the file, its options'),
     'cdaudio': (['tests/unit/cdaudio_test.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['winmm.lib'], [],
@@ -1297,8 +1299,7 @@ def sliders_fn(kind):
         hive_sub = None
         if WIN:
             import winreg
-            hive_sub = (r'Software\swgb-recomp\hives\%s\Software\LucasArts Entertainment Company LLC'
-                        r'\Star Wars Galactic Battlegrounds\1.0') % re.sub(r'[\\/:]', '_', os.path.abspath(r.game))
+            hive_sub = '%s\\%s\\%s' % (runner.HIVES_KEY, runner.hive_name(r.game), runner.GAME_REG_KEYS[0])
             saved_vols = {}
             try:
                 with winreg.OpenKey(winreg.HKEY_CURRENT_USER, hive_sub) as k:

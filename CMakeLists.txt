@@ -70,6 +70,7 @@ add_executable(swgb
   src/runtime/recaudio.c
   src/runtime/coverage.c
   src/runtime/keyscript.c
+  src/runtime/reg_isolate.c
   src/runtime/dplay.c
   src/runtime/cdaudio.c
   third_party/miniz/miniz.c

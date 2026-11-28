@@ -44,6 +44,7 @@
 #include "present_d3d.h"
 #include "keyscript.h"
 #include "hostargs.h"
+#include "reg_isolate.h"
 #include "dplay.h"
 #include "cdaudio.h"
 #include "recaudio.h"
@@ -175,27 +176,13 @@ static void shim_CreateMutexA(void) {
 
 /* The game keeps its options (Screen Size, speeds, volumes) in HKCU. With
  * --multi, this process's HKCU is a private copy kept per game folder
- * (HKCU\Software\swgb-recomp\hives\<folder>, seeded from the real keys on its
- * first use): a run that changes Screen Size does not change it for the
- * user's game or for another agent's run, and the setting still persists
- * across runs of the same folder. Without --multi, nothing changes. */
-static void reg_isolate(const char* game_full) {
-    char name[MAX_PATH], key[MAX_PATH + 64];
-    static const char lucas[] = "Software\\LucasArts Entertainment Company LLC";
-    HKEY hive, sub;
-    DWORD created;
-    int n = 0;
-    for (const char* p = game_full; *p && n < MAX_PATH - 1; p++) name[n++] = (*p == '\\' || *p == '/' || *p == ':') ? '_' : *p;
-    name[n] = 0;
-    _snprintf(key, sizeof key - 1, "Software\\swgb-recomp\\hives\\%s", name);
-    key[sizeof key - 1] = 0;
-    if (RegCreateKeyExA(HKEY_CURRENT_USER, key, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hive, &created)) return;
-    if (created && !RegCreateKeyExA(hive, lucas, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &sub, NULL)) {
-        RegCopyTreeA(HKEY_CURRENT_USER, lucas, sub);
-        RegCloseKey(sub);
-    }
-    if (RegOverridePredefKey(HKEY_CURRENT_USER, hive)) printf("  registry: could not isolate HKCU\n");
-    else printf("  registry: HKCU is private to %s\n", game_full);
+ * (HKCU\Software\swgb-recomp\hives\<folder>, missing keys/values seeded from
+ * the real keys): a run that changes Screen Size does not change it for the
+ * user's game or for another agent's run, and settings persisted in the
+ * private hive stay intact across runs. Without --multi, nothing changes. */
+static void isolate_hkcu(const char* game_full) {
+    if (reg_isolate(game_full)) printf("  registry: HKCU is private to %s\n", game_full);
+    else printf("  registry: could not isolate HKCU\n");
 }
 
 static void shim_OutputDebugStringA(void) {
@@ -985,7 +972,7 @@ int main(int argc, char** argv) {
     GetFullPathNameA(exe, MAX_PATH, exe_full, NULL);
     GetFullPathNameA(game, MAX_PATH, game_full, NULL);
     cd_pick(cd);
-    if (g_multi && run) reg_isolate(game_full);
+    if (g_multi && run) isolate_hkcu(game_full);
     _snprintf(g_guest_exe, sizeof g_guest_exe - 1, "%s\\" GUEST_EXE, game_full);
     _snprintf(g_guest_cmdline, sizeof g_guest_cmdline - 1, "\"%s\"%s", g_guest_exe, guest_args);
 

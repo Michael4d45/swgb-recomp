@@ -214,7 +214,7 @@ class Paths(unittest.TestCase):
             write(os.path.join(prof, 'player.nf1'), '800x600')
             os.makedirs(os.path.join(dst, 'Data'))                          # a copy cut short
             os.link(os.path.join(tpl, 'Data', 'genie.dat'), os.path.join(dst, 'Data', 'genie.dat'))
-            swgb_runner.ensure_game(tpl, dst, prof)
+            swgb_runner.ensure_game(tpl, dst, prof, reset_screen=False)
             self.assertTrue(os.path.exists(os.path.join(dst, 'Data', 'sounds.drs')))
             self.assertTrue(os.path.exists(os.path.join(dst, swgb_runner.MARKER)))
             with open(os.path.join(dst, 'player.nf1')) as f:
@@ -222,7 +222,86 @@ class Paths(unittest.TestCase):
             self.assertEqual(os.stat(os.path.join(dst, 'SaveGame', 'a.gax')).st_nlink, 1)   # a copy, not a link
             self.assertEqual(os.stat(os.path.join(dst, 'Data', 'sounds.drs')).st_nlink, 2)
             with self.assertRaises(FileNotFoundError):                      # no profile there: said, not skipped
-                swgb_runner.ensure_game(tpl, os.path.join(d, 'g2'), os.path.join(d, 'none'))
+                swgb_runner.ensure_game(tpl, os.path.join(d, 'g2'), os.path.join(d, 'none'), reset_screen=False)
+
+    @staticmethod
+    def _make_profile(players):
+        import struct
+        import zlib
+        buf = bytearray(b'1.06' + struct.pack('<fIII', 1.1, 0, 0, len(players)))
+        for name, campaigns, w, h, tail_flags in players:
+            nb = name.encode('ascii')[:254]
+            buf += nb + b'\x00' * (255 - len(nb)) + struct.pack('<III', 0, 0, len(campaigns))
+            for cname, scens in campaigns:
+                cb = cname.encode('ascii')[:254]
+                buf += cb + b'\x00' * (255 - len(cb)) + struct.pack('<IIIII', 0, len(scens), 0, 1, 0) + bytes(scens)
+            block = bytearray(306)
+            struct.pack_into('<HH', block, 294, w, h)
+            block[298:306] = tail_flags
+            buf += block
+        comp = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, -15)
+        return comp.compress(bytes(buf)) + comp.flush(), len(buf)
+
+    def test_reset_profile_resolution(self):
+        import struct
+        import zlib
+        with tempfile.TemporaryDirectory() as d:
+            # 1-player (0 campaigns), 1-player (1 campaign with 7 scenarios), and 2-player profiles
+            p1, n1 = self._make_profile([('michael', [], 1280, 1024, b'\x01\x00\x02\x00\x00\x00\x00\x00')])
+            p2, n2 = self._make_profile([('wide', [('1CAM1', [1, 2, 3, 4, 5, 6, 7])], 2560, 1440, b'\x01\x00\x02\x00\x00\x00\x00\x01')])
+            p3, n3 = self._make_profile([('a', [], 1280, 1024, b'\x00' * 8), ('b', [('c', [0, 1])], 1024, 768, b'\x01' * 8)])
+            p0, _ = self._make_profile([])
+            tpl = os.path.join(d, 'tpl')
+            dst = os.path.join(d, 'dst')
+            os.makedirs(tpl)
+            for fname, raw in (('player.nfx', p1), ('player.nf1', p2), ('two.nfx', p3), ('empty.nfx', p0), ('junk.nfx', b'not-deflate')):
+                with open(os.path.join(tpl, fname), 'wb') as fh:
+                    fh.write(raw)
+            swgb_runner.ensure_game(tpl, dst, hive_root=None)
+            # Template stays untouched; dst player.nf* are reset to 800x600 with length/flags intact
+            self.assertEqual(open(os.path.join(tpl, 'player.nfx'), 'rb').read(), p1)
+            for fname, expected_len, n_camp in (('player.nfx', n1, 0), ('player.nf1', n2, 1)):
+                dec = zlib.decompress(open(os.path.join(dst, fname), 'rb').read(), -15)
+                self.assertEqual(len(dec), expected_len)
+                self.assertEqual(struct.unpack_from('<HH', dec, len(dec) - 12), (800, 600))
+                self.assertEqual(struct.unpack_from('<i', dec, 20 + 263)[0], n_camp)
+            self.assertFalse(swgb_runner.reset_profile_resolution(os.path.join(dst, 'player.nfx')))
+            self.assertTrue(swgb_runner.reset_profile_resolution(os.path.join(dst, 'two.nfx')))
+            dec3 = zlib.decompress(open(os.path.join(dst, 'two.nfx'), 'rb').read(), -15)
+            self.assertEqual(len(dec3), n3)
+            self.assertEqual(struct.unpack_from('<HH', dec3, len(dec3) - 12), (800, 600))
+            self.assertFalse(swgb_runner.reset_profile_resolution(os.path.join(dst, 'empty.nfx')))
+            self.assertFalse(swgb_runner.reset_profile_resolution(os.path.join(dst, 'junk.nfx')))
+
+    def test_seed_hive_screen_size(self):
+        if not swgb_runner.WIN:
+            return
+        import winreg
+        scratch = r'Software\swgb-recomp\unit-test-py-%d' % os.getpid()
+        with tempfile.TemporaryDirectory() as d:
+            tpl, dst = os.path.join(d, 'tpl'), os.path.join(d, 'dst')
+            os.makedirs(tpl)
+            try:
+                swgb_runner.ensure_game(tpl, dst, hive_root=scratch)
+                for sub in swgb_runner.GAME_REG_KEYS:
+                    key = '%s\\%s\\%s' % (scratch, swgb_runner.hive_name(dst), sub)
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+                        self.assertEqual(winreg.QueryValueEx(k, 'Screen Size')[0], 800)
+            finally:
+                # Delete scratch tree recursively without touching real hives
+                def del_tree(root, path):
+                    try:
+                        with winreg.OpenKey(root, path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as k:
+                            while True:
+                                try:
+                                    sub = winreg.EnumKey(k, 0)
+                                except OSError:
+                                    break
+                                del_tree(root, path + '\\' + sub)
+                        winreg.DeleteKey(root, path)
+                    except OSError:
+                        pass
+                del_tree(winreg.HKEY_CURRENT_USER, scratch)
 
 
 class MachinePaths(unittest.TestCase):

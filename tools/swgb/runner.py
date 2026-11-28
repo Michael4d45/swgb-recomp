@@ -5,8 +5,10 @@ import os
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
+import zlib
 from dataclasses import dataclass, fields
 
 TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -123,9 +125,85 @@ def paths(env=os.environ, root=ROOT):
 
 # ---- game folders --------------------------------------------------------------------------------
 MARKER = 'swgb-testing.txt'                 # written last: a folder without it is (re)completed
+HIVES_KEY = r'Software\swgb-recomp\hives'
+GAME_REG_KEYS = (
+    r'Software\LucasArts Entertainment Company LLC\Star Wars Galactic Battlegrounds\1.0',
+    r'Software\LucasArts Entertainment Company LLC\Star Wars Galactic Battlegrounds: Clone Campaigns\1.0',
+)
 
 
-def ensure_game(template, dst, profiles=None):
+def hive_name(game_dir):
+    """The private HKCU hive subkey name host.c's reg_isolate() uses for GAME_DIR."""
+    return re.sub(r'[\\/:]', '_', os.path.abspath(game_dir))[:259]
+
+
+def reset_profile_resolution(path, width=800, height=600):
+    """Set each player's saved Screen Size in a raw-deflated 1.06 player.nf* file to width x height.
+
+    Test folders copy player.nf* from the shared install, which may hold 1280x1024 or 2560x1440.
+    Returns True if rewritten, False if unchanged, empty, or not a recognized profile."""
+    with open(path, 'rb') as f:
+        raw = f.read()
+    try:
+        dec = zlib.decompressobj(-15)
+        buf = bytearray(dec.decompress(raw) + dec.flush())
+    except zlib.error:
+        return False
+    if len(buf) < 20 or buf[:4] != b'1.06':
+        return False
+    n_players = struct.unpack_from('<I', buf, 16)[0]
+    if n_players == 0 or n_players > 1024:
+        return False
+    pos = 20
+    res_offsets = []
+    for _ in range(n_players):
+        if pos + 267 > len(buf):
+            return False
+        n_campaigns = struct.unpack_from('<i', buf, pos + 263)[0]
+        pos += 267
+        if n_campaigns < 0 or n_campaigns > 1024:
+            return False
+        for _ in range(n_campaigns):
+            if pos + 275 > len(buf):
+                return False
+            n_scen = struct.unpack_from('<i', buf, pos + 259)[0]
+            pos += 275
+            if n_scen < 0 or pos + n_scen > len(buf):
+                return False
+            pos += n_scen
+        if pos + 306 > len(buf):
+            return False
+        res_offsets.append(pos + 294)
+        pos += 306
+    if pos != len(buf):
+        return False
+    changed = False
+    for off in res_offsets:
+        w, h = struct.unpack_from('<HH', buf, off)
+        if 320 <= w <= 8192 and 200 <= h <= 8192 and (w, h) != (width, height):
+            struct.pack_into('<HH', buf, off, width, height)
+            changed = True
+    if not changed:
+        return False
+    comp = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, -15)
+    with open(path, 'wb') as f:
+        f.write(comp.compress(bytes(buf)) + comp.flush())
+    return True
+
+
+def seed_hive_screen_size(game_dir, size=800, hive_root=HIVES_KEY):
+    """Pre-seed Screen Size = SIZE in GAME_DIR's private Windows registry hive so the first
+    --multi launch starts at 800x600 even when real HKCU holds 1280, without touching real HKCU."""
+    if not WIN or not hive_root:
+        return
+    import winreg
+    base = '%s\\%s' % (hive_root, hive_name(game_dir))
+    for sub in GAME_REG_KEYS:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, '%s\\%s' % (base, sub), 0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, 'Screen Size', 0, winreg.REG_DWORD, int(size))
+
+
+def ensure_game(template, dst, profiles=None, reset_screen=True, hive_root=HIVES_KEY):
     """A game folder of its own: hard links to TEMPLATE (never written: the game only reads
     them), real copies of what the game writes (SaveGame, Scenario, player.nf*), as
     worktree_env.ps1 makes them. A copy that was cut short is completed on the next call.
@@ -150,6 +228,11 @@ def ensure_game(template, dst, profiles=None):
                 os.link(src, d)
     if profiles:
         seed_profiles(dst, profiles)
+    if reset_screen:
+        for f in os.listdir(dst):
+            if f.lower().startswith('player.nf'):
+                reset_profile_resolution(os.path.join(dst, f))
+        seed_hive_screen_size(dst, 800, hive_root=hive_root)
     with open(os.path.join(dst, MARKER), 'w') as f:
         f.write('template: %s\nprofiles: %s\n' % (template, profiles or template))
 
