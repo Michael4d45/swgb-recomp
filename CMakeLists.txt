@@ -27,7 +27,7 @@ endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(PCRECOMP "${CMAKE_SOURCE_DIR}/../pcrecomp" CACHE PATH "pcrecomp checkout")
-# The lifted C is its own static library, swgb_gen (3.9M lines, 30+ minutes).
+# The lifted C is its own static library, swgb_gen (5.4M lines, 30+ minutes).
 # A checkout that only changes the host (a git worktree, a second agent)
 # points GEN_DIR at another checkout's src/recomp/gen and SWGB_GEN_LIB at the
 # swgb_gen.lib built there, and builds in seconds.
@@ -88,7 +88,7 @@ target_link_options(swgb PRIVATE "/WHOLEARCHIVE:$<IF:$<BOOL:${SWGB_GEN_LIB}>,${S
 target_link_options(swgb PRIVATE /BASE:0x60000000 /FIXED:NO /DYNAMICBASE:NO
                                        /NXCOMPAT /LARGEADDRESSAWARE /STACK:0x1000000
                                        /MANIFESTUAC:NO /MANIFEST:NO)
-# /O2 for all 3.9M lines of generated C (docs/performance.md, "The whole lift
+# /O2 for all 5.4M lines of generated C (docs/performance.md, "The whole lift
 # at /O2"): a late game is 8-11% cheaper a frame than at /O1 (pcrecomp's flag
 # and x87 helpers get inlined), and the build takes 34 min instead of 31 (one
 # file, recomp_0039.c, is most of either). -DGEN_OPT=/O1 for the old build.

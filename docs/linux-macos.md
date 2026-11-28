@@ -15,7 +15,7 @@ the checklist for continuing on a Linux machine. **State (2026-11-26): runs on L
 
 | | Windows (today) | Linux and macOS |
 |---|---|---|
-| Lifted C | `src/recomp/gen`, MSVC `/O1` | the same files, gcc or clang `-O1` |
+| Lifted C | `src/recomp/gen`, MSVC `/O2` (`/O1` until 2026-11-26) | the same files, gcc or clang `-O1`, the four hot files `-O2` (below) |
 | Runtime | pcrecomp `native32`: imports go to the real DLLs | pcrecomp `win32hle`: imports are answered in C on libc, POSIX and SDL2 |
 | Host | `src/runtime/host.c` | `src/linux/main.c`, `src/linux/shims.c` |
 | DirectDraw | `softdd.c` (Win32 GDI underneath) | win32hle's `ddraw.c`, shown by its `screen.c` |
@@ -82,6 +82,15 @@ The flags are Red Alert 2's: `-fno-strict-aliasing -fwrapv` (x86 integer
 and aliasing semantics), and on win32hle the indirect-call caches and the
 x87 ring (`SWGB_FAST_ICALLS`). The lift writes `_ST(i)`, which the ring
 needs.
+
+The two hosts' optimization differs: Windows builds the whole lift at `/O2`
+since 2026-11-26 (8-11% less CPU a frame in a late game,
+[performance.md](performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default)),
+while the native default is still `-O1` (`GEN_OPT` in `cmake/native.cmake`),
+with the four hot files at `-O2` (`GEN_HOT_FILES`). `-O1` is the sibling
+ports' setting; the whole lift at `-O2` has not been built or measured with
+clang, so whether MSVC's gain carries over is open. `CMAKE_ARGS=-DGEN_OPT=-O2
+./build-linux.sh` is the experiment.
 
 ## The import census
 

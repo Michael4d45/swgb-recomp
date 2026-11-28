@@ -46,7 +46,11 @@ an error. Below, GAMES, BUILD and so on are these.
 **Games at once.** Every game is `--headless --multi`, in a game folder of its
 own, `GAMES/testing-<base|cc>-<k>` (hard links to the shared install, real
 copies of profiles and saves, as `worktree_env.ps1` makes them; made on first
-use and kept; a copy cut short is completed by the next run). `--jobs` games
+use and kept; a copy cut short is completed by the next run; creating a new
+test folder resets its copied `player.nf*` profiles and private HKCU hive
+`Screen Size` to `800x600` without touching the source folder or real HKCU,
+and `reg_isolate` only seeds missing keys into a folder's private hive).
+`--jobs` games
 run at once: default 5, at most `max_jobs` whatever is asked
 (`SWGB_MAX_JOBS` or local.json's; else the machine's cores), and as many of
 the units and lift checks before them. The tool stops only the processes it
@@ -104,11 +108,7 @@ own beside the first, `<check>-retry1` (then `-retry2`), so the first try's
 shot the first try left. The check's report lines start each try with its
 result and folder (`try 1: FAIL (timing), in skirmish_base/`), its shots are captioned
 `try 1:`, `try 2:`, and `summary.json` lists the tries (`tries`: try, status,
-dir). On main of 2026-11-22, present group
-A failed once in three runs on the same build: after Alt+Enter, eight
-fullscreen edge cases saw the game read the cursor at 400,300 (what the host
-reports while another window is active) although the view scrolled. The other
-two runs passed all 48 cases.
+dir).
 
 **Results.** `RESULTS/<time>-<level>/`: `summary.json`
 (every check: status, time, lines, figures, shots), `report.md` and
@@ -192,38 +192,16 @@ What runs there:
 - **The presenter's checks** (`present/*`, L4 `real/present`) SKIP: they test
   the Windows presenter (GDI, Direct3D 11, the real screen).
 
-Results on Linux (WSL2 Ubuntu 24.04, clang 18, `-m32`, pcrecomp `eb608a2`,
-2026-11-26), both games, from a fresh clone set up by `./setup.sh` (the Steam
-Saga copy; Clone Campaigns lifted by hand as in linux-macos.md):
+Expect `--level functional --cc --retry 1` to pass with 11 checks skipped
+(the six Windows-only units and the five `present/*` groups); it takes about
+15 minutes. Known to fail there (ROADMAP.md, "Known bugs"):
 
-- `--level functional --cc --retry 1`: **26 passed, 0 flaky, 0 failed, 11
-  skipped** (the six Windows-only units and the five `present/*` groups) in
-  14.3 minutes. Conformance 5/5 each; the skirmishes; `enter/base` and
-  `enter/cc` (New Player accepted with Enter, the chat's Enter won the
-  game); films (logo 220 frames in both, intro 2117 and 2114); `--res
-  1920x1080`; the three resolutions; `perf` at `--fps 60` (CPU 5% and 6% of
-  a core, 64 presents a second); every civilization skirmish saved and
-  loaded.
-
-Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
-
-- `--level functional --cc`: 24 passed, 0 failed, 11 skipped (the units
-  above and the presenter's checks). Conformance 5/5 each; the skirmishes;
-  films (220 and 2120 frames, none dropped, the sound the clock); `--res
-  1920x1080`; the three resolutions; `perf` at `--fps 60` (CPU 6-7% of a
-  core, 64 presents a second: the Windows build's figures); every
-  civilization skirmish with its save and load.
-- `--level soak --just --soak-scale 0.2`: 12 of 13. `base-fight` fails: the
-  Ewoks find the enemy's base on the minimap and raze it (its colour is gone
-  from the minimap by 6:45), but the game declares no victory in the next 14
-  minutes, and the controller finds nothing more to aim at. Not explained
-  yet. Two Linux bugs found on the way are fixed (linux-macos.md, "Found by
-  the soak"): the chat line stayed open after Enter with the game no longer
-  drawing, and the minimap was black.
-- `soak.py --mode victory --minutes 3` (not the level's own length) fails on
-  Linux before and after those fixes: after the save dialog, the first Enter
-  only destroys the dialog's leftover field and the chat opens a step late.
-- `mp_pair.py`, both games: see Multiplayer below.
+- the soak level's `base-fight`: the Ewoks raze the enemy's base (its
+  colour is gone from the minimap), but the game declares no victory, and
+  the controller finds nothing more to aim at;
+- `soak.py --mode victory` at a length of its own: after the save dialog,
+  the first Enter only destroys the dialog's leftover field, and the chat
+  opens a step late.
 
 ### The units (L0)
 
@@ -241,7 +219,8 @@ Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
 | `keys` | `tests/unit/keys_test.c` | `keyscript.c` and `hostargs.h`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, window places, `on:NAME` waits, `--keys-live`, `host_is_test_run`, `host_int_arg` validation, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
 | `profile` | `tests/unit/profile_test.c` | `profile_core.c` (both hosts): return-address call detection, stack scanning, sample deduplication/counting, profile file output and `--profile*` arguments |
 | `cdaudio` | `tests/unit/cdaudio_test.c` | `cdaudio.c`'s core over an injected output sink (`cdaudio_test_sink`): `tests/data/tone.ogg` decoded (length, rate, tones, level) and seeked; MCI_STATUS counts, lengths and positions in ms, MSF and TMSF; track 2->3 samples and notify; CD & wave-out mixer lines, cubic taper (1/8 at 50%, silence at 1%), sound slider leaving music untouched; stop, pause and a second play abort/supersede notify; errors and `--music off` ([music.md](music.md)) |
-| `tools` | `tests/unit/test_tools.py` | the Python side, as above, and `perf_ab.py`'s figures, its round-by-round ratio and that every game sets its Screen Size, `mp_pair.py`'s per-player options and sync-record compare, and `machine_paths.py` |
+| `reg_isolate` | `tests/unit/reg_isolate_test.c` | `reg_isolate.c` private HKCU hive isolation (`--multi`): seeds only missing keys/values from a source hive, preserves existing private hive settings across launches, and never modifies the source hive |
+| `tools` | `tests/unit/test_tools.py` | the Python side, as above, plus test-folder creation (`ensure_game` resetting `player.nf*` and hive `Screen Size` to `800x600`), `perf_ab.py`'s figures and round-by-round ratio, `mp_pair.py`'s per-player options and sync-record compare, and `machine_paths.py` |
 
 They run on GitHub Actions (`.github/workflows/unit.yml`, `windows-latest`):
 pcrecomp is fetched at the commit `tools/pcrecomp_pin.sh` names (the one the
@@ -476,119 +455,51 @@ goes straight back to its campaign screen.
 An unresolved address from any run (or from a player's log) goes into a seed
 with `py -3 tools\seeds_from_logs.py --merge` (docs/lifting.md).
 
-### What the soaks found (2026-11-22)
+### Why long games
 
-| Batch | Host | Runs | Game time | Result |
-|---|---|---|---|---|
-| b1 | before the slack fix | 2 skirmish, 2 monkey, 2 campaign, 25 min | 2.5 h | 4 ran the full time; 2 faulted in `sub_0064AC8D`, at 13 min (monkey, right after a save) and 25 min (skirmish, 7 players): `read of 0x1A00FFFF` / `0x19F7FFFF`, the byte before the back buffer (docs/lifting.md, DirectDraw). |
-| b2 | with it | 2 skirmish (6 and 7 computers, Giant and Normal maps), 2 monkey, 2 campaign (OOM-9, Boss Nass), 30 min | 3.3 h | all 6 ran the full time; nothing reached the code-coverage hooks. |
-| trace | with it, `SWGB_TRACE` and `--firsthit` | 1 skirmish, 1 monkey, 30 min | 1.1 h | both ran the full time. |
+A game reaches code a short one does not. Traced runs (`--firsthit`, a
+`SWGB_TRACE` build) log the first entry to each lifted function: about 3,050
+have run by the end of loading, and a 30-minute skirmish still finds a few
+hundred new ones after minute 5, in bursts: the computers' economy and first
+attacks, the save (110-150 functions at once, the world's writer), and
+THIS_COD's span blitters (`0x00645xxx`-`0x0064Cxxx`), each variant first hit
+only when a sprite's span meets the screen in a particular alignment, at
+minutes 13 to 28. The two faults the soaks found (fixed by softdd's surface
+slack, [lifting.md](lifting.md)) were such blitters, at 13 and 25 minutes. A
+30-minute skirmish also makes about 3 billion indirect calls: past 2^31 the
+fault report's indirect-call ring once printed nothing (an `(int)`
+comparison, fixed in `host.c` and `coverage.c`).
 
-| endings | with it | below | 4.4 h | every run went its planned length or to its end; no events. |
-| fight | merged main + `--keys` drags, modifiers, `--keys-live` | below | 4.0 h | 3 victories by combat; no events. |
+### What the tool works around
 
-**Games to the end** (2026-11-22, the fixed host):
+- **The monkey and scripted saves.** The monkey's panels and game menu end
+  with Escapes 5-6 seconds after they open; one landed on the Save screen of
+  an in-game Load run and closed it, and the Load read an older game. The
+  monkey now leaves the last 8 seconds before a scripted save or load to
+  keys.
+- **Hardest computers defeat the monkey** in 11-20 minutes, and after a game
+  over it wanders the score screen and the menus. `ingame-load` plays 1-3
+  Easiest computers so the Load comes first. A natural victory needs a player
+  that defends, which is why `fight` exists.
+- **One difficulty for every computer.** Hardest allies against an Easiest
+  enemy is not possible, so `fight` is Easiest for all, and the Ewoks win
+  alone. Waves sent blind around the ring of start positions never met the
+  enemy (on Shoreline half the ring is sea, and with only `forceexplore` the
+  fog hid the base from the minimap), hence the aiming at the enemy's colour
+  and Reveal Map: All Visible. [The Ewoks in the enemy's
+  ruins](screenshots/fight.png), [the score screen](screenshots/fight-score.png).
+- **A game per mission.** In one long game, a lost mission threw the script
+  out of step (it once started a mission itself and quit the game with an
+  Enter), so `missions` plays each mission in a game of its own and ends that
+  game at a defeat.
+- **Clone Campaigns' Saved Game list** shows its recorded games (`.mg1`)
+  among the saves, so the row of a save counts both (`saved_names`).
+- **Galactic Republic** opens only once Confederacy is won in that profile,
+  so `missions --cc` passes through Confederacy first.
+- In a campaign the monkey can scroll the view into unexplored black and
+  stay there: `H` has no command center to return to.
 
-| Run | What happened |
-|---|---|
-| `defeat`, 2 Hardest on a Tiny map | a real defeat about 11 minutes in: the base destroyed, `lost.mp3`, the score screen (the two computers on team 1); then 35 minutes idling on the score screen. |
-| `allied`, 2 allies, Medium | also a defeat, at 12 minutes: the one Hardest enemy rushed my base before the allies won. My defeat does not wait for my team. |
-| `allied`, 6 allies, Large (twice; the first with the team clicks lost) | defeats at 7-9 minutes, the same way. Diplomacy at the start was right (6 Ally, 1 Enemy, also checked at 4, 7 and 8 players): an idle player is just the nearest target. A natural victory needs a player that defends. |
-| `victory`, 7 computers on a Large Islands map | 22 minutes of play with a save at 9, then `skywalker`: "You are victorious!", `won1.mp3`, the score screen and its tabs, Main Menu, the save in Saved Game's list (row 0), loaded, and 15 more minutes of the loaded game. |
-| `chain`, OOM-9 missions 3, 4 and 5 | each briefing, the mission (Spinnaker's Spoils; Capturing The Crown, Tech Level 4 with the droid army; The Search For An Underwater Kingdom), 15-20 minutes with the monkey, the victory, its end briefing, the score screen, Scenario Menu and the next mission's box. Missions 1 and 2 were won the same way while the tool was written. |
-| `load` x2 | the monkey's save from b1 (made seconds before that run's fault) and a Boss Nass mission-1 save, each loaded and played 15 minutes. |
-
-No run met an unresolved indirect call, a not-lifted stub, an eh32 funclet
-miss or a fault. Every run saved at 40% (the files are in each game folder's
-`SaveGame`).
-
-**What a long game reaches that a short one does not.** The traced runs
-log the first entry to each lifted function. About 3,050 functions have run
-by the end of loading and 220-280 more in the first game minute; the
-skirmish reached 3,592 in all and the monkey 4,032 (19% of 20,820). After
-minute 5 the skirmish still found 237 new functions and the monkey about
-400, in bursts:
-
-- minutes 5-10: the computers' economy and first attacks ("Your base is
-  being attacked" by 23 minutes in the b1 skirmish), combat and deaths;
-- the save, 110-150 functions at once (the world's writer);
-- THIS_COD's span blitters (`0x00645xxx`-`0x0064Cxxx`), first hit at
-  minutes 13, 14, 21, 23 and 28: each variant runs only when a sprite's
-  span meets the screen in a particular alignment. Both faults were one of
-  these, which is why they came at 13 and 25 minutes and not in the first
-  five.
-
-Two more things only a long game reaches. One is 2^31 indirect calls (about
-ten minutes): past that, the fault report's indirect-call ring printed
-nothing (an `(int)` comparison, fixed in `host.c` and `coverage.c`). The
-other: a 30-minute skirmish makes about 3 billion indirect calls and 2 million
-frames.
-
-**A victory by combat** (2026-11-22, the merged build's lift, host `coverage-win*`):
-
-| Run | What happened |
-|---|---|
-| `fight`, 4 allies, enemy magenta (twice) and 2 allies, enemy yellow | the first wave of nine Ewoks set off at 4:20 (time since launch), straight at the enemy's base on the minimap; its colour fell from 73-92 pixels as the buildings fell, and the game played `won1.mp3` at 5:09, 6:25 and 7:39: 51 s, 2:04 and 3:18 of fighting (Fast speed). The score screen crowns me (Military 205 in the first); the enemy, alone on team 2, ends with Military 0. No `skywalker`. |
-| `fight` with a blind sweep (4 runs, 47-60 min) | waves sent around the ring of start positions never met the enemy: two were on Shoreline (half the ring in the sea), and with only `forceexplore` the fog hid the enemy's base from the minimap. Hence the aiming, and All Visible. Long, clean runs all the same. |
-
-[The Ewoks in the enemy's ruins](screenshots/fight.png) and [the score screen](screenshots/fight-score.png) are the first run.
-
-Hardest allies against an Easiest enemy is not possible: the game has one
-difficulty for every computer, so it is Easiest for all. The
-Ewoks win the game alone.
-
-Every campaign's later missions, the in-game Load and the larger Screen Sizes
-came next: "Every campaign" below. In a campaign the monkey can scroll the
-view into unexplored black and stay there (`H` has no command center to
-return to).
-
-### Every campaign (2026-11-26)
-
-On main's shared lift (`swgb_gen.lib` of 2026-11-22) and the integration
-build's Clone Campaigns lift, at Fast speed, up to four games at once beside
-other tracks' games:
-
-| What | Runs | Result |
-|---|---|---|
-| Finding the mission boxes | one live game per campaign: every mission started and won at once with the cheat, in order (Boss Nass, Chewbacca, Darth Vader, Princess Leia, OOM-9 1-4, Confederacy, Galactic Republic) | 47 missions loaded and won: each briefing, the mission, its end briefing and score screen, the next box; after a campaign's last mission the game is back on the list of campaigns |
-| OOM-9 5-7 | `missions`, 4 and 10 minutes each | all won; with mission 5 before it, OOM-9 is now played to its end |
-| Boss Nass 2-7, Chewbacca 2-7 | `missions`, 10 minutes each (one long game each, before the game-per-mission change) | all won, the full 80 minutes, a save in each mission |
-| Darth Vader 2-7 | `missions`, 10 minutes each | 2, 3, 5, 6 won; 4 (An Empire's Fury) lost twice and 7 once, about 3.5 minutes in, then 4 won in a 2-minute run (and 7 in the box-finding run). In the first, one-game run the script then clicked on out of step, started mission 6 itself and at last quit the game with an Enter (exit 0). Hence a game per mission, ended at a defeat |
-| Princess Leia 1-8 | `missions --first 2`, 10 minutes each, in a profile that had finished the campaign: mission 1 replayed to pass through | 1-5, 7, 8 won, 6 lost |
-| Basic Training 1-7 | `missions`, 3 and 10 minutes each | all seven open from the start; won (no victory music, no score screen: back on its campaign screen) |
-| Confederacy 2-7, Galactic Republic 2-7 | `missions --cc`, 10 minutes each | Confederacy all won; Republic all won but 3 (lost). Galactic Republic's planet does nothing until Confederacy is won in that profile |
-| In-game Load | `ingame-load`: a skirmish at 800x600, one at 1024x768, Basic Training's mission 5, and two Clone Campaigns skirmishes | at 800x600, in the mission and in Clone Campaigns' second run: the save written, then read back after the game menu's Load, Yes, the row and OK, and the game played on. At 1024x768 the Load screen and the load worked, but the save had not been written (the monkey's Escape, below). Clone Campaigns' first run loaded a recorded game (below), its third (before the Easiest setup) met a defeat before the Load |
-| The monkey at 1024x768 and 1280x1024 | `monkey --screen`, 25 minutes each | both ran their full time at their size; both ended in a defeat by Hardest computers and played on through the score screen into a second game |
-
-In all, 57 missions won at least once: every mission of the six base
-campaigns (OOM-9, Boss Nass, Darth Vader, Chewbacca: 7; Princess Leia: 8;
-Basic Training: 7) and of both Episode II campaigns (7 each). 13.5 hours of
-soak games and 5 of box-finding games.
-
-No run met an unresolved indirect call, a not-lifted stub, an eh32 funclet
-miss or a fault: nothing for `seeds_from_logs.py`, so no seed was added and
-no re-lift was needed.
-
-What the tool got wrong, and fixed:
-
-- The monkey's panels and game menu end with Escapes 5-6 s after they open;
-  one landed on the Save screen of the first in-game Load and closed it (no
-  save, and the Load read an older game). The monkey now leaves the last 8
-  seconds before a scripted save or load to keys.
-- Clone Campaigns' Saved Game list shows its recorded games (`.mg1`) among
-  the saves: the first `--cc` in-game Load picked the row above and played a
-  recorded game back. The row now counts both (`saved_names`).
-- A mission lost while the monkey plays: see Darth Vader above.
-- Hardest computers defeat the monkey in 11-20 minutes; then it wanders the
-  score screen and the menus (into a second game, or the main menu's Exit).
-  `ingame-load` now plays 1-3 Easiest computers so the Load comes first.
-
-`tools/coverage_test.c` checks the host's unresolved-call stop without the
-game (build line in the file): exit code 5 and the line the seed tool reads;
-`SWGB_ICALL_CONTINUE=1` reports once and carries on; eh32's hook still sees
-each address first.
-
-### Clone Campaigns (2026-11-22)
+### Clone Campaigns
 
 `--cc` runs the expansion: `swgbrecomp_cc.exe`, `work\battlegrounds_x1.exe`
 and the `clone-campaigns` game folder by default, its Single Player menu
@@ -606,19 +517,6 @@ py -3 tools\soak.py --cc --mode campaign --campaign "Galactic Republic" --minute
 py -3 tools\seeds_from_logs.py --cc work\soak\...\run.log
 ```
 
-On the `/O1` build with the code-pointer seeds, four at once:
-
-| Run | Setup | Game time | Result |
-|---|---|---|---|
-| skirmish | Republic against 6 computers (Confederacy, Republic in turn), Normal Fortress map, Moderate, Fast | 1846 s | ran the full time and the game to its end: the Achievements screen at 47:01 game time; saved at 40% |
-| skirmish | Confederacy against 6 (Republic, Confederacy), Giant Nova Lake, Moderate, Fast | 1846 s | ran the full time; saved |
-| campaign | Confederacy, mission 1 (Strategic Retreat), Easy, the monkey | 1671 s | ran the full time (41 minutes of game time); saved |
-| campaign | Galactic Republic, mission 1 (Alaris Prime), Easy, the monkey | 1671 s | ran the full time; saved |
-
-1.9 game-hours, every run ended by the watchdog (exit 4): no fault, no
-unresolved indirect call, no not-lifted stub, no eh32 miss, and nothing new
-for `seeds_from_logs.py --cc`.
-
 ## Multiplayer: `tools/mp_pair.py`
 
 ```
@@ -634,23 +532,21 @@ framerate.md), `--host-arg all=--mp-cross` with a WSL player. `--run b=EXE`
 runs B on another build (performance.md); `--run EXE` alone is everyone's
 (default BUILD's). Both repeat; a player's own beats `all`.
 
-Two to four headless `--multi` runs on this machine: one hosts, the others
+Two to four headless `--multi` games on one machine: one hosts, the others
 join over 127.0.0.1, all start a game and play `--minutes`. It passes when
 each reaches its watchdog, nobody drops but the player the options drop, the
-game shows no out-of-sync message and the game's own sync checkpoints
-(`[sync]` lines) agree between every pair of logs. The menus are timed from
-the main menu's music; the game is played live from A's first sync record
-(`--keys-live`), so a busy machine does not throw the clicks off. `--chat`,
-`--drop`, `--quit`, `--resign`, `--save` and `--restore` check those parts of
-the game. Details and results in [multiplayer.md](multiplayer.md).
+game shows no out-of-sync message, and the game's own sync checkpoints
+(`[sync]` lines) agree between every pair of logs. Its options, what each
+check reads and the Windows-Linux games are in
+[multiplayer.md](multiplayer.md#tests).
 
-The joiner selects "Local (LAN) TCP/IP Connection" first: its games appear
-by themselves. A folder that last used it (the Windows farm's) has it
-selected already; a new one has "Internet", whose Show Games asks for an
-address. A's folder defaults to `GAMES/multiplayer-base` (`-cc`), made on
-first use. On Linux (`python3 tools/mp_pair.py`; `--cc --game DIR` with a
-Clone Campaigns profile in DIR), 2026-11-23: base game and Clone Campaigns, 3 minutes each,
-46 sync records in both logs, none different, no out-of-sync message.
+The joiner selects "Local (LAN) TCP/IP Connection" first, so its games
+appear by themselves: a folder that last used it has it selected already,
+and a new one has "Internet", whose Show Games asks for an address. A's
+folder defaults to `GAMES/multiplayer-base` (`-cc`), made on first use. On
+Linux it runs as `python3 tools/mp_pair.py`, with `build-linux/` and
+`work/games/multiplayer` by default (`--cc --game DIR` with a Clone
+Campaigns profile in DIR).
 
 ## The game's three resolutions
 
@@ -705,13 +601,9 @@ Menu button, and the game menu must open centred on the new screen
 screen at 800x600 and Main Menu. It passes when the modes are exactly 800x600,
 1024x768, the third, 800x600.
 
-This is the check for "after an in-game switch to 1024x768 the Menu button no
-longer answers" (track 3's lead, 2026-11-21). It did not come back on main
-(2026-11-26), nor on the host built at the widescreen merge (`ebfe327`) against
-today's lift: 800, 1280 and 1920x1080 -> 1024, 800 -> 1024 -> 1280 -> 800,
-Options and Cancel again, Quit and the score screen, game-pixel clicks and
-`wclick` window pixels in a 1600x900 window. `test.py` runs it as
-`res/ingame/base` and `res/ingame/cc` with `--res 1920x1080`.
+`test.py` runs it as `res/ingame/base` and `res/ingame/cc` with `--res
+1920x1080`. It guards against an early lead that never reproduced: "after an
+in-game switch to 1024x768 the Menu button no longer answers".
 
 One thing a script must do that a player does not: move the cursor after OK.
 The scripted cursor stays where it clicked, and after a switch to a smaller
@@ -737,14 +629,13 @@ across, 6% down); the tech tree when it spans the screen; Save and Load when
 they are the largest of the game's sizes that fits, centred, with black
 around (at the game's own sizes: the whole screen).
 
-Found at WxH (2026-11-26, shots at 1024x768, 1280x1024, 1366x768, 1920x1080,
-2560x1440, both games): every dialog was already centred (the game centres it
-on its parent, which is WxH). Save Game and Load were not: they are screens of
-their own, laid out in proportion to the screen from an 800x600 design, over
-the 1280x1024 background drawn at 0,0, so at 1920x1080 their buttons were
-spread across the screen with the picture in a corner. Now they are 1280x1024
-(1024x768 at 1366x768), centred (`widescreen.c`, "full screens shown in a
-game"). The tech tree is left at the whole screen: it lays itself out at any
+Why the rules differ: the game centres a dialog on its parent, the WxH
+screen, so dialogs need nothing. Save Game and Load are screens of their own,
+laid out in proportion to the screen from an 800x600 design over the
+1280x1024 background drawn at 0,0; left alone at 1920x1080 their buttons
+spread across the screen with the picture in a corner, so `widescreen.c`
+("full screens shown in a game") gives them the largest of the game's sizes
+that fits. The tech tree keeps the whole screen: it lays itself out at any
 size, and made smaller it drew past its panel (a fault at 1920x1080).
 `test.py`: `popups/base-1024`, `popups/base-2560x1440`, `popups/cc-1920x1080`.
 
@@ -815,9 +706,9 @@ BT BB` (the middle of a bar), with an offset: `wmove:R:C`, `wmove:PL+60:C`;
 `size:W:H`; `alt+enter`; `setcursor`; `wshot=FILE` (the window as drawn, bars
 and all); and `--keys @FILE` to read a long script from a file.
 
-The tests fail on the build the windowed check was run on (PR #6 before its
-fixes): 22 of the 48 cases in group A, among them every right and bottom edge
-and the cursor coming back; with the fixes all pass. Run it against a build of
+The cases catch what the windowed check found by eye: on the presenter
+before those fixes, 22 of group A's 48 fail, among them every right and
+bottom edge and the cursor coming back. Run it against a build of
 your own with `--run` and `--game` (a `worktree_env.ps1` build and game
 folder).
 
@@ -836,7 +727,7 @@ it back to look at the Windows cursor, and reads the frame rate from the
 present log (only seconds in the game with presents at least 1.3 times the
 refresh: just above the refresh, and unevenly spaced, some refreshes get no
 new frame at all, so 185 presents a second at 180 Hz show about 160 under any
-pacing). First run, 2026-11-22, 2560x1440 at 180 Hz: 40/40. **It takes over
+pacing). **It takes over
 your mouse and keyboard for about five minutes**
 (`-Quick`: one shape, about three); do not touch them until it prints the
 summary. Captures and the log are in `%TEMP%\present_check_real`. The Options

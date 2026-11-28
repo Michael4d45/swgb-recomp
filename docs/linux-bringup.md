@@ -192,7 +192,8 @@ pull request upstream) is your call.
 - If `src/runtime/` changed, check that Windows still builds. On Windows:
   `powershell -File tools\worktree_env.ps1 -Name linux-macos -Build`,
   then the printed command with `--headless --multi`.
-- Update Track 7 in `ROADMAP.md` and "What is done" in `linux-macos.md`.
+- Take what is done out of `ROADMAP.md`, add it to `CHANGELOG.md`, and
+  update "What is done" in `linux-macos.md`.
 - Open PRs on the fork with
   `gh pr create --repo Michael4d45/swgb-recomp --base main`. T3's PR tool
   opened one on upstream once.

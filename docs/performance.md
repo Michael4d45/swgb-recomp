@@ -131,7 +131,7 @@ block is a call. The experiment below tried `/O2` on the hot files, and
 
 ## The generated code at /O2
 
-The 53 generated files (3.9M lines) were built at `/O1` because `/O2` on all
+The 53 generated files (5.4M lines) were built at `/O1` because `/O2` on all
 of them stalled a build farm (Shogo's lift); since 2026-11-26 they are `/O2`
 (the next section). First tried here on what the profiles say is hot:
 
@@ -356,6 +356,6 @@ by round. `--profile` adds a `--profile` run of each and its
 - `/O2` for the whole lift: done (above), the default now. The shared
   `swgb_gen.lib` worktrees link is still the `/O1` one until the integrator
   next builds the generated code. Not tried: `/GL` (whole-program
-  optimization: one link over 3.9M lines), `/Ob3`, PGO.
+  optimization: one link over 5.4M lines), `/Ob3`, PGO.
 - Loading: a map loads in under a second here; its progress presents are
   held back by the pacing and cost little.

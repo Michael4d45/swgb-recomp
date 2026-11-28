@@ -14,6 +14,19 @@ there (tools, game, catalog, lift, build). It needs pcrecomp's
 macOS: `build-macos.sh`, untried. [linux-macos.md](linux-macos.md) has the
 design, the build and the state.
 
+**Which pcrecomp each host builds against:**
+
+| Host | pcrecomp | Kept by |
+|---|---|---|
+| Windows (`native32`) | upstream `sp00nznet/pcrecomp`, branch `main`, not pinned (`a67767b` on the integration machine, 2026-11-27) | `tools/setup.ps1` clones `main` and checks that it has the features above |
+| Linux, macOS (`win32hle`) | the fork `Michael4d45/pcrecomp`, branch `swgb-linux-palette`, pinned to one commit (`e70a0ab`) | `tools/pcrecomp_pin.sh` (`show`, `check`, `fetch`), sourced by `setup.sh`, `build-linux.sh` and `build-macos.sh` |
+| CI (`.github/workflows/unit.yml`: `unit`, `windows-host`, `linux-host`) | the fork `Michael4d45/pcrecomp` pinned to `tools/pcrecomp_pin.sh`'s commit (`e70a0ab`) | the workflow reads `tools/pcrecomp_pin.sh` directly |
+
+The fork's branch carries win32hle changes that are not upstream yet (8-bit
+GDI text, the EDIT paint and keys, `hle_lookup_manual_hook`, `GetClipper`'s
+error). Once they are, the pin moves to upstream `main` and both hosts
+build against one pcrecomp.
+
 ## Step by step
 
 Prerequisites: Windows 10 or 11; Python 3.10+ (`py -3 --version` should say
@@ -43,12 +56,12 @@ and the films ([movies.md](movies.md)).
    ```
    py -3 ..\pcrecomp\tools\disasm\disasm32.py work\Battlegrounds.exe -o work\functions.json
    ```
-   Expected, at the end: `Functions: 14272` and `Wrote work/functions.json`.
+   Expected, at the end: `Functions: 20802` and `Wrote work/functions.json`.
 5. Lift it:
    ```
    py -3 run_lift.py --all
    ```
-   Expected: `lifted 14273   not-lifted stubs 0   errors 0` and about 4.0M
+   Expected: `lifted 20820   not-lifted stubs 0   errors 0` and about 5.4M
    lines of C in `src\recomp\gen\`.
 6. Build it (30 minutes or more on one machine): `build.cmd`. Expected, at
    the end: `Linking C executable swgbrecomp.exe`.
@@ -57,8 +70,9 @@ and the films ([movies.md](movies.md)).
 8. Run: `build\swgbrecomp.exe --run`.
 
 Trip-ups: a different build of `Battlegrounds.exe` is refused by `run_lift.py`
-by its PE timestamp; a pcrecomp checkout on `main` lacks the EH support
-(`AttributeError: module 'eh32' has no attribute 'frame'`).
+by its PE timestamp; a pcrecomp checkout older than its MSVC EH support
+fails the lift with `AttributeError: module 'eh32' has no attribute
+'frame'` (update it to `main`).
 
 ## The command line
 
@@ -205,6 +219,45 @@ tree after each layout. `SWGB_RES_TRACE=FILE` logs every new indirect
 call, with its target, caller, vtable and arguments, from the first mode
 change on; use it to find more of them.
 
+## Environment variables
+
+Every variable the hosts and tools read, in one place.
+`tests/unit/test_tools.py` (`EnvVars`) checks that each name the sources in
+`src/` and `tools/` read is in this section, so a new one has to be added
+here. Unset means off unless the row says otherwise.
+
+| Variable | Read by | What it does |
+|---|---|---|
+| `SWGB_CD` (alias `CD_DRIVE`) | both hosts | The play disc: a drive letter on Windows (`E`), a folder on Linux (disc 2's mount point, or `work/disc` for a Steam copy). `--cd` overrides it. Linux falls back to the Steam Saga under `~/.steam` or `~/.local/share/Steam` ([linux-macos.md](linux-macos.md)). |
+| `SWGB_FPS_STACK` (alias `FPS_STACK`) | Windows host, `framerate.c` | `<n>[:VA]` with `--fps-log`: every 3 s, the lifted callers of `--fps-log`'s counter `n` (only calls from function `VA`, if given) ([framerate.md](framerate.md)). |
+| `SWGB_RES_DUMP` | both hosts, `widescreen.c` | `FILE`: the game screen's panel tree after each layout (`test.py`'s `widescreen/*` layout check reads it). |
+| `SWGB_RES_TRACE` | both hosts, `widescreen.c` | `FILE`: every new indirect call from the first mode change on, with its target, caller, vtable and arguments (`--res` above). |
+| `SWGB_SMOOTH_LOG` | both hosts, `smooth.c` | `FILE`: every object draw `--smooth` moved, for `tools/smooth_check.py` ([framerate.md](framerate.md#--smooth-drawn-between-steps)). |
+| `SWGB_ICALL_CONTINUE` | both hosts, `coverage.c` | Not `0`: an unresolved indirect call is reported once and the run carries on instead of stopping with exit 5 ([lifting.md](lifting.md)). |
+| `SWGB_MP_ANY_BUILD` | both hosts, `dplay.c` | `1` on the hosting side: a joiner with another build is let in. For tests only (`mp_pair.py --run b=EXE` sets it) ([multiplayer.md](multiplayer.md)). |
+| `SWGB_NO_RESOLVE_CACHE` | Windows host, `resolve.c` | Set: the indirect-call cache is off, every call goes through the dispatch table's search ([performance.md](performance.md)). |
+| `SWGB_PAINT_HEADLESS` | Windows host, `present.c` | Set: a headless run still scales and paints into its window, so the presenter's cost is in the figures (`perf_ab.py` sets it) ([performance.md](performance.md)). |
+| `SWGB_MSG_TRACE` | Linux host | Set: logs the focus, key and paint messages the game window gets. |
+| `SWGB_CHILD_TRACE` | Linux host, `fields.c` | Set: logs the visible child windows (text fields, films) once a second. |
+| `PCRECOMP_MUTE` | pcrecomp `native32`; the Windows host sets it | `1` mutes the game's sound. `--headless` sets it to `1` unless it is already set, so `PCRECOMP_MUTE=0` keeps a headless run's sound. |
+| `NATIVE32_HEADLESS` | pcrecomp `native32`; the Windows host | Set by `native32_headless()` in the run it starts on the private desktop. The host reads it to know that its window may be shown there. Not set by hand. |
+| `NATIVE32_TRACE_EH` | pcrecomp `native32` | `1`: logs every guest exception and where it lands ([exceptions.md](exceptions.md)). |
+| `PCRECOMP` | `run_lift.py`, `build-linux.sh`, `setup.sh`, `tools/setup.ps1`, `tools/test.py`, `tools/steamstub_swgb.py` | The pcrecomp checkout. Default: `..\pcrecomp` beside this folder. |
+| `BUILD_DIR`, `BUILD_TYPE`, `CMAKE_ARGS` | `build.cmd`, `build-linux.sh` | The build folder (default `build`, `build-linux`), the CMake build type (default `RelWithDebInfo`) and more CMake options (`-DGEN_OPT=/Od`). |
+| `CC` | `build-linux.sh`, `setup.sh`, `tools/test.py` | The C compiler for the native host and the Linux units (default clang). |
+| `SWGB_STAR` | `tools/swgb/runner.py` (`test.py`, `soak.py`, `mp_pair.py`) | The folder that holds the test game folders, baselines and results. Default: `"star"` in git-ignored `tools/local.json`, else `work/` in this checkout ([testing.md](testing.md)). |
+| `SWGB_MAX_JOBS` | `tools/swgb/runner.py` (`test.py`) | Caps `--jobs` in `test.py` (else `max_jobs` in `tools/local.json`, or the machine's CPU cores) ([testing.md](testing.md)). |
+| `WSL_DISTRO`, `WSL_CHECKOUT` | `tools/mp_pair.py` | For `--wsl`: the WSL distribution (default `Ubuntu`) and the Linux path of the checkout that has `build-linux/`, `game/` and `work/` ([multiplayer.md](multiplayer.md)). |
+| `RECOMP_LAUNCHER` | `tools/setup.ps1` | `1` under recomp-launcher: never waits for Enter, never clears the console. |
+| `SUDO_ASKPASS` | `setup.sh` | The password helper when there is no terminal. |
+
+Read from the system, never set for this project: `HOME` and `TMPDIR` (the
+Linux host: the Steam fallback above, and its per-run temp drive),
+`TEMP`, `SystemRoot`, `COMPUTERNAME`, `ProgramFiles`, `ProgramFiles(x86)`,
+`LOCALAPPDATA`, `USERPROFILE`, `Path` and `VSCMD_ARG_TGT_ARCH` (the tools,
+finding Windows, Python, Visual Studio and a temp folder, and naming the
+machine in a report).
+
 ## Build options
 
 `build.cmd` configures CMake with Ninja for 32-bit MSVC and builds
@@ -218,7 +271,8 @@ lands the build in `build-farm\`.
 
 Layout: `run_lift.py` (lift driver), `src/runtime/` (host, `softdd`
 DirectDraw, `present` for scaling, fullscreen and pacing, the deflate decoder), `tools/` (setup, the update unpacker, the
-conformance harness), `third_party/miniz` (MIT, see `NOTICE`), and the
+conformance harness), `third_party/miniz` (MIT) and `third_party/stb_vorbis`
+(public domain or MIT; both in [NOTICE.md](../NOTICE.md)), and the
 gitignored `game/`, `cd/`, `work/` and `src/recomp/gen/`.
 
 ## Clone Campaigns
