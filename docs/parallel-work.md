@@ -15,7 +15,7 @@ The tracks share one folder, STAR, laid out like this (the integrator's is
 | `STAR\builds\integration` | the main checkout's build: the hosts the gate and the user's launcher run |
 | `STAR\builds\<track>` | each track's build |
 | `STAR\games` | game folders: each track's, and the tools' (`testing-*`, `soak-*`, ...) |
-| `STAR\shared` | `swgb_gen.lib` and the locks (`heavy-build.lock`, `test-gate.lock`) |
+| `STAR\shared` | `swgb_gen.lib`, and `gate_run.py` (not in git), through which full builds and functional gates take turns |
 | `STAR\pcrecomp` | the pcrecomp checkout every build uses |
 | `STAR\test-baselines`, `STAR\test-results` | `tools\test.py`'s |
 
