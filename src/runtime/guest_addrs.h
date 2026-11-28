@@ -10,13 +10,19 @@
  * method of the class in both exes and reading the displacement each
  * instruction uses.
  *
- * Offsets that are the same in both are written in place in the files that
- * use them: the game object's +0x24 (program info), +0x1DC (mode), +0x420
- * (world), +0x17B4 (game screen); program info's +0x888 and +0x8E4..+0x8FC;
+ * The game object's offsets that several files read are the same in both,
+ * and named once below the per-exe values. Other offsets that are the same in
+ * both are written in place in the one file that uses them: the game
+ * object's +0x24 (program info); program info's +0x888 and +0x8E4..+0x8FC;
  * TPanel's +0x0C..+0x58; the draw area's +0x08, +0x18, +0x20; the unit-info
  * panel's +0xF8.
  */
 #pragma once
+
+/* ---- the game object ([G_GAME]), both exes ---- */
+#define G_GAME_MODE         0x1DC         /* 2 in the menus, 4 in game (docs/framerate.md) */
+#define G_GAME_WORLD        0x420         /* the world, while a game exists */
+#define G_GAME_SCREEN       0x17B4        /* the game screen; the pointer outlives a game */
 
 #ifdef SWGB_CC
 /* ---- battlegrounds_x1.exe (Clone Campaigns, 2002-05-29) ---- */

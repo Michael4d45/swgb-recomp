@@ -40,6 +40,7 @@
 #include <shlwapi.h>
 
 #include "movie.h"
+#include "movie_core.h"
 #include "softdd.h"
 #include "recaudio.h"
 
@@ -116,35 +117,6 @@ static int read_all(HANDLE h, void* buf, DWORD n) {
     return (int)got;
 }
 
-/* ---- the film's size and rate, from its AVI header ------------------------ */
-
-typedef struct { int w, h; DWORD rate, scale; int has_audio; } avi_info;
-
-static int avi_probe(const char* path, avi_info* ai) {
-    uint8_t b[8192];
-    FILE* f = fopen(path, "rb");
-    if (!f) return 0;
-    size_t n = fread(b, 1, sizeof b, f);
-    fclose(f);
-    if (n < 64 || memcmp(b, "RIFF", 4) || memcmp(b + 8, "AVI ", 4)) return 0;
-    memset(ai, 0, sizeof *ai);
-    DWORD us = 0;
-    for (size_t i = 12; i + 64 <= n; i++) {
-        if (!memcmp(b + i, "avih", 4)) {
-            us = *(DWORD*)(b + i + 8);
-            ai->w = *(int*)(b + i + 8 + 32);
-            ai->h = *(int*)(b + i + 8 + 36);
-        } else if (!memcmp(b + i, "strh", 4)) {
-            if (!memcmp(b + i + 8, "vids", 4) && !ai->rate) {
-                ai->scale = *(DWORD*)(b + i + 8 + 20);
-                ai->rate = *(DWORD*)(b + i + 8 + 24);
-            } else if (!memcmp(b + i + 8, "auds", 4)) ai->has_audio = 1;
-        }
-    }
-    if (!ai->rate || !ai->scale) { ai->rate = 1000000; ai->scale = us ? us : 66667; }
-    return ai->w > 0 && ai->h > 0 && ai->w <= 4096 && ai->h <= 4096;
-}
-
 /* ---- one film ----------------------------------------------------------- */
 
 typedef struct {
@@ -160,20 +132,16 @@ typedef struct {
     HANDLE vproc, vpipe, vthread;
     HANDLE aproc, apipe, athread, aready;
     volatile LONG stop;
-    int playing, paused, done_video, done_audio;
+    int playing, done_video, done_audio;
 
-    /* the clock: the sound's position while it plays, else the wall clock
-     * from base_ms at base_tick (less the time paused) */
+    film_clock clk;               /* under cs; while clk.audio_on, the clock is wo's position */
     HWAVEOUT wo;
     int rec;                      /* --record: the recording's stream (recaudio), or -1 */
-    int audio_on;                 /* the sound is the clock */
-    double base_ms;
-    DWORD base_tick, pause_tick, pause_total;
 } Movie;
 
 static double wave_ms(Movie* m) {
     MMTIME t = { TIME_SAMPLES };
-    if (waveOutGetPosition(m->wo, &t, sizeof t) != MMSYSERR_NOERROR) return m->base_ms;
+    if (waveOutGetPosition(m->wo, &t, sizeof t) != MMSYSERR_NOERROR) return m->clk.base_ms;
     if (t.wType == TIME_BYTES) return t.u.cb / 4 * 1000.0 / AUDIO_RATE;
     if (t.wType == TIME_MS) return t.u.ms;
     return t.u.sample * 1000.0 / AUDIO_RATE;
@@ -182,12 +150,7 @@ static double wave_ms(Movie* m) {
 /* In ms from the film's start. */
 static double clock_ms(Movie* m) {
     EnterCriticalSection(&m->cs);
-    double t;
-    if (m->audio_on) t = wave_ms(m);
-    else {
-        DWORD now = m->paused ? m->pause_tick : GetTickCount();
-        t = m->base_ms + (double)(now - m->base_tick - m->pause_total);
-    }
+    double t = m->clk.audio_on ? wave_ms(m) : film_wall_ms(&m->clk, GetTickCount());
     LeaveCriticalSection(&m->cs);
     return t;
 }
@@ -195,10 +158,7 @@ static double clock_ms(Movie* m) {
 /* The sound has run out: the wall clock carries on from where it stopped. */
 static void clock_to_wall(Movie* m) {
     EnterCriticalSection(&m->cs);
-    if (m->audio_on) m->base_ms = wave_ms(m);
-    m->audio_on = 0;
-    m->base_tick = m->paused ? m->pause_tick : GetTickCount();
-    m->pause_total = 0;
+    film_clock_to_wall(&m->clk, GetTickCount(), m->clk.audio_on ? wave_ms(m) : 0);
     LeaveCriticalSection(&m->cs);
 }
 
@@ -256,9 +216,9 @@ static DWORD WINAPI audio_thread(LPVOID arg) {
     }
     if (!queued) goto none;
     EnterCriticalSection(&m->cs);
-    m->audio_on = 1;
-    if (!m->paused) waveOutRestart(wo);
-    recaudio_stream_pause(m->rec, m->paused);
+    m->clk.audio_on = 1;
+    if (!m->clk.paused) waveOutRestart(wo);
+    recaudio_stream_pause(m->rec, m->clk.paused);
     LeaveCriticalSection(&m->cs);
     for (int i = 0; i < queued; i++)   /* heard from now (the restart), not from when they were read */
         tap(m, wo, buf[i], hdr[i].dwBufferLength, &sent);
@@ -316,8 +276,8 @@ static DWORD WINAPI video_thread(LPVOID arg) {
     long shown = 0, dropped = 0;
     WaitForSingleObject(m->aready, 3000);   /* the sound starts the clock */
     EnterCriticalSection(&m->cs);
-    if (!m->audio_on) { m->base_ms = 0; m->base_tick = GetTickCount(); m->pause_total = 0; }
-    int by_sound = m->audio_on;
+    if (!m->clk.audio_on) film_clock_start(&m->clk, GetTickCount());
+    int by_sound = m->clk.audio_on;
     LeaveCriticalSection(&m->cs);
     DWORD t0 = GetTickCount();
     long k;
@@ -396,86 +356,23 @@ static void movie_play(Movie* m) {
 
 static void movie_pause(Movie* m, int pause) {
     EnterCriticalSection(&m->cs);
-    if (m->playing && pause != m->paused) {
-        if (pause) m->pause_tick = GetTickCount();
-        else m->pause_total += GetTickCount() - m->pause_tick;
-        m->paused = pause;
-        if (m->wo) { if (pause) waveOutPause(m->wo); else waveOutRestart(m->wo); recaudio_stream_pause(m->rec, pause); }
+    if (m->playing && film_clock_pause(&m->clk, pause, GetTickCount()) && m->wo) {
+        if (pause) waveOutPause(m->wo); else waveOutRestart(m->wo);
+        recaudio_stream_pause(m->rec, pause);
     }
     LeaveCriticalSection(&m->cs);
 }
 
-static const char* movie_mode(Movie* m) {
-    if (m->playing && !(m->done_video && m->done_audio)) return m->paused ? "paused" : "playing";
-    return "stopped";
-}
-
 /* ---- the picture ---------------------------------------------------------- */
 
-/* The palette the film is shown in: black, a 6x6x6 colour cube, greys,
- * white. The game installs it (and keeps entries 0 and 255 black and white). */
-static RGBQUAD g_film_q[256];   /* the same, as a DIB colour table */
-
+/* The film palette (movie_core.c), as a GDI palette for the game to install. */
 static HPALETTE film_palette(void) {
     static HPALETTE pal;
     if (pal) return pal;
     struct { WORD ver, n; PALETTEENTRY e[256]; } lp = { 0x300, 256 };
-    for (int i = 0; i < 216; i++) {
-        PALETTEENTRY c = { (BYTE)(i / 36 * 51), (BYTE)(i / 6 % 6 * 51), (BYTE)(i % 6 * 51), 0 };
-        lp.e[1 + i] = c;
-    }
-    for (int i = 217; i < 255; i++) {   /* the greys between the cube's */
-        BYTE g = (BYTE)((i - 216) * 255 / 39);
-        PALETTEENTRY c = { g, g, g, 0 };
-        lp.e[i] = c;
-    }
-    PALETTEENTRY white = { 255, 255, 255, 0 };
-    lp.e[255] = white;
-    for (int i = 0; i < 256; i++)
-        g_film_q[i].rgbRed = lp.e[i].peRed, g_film_q[i].rgbGreen = lp.e[i].peGreen, g_film_q[i].rgbBlue = lp.e[i].peBlue;
+    memcpy(lp.e, film_palette_entries(), sizeof lp.e);   /* a PALETTEENTRY is r, g, b, flags */
     pal = CreatePalette((LOGPALETTE*)&lp);
     return pal;
-}
-
-/* RGB555 -> the nearest entry of a palette that is not the film's. */
-static uint8_t g_lut[32768];
-static RGBQUAD g_lut_pal[256];
-static int g_lut_ok;
-
-static void lut_for(const RGBQUAD* q) {
-    if (g_lut_ok && !memcmp(q, g_lut_pal, sizeof g_lut_pal)) return;
-    memcpy(g_lut_pal, q, sizeof g_lut_pal);
-    g_lut_ok = 1;
-    for (int c = 0; c < 32768; c++) {
-        int r = (c >> 10) * 255 / 31, g = (c >> 5 & 31) * 255 / 31, b = (c & 31) * 255 / 31;
-        int best = 0, bd = 1 << 30;
-        for (int i = 0; i < 256; i++) {
-            int dr = r - q[i].rgbRed, dg = g - q[i].rgbGreen, db = b - q[i].rgbBlue;
-            int d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
-            if (d < bd) bd = d, best = i;
-        }
-        g_lut[c] = (uint8_t)best;
-    }
-}
-
-static const int8_t g_bayer[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
-
-/* v (0..255) as one of n + 1 evenly spaced levels, ordered-dithered by t
- * (0..15): flat black and white stay flat. */
-static int dither(int v, int n, int t) {
-    int l = (v * n * 32 + (2 * t + 1) * 255) / (255 * 32);
-    return l > n ? n : l;
-}
-
-/* A pixel as an entry of the film palette: near-greys on its 40 greys,
- * the rest on its 6x6x6 cube. */
-static uint8_t film_index(int r, int g, int b, int t) {
-    int hi = r > g ? (r > b ? r : b) : (g > b ? g : b), lo = r < g ? (r < b ? r : b) : (g < b ? g : b);
-    if (hi - lo <= 12) {
-        int l = dither((r + g + b) / 3, 39, t);
-        return (uint8_t)(l == 0 ? 0 : l == 39 ? 255 : 216 + l);
-    }
-    return (uint8_t)(1 + dither(r, 5, t) * 36 + dither(g, 5, t) * 6 + dither(b, 5, t));
 }
 
 /* The film, scaled to the window, through GDI (which knows which way up the
@@ -512,19 +409,12 @@ static void movie_draw(Movie* m, HDC dc) {
             for (int i = 0; i < 256; i++)
                 bi.c[i].rgbRed = e[i].peRed, bi.c[i].rgbGreen = e[i].peGreen, bi.c[i].rgbBlue = e[i].peBlue;
         }
-        film_palette();
-        int ours = !memcmp(bi.c, g_film_q, sizeof g_film_q);   /* the game installed it */
-        if (!ours) lut_for(bi.c);
-        for (int y = 0; y < ch; y++) {
-            uint8_t* row = buf + (size_t)y * pitch;
-            const uint32_t* src = m->frame + (size_t)(y * vh / ch) * vw;
-            for (int x = 0; x < cw; x++) {
-                uint32_t p = src[x * vw / cw];
-                int r = p >> 16 & 255, g = p >> 8 & 255, b = p & 255;
-                row[x] = ours ? film_index(r, g, b, g_bayer[y & 3][x & 3])
-                              : g_lut[(r >> 3) << 10 | (g >> 3) << 5 | b >> 3];   /* some other palette: nearest */
-            }
-        }
+        uint32_t pe[256];
+        for (int i = 0; i < 256; i++) pe[i] = bi.c[i].rgbRed | bi.c[i].rgbGreen << 8 | bi.c[i].rgbBlue << 16;
+        /* the film palette, which the game installed: dithered; some other palette: the nearest entry */
+        const uint8_t* lut = film_palette_is(pe) ? NULL : film_lut(pe);
+        for (int y = 0; y < ch; y++)
+            film_row8(buf + (size_t)y * pitch, cw, m->frame + (size_t)(y * vh / ch) * vw, vw, y, lut);
         BITMAPINFOHEADER h = { sizeof h, cw, -ch, 1, 8, BI_RGB, 0, 0, 0, 256 };
         bi.h = h;
         SetDIBitsToDevice(dc, 0, 0, cw, ch, 0, 0, 0, ch, buf, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
@@ -543,7 +433,7 @@ static LRESULT CALLBACK movie_proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     case MCI_PAUSE: movie_pause(m, 1); return 0;
     case MCI_RESUME: movie_pause(m, 0); return 0;
     case MCIWNDM_GETMODEA: {
-        const char* s = movie_mode(m);
+        const char* s = film_mode(m->playing, m->clk.paused, m->done_video && m->done_audio);
         if (l && w) lstrcpynA((char*)l, s, (int)w);
         return !strcmp(s, "playing") ? MCI_MODE_PLAY : !strcmp(s, "paused") ? MCI_MODE_PAUSE : MCI_MODE_STOP;
     }
@@ -579,10 +469,9 @@ static LRESULT CALLBACK movie_proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
 
 int movie_find(const char* name, char* out, int size) {
     char base[MAX_PATH], p[MAX_PATH];
-    if (!movie_dir || !name || _stricmp(PathFindExtensionA(name), ".avi")) return 0;
-    lstrcpynA(base, PathFindFileNameA(name), MAX_PATH);
-    for (int x = 0; x < 2; x++) {   /* NAME.avi, then xNAME.avi (the Saga's) */
-        _snprintf(p, MAX_PATH - 1, "%s\\%s%s", movie_dir, x ? "x" : "", base);
+    if (!movie_dir) return 0;
+    for (int x = 0; x < 2 && film_name(name, x, base, sizeof base); x++) {   /* NAME.avi, then xNAME.avi */
+        _snprintf(p, MAX_PATH - 1, "%s\\%s", movie_dir, base);
         p[MAX_PATH - 1] = 0;
         if (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) {
             GetFullPathNameA(p, size, out, NULL);

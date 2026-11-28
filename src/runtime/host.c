@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 #include <shlwapi.h>
 #include <windowsx.h>
 
@@ -42,6 +43,7 @@
 #include "coverage.h"
 #include "present_d3d.h"
 #include "keyscript.h"
+#include "hostargs.h"
 #include "dplay.h"
 #include "cdaudio.h"
 #include "recaudio.h"
@@ -68,6 +70,10 @@ extern const uint32_t swgb_entry_va;  /* recomp_dispatch.c */
 
 static DWORD g_watchdog_s;
 static int   g_headless;
+/* A test run: --headless, --keys, --keys-live or --watchdog, the same rule as
+ * src/linux/main.c's. It is muted unless --sound, and its message boxes
+ * answer themselves: nobody is there to click one. */
+static int   g_test_run;
 static int   g_hide;   /* --headless without a private desktop: keep windows off the screen */
 static HWND  g_game_wnd;
 
@@ -129,7 +135,7 @@ static void shim_MessageBoxA(void) {
     const char* text = ARG(1) ? (const char*)(uintptr_t)ARG(1) : "";
     const char* cap = ARG(2) ? (const char*)(uintptr_t)ARG(2) : "";
     printf("[host] MessageBoxA \"%s\": %s\n", cap, text);
-    if (g_headless || g_watchdog_s) {   /* test runs never put a box on the screen */
+    if (g_test_run) {
         uint32_t b = ARG(3) & MB_TYPEMASK;
         g_eax = (b == MB_YESNO || b == MB_YESNOCANCEL) ? IDNO
               : (b == MB_RETRYCANCEL || b == MB_OKCANCEL) ? IDCANCEL
@@ -211,8 +217,9 @@ static void shim_ExitProcess(void) {
 /* ---- the play disc -------------------------------------------------------------
  * The game wants disc 2, the play disc, in a real CD-ROM drive (your disc, or
  * your disc image mounted) and reads its movies from it (%sgame\avi\%s.avi).
- * The host only finds that drive (CD_DRIVE=E or --cd E, or the first CD-ROM
- * drive with Game\Avi on it) and stores its letter in CDPath, the one letter
+ * The host only finds that drive (--cd E, SWGB_CD=E as on Linux, or CD_DRIVE=E,
+ * its older name; else the first CD-ROM drive with Game\Avi on it) and stores
+ * its letter in CDPath, the one letter
  * the game checks after its first run (HKLM, virtualised to HKCU's
  * VirtualStore for this process as for the game). */
 static char g_cd = 0;
@@ -220,27 +227,26 @@ static char g_cd = 0;
 static void cd_pick(const char* want) {
     char env[8], root[] = "?:\\", probe[48];
     if (want && *want) g_cd = (char)(want[0] & ~0x20);
-    else if (GetEnvironmentVariableA("CD_DRIVE", env, sizeof env)) g_cd = (char)(env[0] & ~0x20);
+    else if (GetEnvironmentVariableA("SWGB_CD", env, sizeof env) || GetEnvironmentVariableA("CD_DRIVE", env, sizeof env))
+        g_cd = (char)(env[0] & ~0x20);
     for (char c = 'D'; c <= 'Z' && !g_cd; c++) {
         root[0] = c;
         _snprintf(probe, sizeof probe, "%s" CD_PROBE, root);
         if (GetDriveTypeA(root) == DRIVE_CDROM && GetFileAttributesA(probe) != INVALID_FILE_ATTRIBUTES) g_cd = c;
     }
-    if (!g_cd) { printf("  no play disc found: put " CD_NAME " in the drive or mount its image (or set CD_DRIVE)\n"); return; }
+    if (!g_cd) { printf("  no play disc found: put " CD_NAME " in the drive or mount its image (or set SWGB_CD)\n"); return; }
     root[0] = g_cd;
     RegSetKeyValueA(HKEY_LOCAL_MACHINE, GAME_KEY, "CDPath", REG_SZ, root, sizeof root);
     printf("  play disc: %c:\n", g_cd);
 }
 
-/* "on:NAME" in --keys waits until the game opens a file whose name has NAME
- * in it, and the times after it count from then. */
-static char g_wait_file[64];
-static HANDLE g_file_seen;
+/* Every open: --files prints it, and "on:NAME" in --keys waits for one
+ * (keyscript.c). */
 static int g_log_files;      /* --files: every open */
 
 static void file_seen(const char* name, int ok) {
     if (g_log_files) printf("[host] open %s -> %s\n", name ? name : "(null)", ok ? "ok" : "missing");
-    if (g_wait_file[0] && name && StrStrIA(name, g_wait_file)) { g_wait_file[0] = 0; SetEvent(g_file_seen); }
+    keys_file_opened(name);
 }
 
 static void shim_CreateFileA(void) {
@@ -483,37 +489,6 @@ static POINT vcur_set_client(HWND w, int cx, int cy) {
     return s;   /* the client pixel the cursor ended on (may be outside the window) */
 }
 
-/* "R-3", "C", "PL+10", "120": a place on one axis of the window's client area (see parse_keys) */
-static int place(const char* t, int axis, const RECT* cl, const RECT* pic) {
-    char name[8] = "";
-    int n = 0, base = 0;
-    const char* q = t;
-    while (isalpha((unsigned char)*q) && n < 7) name[n++] = *q++;
-    name[n] = 0;
-    int cw = cl->right, ch = cl->bottom;
-    if (!n) return atoi(t);
-    if (axis == 0) {
-        if (!_stricmp(name, "L")) base = 0;
-        else if (!_stricmp(name, "R")) base = cw - 1;
-        else if (!_stricmp(name, "C")) base = cw / 2;
-        else if (!_stricmp(name, "PL")) base = pic->left;
-        else if (!_stricmp(name, "PR")) base = pic->right - 1;
-        else if (!_stricmp(name, "BL")) base = pic->left / 2;
-        else if (!_stricmp(name, "BR")) base = (pic->right + cw) / 2;
-        else { fprintf(stderr, "--keys: no place %s on x\n", name); exit(1); }
-    } else {
-        if (!_stricmp(name, "T")) base = 0;
-        else if (!_stricmp(name, "B")) base = ch - 1;
-        else if (!_stricmp(name, "C")) base = ch / 2;
-        else if (!_stricmp(name, "PT")) base = pic->top;
-        else if (!_stricmp(name, "PB")) base = pic->bottom - 1;
-        else if (!_stricmp(name, "BT")) base = pic->top / 2;
-        else if (!_stricmp(name, "BB")) base = (pic->bottom + ch) / 2;
-        else { fprintf(stderr, "--keys: no place %s on y\n", name); exit(1); }
-    }
-    return base + (*q ? atoi(q) : 0);
-}
-
 /* One --keys step, now: a shot, a size, the cursor, a click or a key. */
 static void key_run(step_t* st) {
     if (st->shot[0]) { if (st->wshot) present_wshot_request(st->shot); else softdd_shot(st->shot); return; }
@@ -541,8 +516,9 @@ static void key_run(step_t* st) {
             RECT cl, pic;
             GetClientRect(w, &cl);
             if (d && d->w) present_layout(present_filter, cl.right, cl.bottom, d->w, d->h, &pic); else pic = cl;
-            cx = place(st->xs, 0, &cl, &pic);
-            cy = place(st->ys, 1, &cl, &pic);
+            int p4[4] = { pic.left, pic.top, pic.right, pic.bottom };
+            cx = keys_place(st->xs, 0, cl.right, cl.bottom, p4);
+            cy = keys_place(st->ys, 1, cl.right, cl.bottom, p4);
         } else if (w && d && d->w) {   /* game pixels: the client pixel that maps to them */
             POINT p = { st->x, st->y };
             present_to_client(w, d->w, d->h, &p);
@@ -610,63 +586,10 @@ static void key_run(step_t* st) {
     }
 }
 
-static DWORD WINAPI keys_thread(LPVOID unused) {
-    (void)unused;
-    DWORD t0 = GetTickCount();
-    for (int i = 0; i < g_nsteps; i++) {
-        step_t* st = &g_steps[i];
-        if (st->on[0]) {
-            if (!st->x) { lstrcpynA(g_wait_file, st->on, sizeof g_wait_file); st->x = 1; }
-            WaitForSingleObject(g_file_seen, INFINITE);
-            t0 = GetTickCount();
-            printf("[keys] %s opened: times count from here\n", st->on);
-            continue;
-        }
-        for (int j = i + 1; j < g_nsteps; j++)   /* the next wait listens from now */
-            if (g_steps[j].on[0]) {
-                if (!g_steps[j].x) { lstrcpynA(g_wait_file, g_steps[j].on, sizeof g_wait_file); g_steps[j].x = 1; }
-                break;
-            }
-        DWORD at = t0 + st->at, now = GetTickCount();
-        if ((int)(at - now) > 0) Sleep(at - now);
-        key_run(st);
-    }
-    return 0;
-}
-
-/* --keys-live FILE: steps appended to FILE while the game runs ("0:what", a line or a comma
- * apart) run as they are read, so a controller can look at a shot and answer it
- * (tools/soak.py --mode fight aims at the enemy it finds on the minimap). */
+/* --keys-live FILE: steps appended to FILE while the game runs run as they are read
+ * (keyscript.c), so a controller can look at a shot and answer it (tools/soak.py --mode
+ * fight aims at the enemy it finds on the minimap). */
 static char g_live_file[MAX_PATH];
-static DWORD g_keys_t0;
-
-static DWORD WINAPI keys_live_thread(LPVOID unused) {
-    (void)unused;
-    long pos = 0;
-    char line[512];
-    size_t n = 0;
-    for (;;) {
-        FILE* f = fopen(g_live_file, "rb");
-        if (f) {
-            int c;
-            fseek(f, pos, SEEK_SET);
-            while ((c = fgetc(f)) != EOF) {
-                pos++;
-                if (c == '\n' || c == '\r' || c == ',') {
-                    step_t st;
-                    line[n] = 0;
-                    if (n && key_parse(line, &st, 0) && !st.on[0]) {
-                        st.at = GetTickCount() - g_keys_t0;
-                        key_run(&st);
-                    }
-                    n = 0;
-                } else if (n < sizeof line - 1) line[n++] = (char)c;
-            }
-            fclose(f);
-        }
-        Sleep(200);
-    }
-}
 
 static int held(int vk) { return (int)(g_vk_until[vk & 0xFF] - GetTickCount()) > 0; }
 
@@ -715,8 +638,6 @@ static void shim_SetCursorPos(void) {
     g_esp += 4 + 2 * 4;
 }
 
-/* The game's client <-> screen conversions work in its mode's pixels: the
- * window is wherever softdd put it, so its client origin is the game's 0,0. */
 /* The game sees its window as the original did on a fullscreen mode: at 0,0,
  * exactly the mode's size, window and client alike. Its edge scrolling compares
  * GetCursorPos (above: game pixels, 0..W-1) with GetWindowRect, so the window's
@@ -780,6 +701,14 @@ static void shim_SetCursor(void) {
     g_esp += 4 + 1 * 4;
 }
 
+/* The point is left as it is: the game's screen is its window's client area.
+ * GetCursorPos (above) answers in game pixels and GetWindowRect puts the
+ * window at 0,0, as on the fullscreen mode the game was made for, where
+ * screen and client coordinates are the same; a real conversion would
+ * subtract wherever softdd put the window on the desktop. (A child window,
+ * such as an EDIT field, would need its own offset; no run calls either for
+ * one: a probe of every hwnd passed saw no call at all through the menus, a
+ * skirmish, both text fields, present_check group A and res_check 800.) */
 static void shim_ScreenToClient(void) { g_eax = TRUE; g_esp += 4 + 2 * 4; }
 static void shim_ClientToScreen(void) { g_eax = TRUE; g_esp += 4 + 2 * 4; }
 
@@ -1002,9 +931,9 @@ int main(int argc, char** argv) {
             softdd_record = rec;
             recaudio_init();   /* the sound too (recaudio.c) */
         }
-        else if (!strcmp(argv[i], "--record-fps") && i + 1 < argc) { softdd_record_fps = atoi(argv[++i]); if (softdd_record_fps < 1 || softdd_record_fps > 1000) softdd_record_fps = 30; }
-        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) softdd_stop_after = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) softdd_scale = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--record-fps") && i + 1 < argc) softdd_record_fps = (int)host_int_arg("--record-fps", argv[++i], 1, 1000);
+        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) softdd_stop_after = (int)host_int_arg("--frames", argv[++i], 1, INT_MAX);
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) softdd_scale = (int)host_int_arg("--scale", argv[++i], 1, 16);
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             if ((present_filter = present_filter_by_name(argv[++i])) < 0) { fprintf(stderr, "--filter: sharp, smooth, nearest or integer\n"); return 1; }
         }
@@ -1036,6 +965,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--hud-sides") && i + 1 < argc) { if (!widescreen_sides_parse(argv[++i])) return 1; }
         else if (!strcmp(argv[i], "--smooth")) smooth_on = 1;
         else {
+            int help = !strcmp(argv[i], "--help") || !strcmp(argv[i], "-h");
+            if (!help) fprintf(stderr, "%s: not an option, or its value is missing\n", argv[i]);
             printf("usage: swgbrecomp [--run] [--headless] [--record out.mp4] [--record-fps N] [--frames N] [--sound]\n"
                    "                  [--shot S file.bmp] [--keys SCRIPT] [--keys-live FILE] [--watchdog S] [--files] [--multi]\n"
                    "                  [--exe work\\" GUEST_EXE "] [--game game] [--cd E] [--films DIR]\n"
@@ -1047,9 +978,10 @@ int main(int argc, char** argv) {
                    "                  [--dplay host|native] [--mp-port N] [--mp-join HOST[,HOST]] [--mp-log]\n"
                    "                  [--music off|native|DIR]\n");
             recomp_trace_help();
-            return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
+            return help ? 0 : 1;
         }
     }
+    g_test_run = host_is_test_run(g_headless, g_nsteps, g_live_file, g_watchdog_s);
     GetFullPathNameA(exe, MAX_PATH, exe_full, NULL);
     GetFullPathNameA(game, MAX_PATH, game_full, NULL);
     cd_pick(cd);
@@ -1079,7 +1011,7 @@ int main(int argc, char** argv) {
     }
     if (!SetCurrentDirectoryA(game_full)) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
     CoInitialize(NULL);
-    if (!g_nsteps && !g_watchdog_s && !g_headless) sound = 1;   /* playing: sound on */
+    if (!g_test_run) sound = 1;   /* playing: sound on */
     int m = sound ? 1 : mute_process();
     if (!m) {
         fprintf(stderr, "cannot mute the process audio session; pass --sound to run with sound\n");
@@ -1091,10 +1023,7 @@ int main(int argc, char** argv) {
     smooth_init();
     profile_start();
     if (g_shots) CloseHandle(CreateThread(NULL, 0, shot_thread, NULL, 0, NULL));
-    g_file_seen = CreateEventA(NULL, FALSE, FALSE, NULL);
-    g_keys_t0 = GetTickCount();
-    if (g_nsteps) CloseHandle(CreateThread(NULL, 0, keys_thread, NULL, 0, NULL));
-    if (g_live_file[0]) CloseHandle(CreateThread(NULL, 0, keys_live_thread, NULL, 0, NULL));
+    keys_start(g_steps, g_nsteps, g_live_file, key_run);
     printf("  entering 0x%08X\n\n", swgb_entry_va);
     native32_call_guest(swgb_entry_va, 0, NULL);
     printf("\nentry returned eax=%08X\n", g_eax);

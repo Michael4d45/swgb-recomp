@@ -40,6 +40,7 @@
 #include <sys/wait.h>
 
 #include "win32hle.h"
+#include "movie_core.h"
 #include "swgb_linux.h"
 
 #define MCI_PLAY            0x0806u
@@ -106,34 +107,6 @@ static int read_all(int fd, void* buf, size_t n) {
     return (int)got;
 }
 
-/* ---- the film's size and rate, from its AVI header ------------------------------ */
-typedef struct { int w, h; uint32_t rate, scale; int has_audio; } avi_info;
-
-static int avi_probe(const char* path, avi_info* ai) {
-    uint8_t b[8192];
-    FILE* f = fopen(path, "rb");
-    if (!f) return 0;
-    size_t n = fread(b, 1, sizeof b, f);
-    fclose(f);
-    if (n < 64 || memcmp(b, "RIFF", 4) || memcmp(b + 8, "AVI ", 4)) return 0;
-    memset(ai, 0, sizeof *ai);
-    uint32_t us = 0;
-    for (size_t i = 12; i + 64 <= n; i++) {
-        if (!memcmp(b + i, "avih", 4)) {
-            memcpy(&us, b + i + 8, 4);
-            memcpy(&ai->w, b + i + 8 + 32, 4);
-            memcpy(&ai->h, b + i + 8 + 36, 4);
-        } else if (!memcmp(b + i, "strh", 4)) {
-            if (!memcmp(b + i + 8, "vids", 4) && !ai->rate) {
-                memcpy(&ai->scale, b + i + 8 + 20, 4);
-                memcpy(&ai->rate, b + i + 8 + 24, 4);
-            } else if (!memcmp(b + i + 8, "auds", 4)) ai->has_audio = 1;
-        }
-    }
-    if (!ai->rate || !ai->scale) { ai->rate = 1000000; ai->scale = us ? us : 66667; }
-    return ai->w > 0 && ai->h > 0 && ai->w <= 4096 && ai->h <= 4096;
-}
-
 /* ---- one film ---------------------------------------------------------------- */
 typedef struct {
     uint32_t hwnd;
@@ -147,14 +120,12 @@ typedef struct {
     pthread_t vthread, athread;
     int has_v, has_a;
     volatile int stop;
-    int playing, paused, done_video, done_audio;
+    int playing, done_video, done_audio;
     int stream;                    /* win32hle's mixer, or -1 */
     long pushed;                   /* frames given to it */
-    int audio_on;                  /* the sound is the clock */
+    film_clock clk;                /* under lock; while clk.audio_on, the clock is what the mixer played */
     int audio_ready;
     pthread_cond_t ready;
-    double base_ms;
-    uint32_t base_tick, pause_tick, pause_total;
 } movie_t;
 
 #define MAX_MOVIES 4
@@ -176,19 +147,14 @@ static double sound_ms(movie_t* m) {
 
 static double clock_ms(movie_t* m) {
     pthread_mutex_lock(&m->lock);
-    double t;
-    if (m->audio_on) t = sound_ms(m);
-    else t = m->base_ms + (double)((m->paused ? m->pause_tick : now_ms()) - m->base_tick - m->pause_total);
+    double t = m->clk.audio_on ? sound_ms(m) : film_wall_ms(&m->clk, now_ms());
     pthread_mutex_unlock(&m->lock);
     return t;
 }
 
 static void clock_to_wall(movie_t* m) {
     pthread_mutex_lock(&m->lock);
-    if (m->audio_on) m->base_ms = sound_ms(m);
-    m->audio_on = 0;
-    m->base_tick = m->paused ? m->pause_tick : now_ms();
-    m->pause_total = 0;
+    film_clock_to_wall(&m->clk, now_ms(), m->clk.audio_on ? sound_ms(m) : 0);
     pthread_mutex_unlock(&m->lock);
 }
 
@@ -212,13 +178,13 @@ static void* audio_thread(void* arg) {
     if (m->stream < 0 || m->afd < 0) goto none;
     int first = 1;
     while (!m->stop) {
-        if (m->paused || hle_audio_stream_queued(m->stream) > AUDIO_CHUNK * 3) { usleep(10000); continue; }
+        if (m->clk.paused || hle_audio_stream_queued(m->stream) > AUDIO_CHUNK * 3) { usleep(10000); continue; }
         int n = read_all(m->afd, buf, sizeof buf) / 4;
         if (n <= 0) break;
         hle_audio_stream_push(m->stream, buf, n);
         pthread_mutex_lock(&m->lock);
         m->pushed += n;
-        if (first) m->audio_on = 1;
+        if (first) m->clk.audio_on = 1;
         pthread_mutex_unlock(&m->lock);
         if (first) { first = 0; audio_started(m); }
     }
@@ -256,8 +222,8 @@ static void* video_thread(void* arg) {
     clock_gettime(CLOCK_REALTIME, &until);
     until.tv_sec += 3;
     while (!m->audio_ready && pthread_cond_timedwait(&m->ready, &m->lock, &until) != ETIMEDOUT) {}
-    if (!m->audio_on) { m->base_ms = 0; m->base_tick = now_ms(); m->pause_total = 0; }
-    int by_sound = m->audio_on;
+    if (!m->clk.audio_on) film_clock_start(&m->clk, now_ms());
+    int by_sound = m->clk.audio_on;
     pthread_mutex_unlock(&m->lock);
     uint32_t t0 = now_ms();
     long k;
@@ -311,12 +277,8 @@ static void movie_stop(movie_t* m) {
 
 static void movie_pause(movie_t* m, int pause) {
     pthread_mutex_lock(&m->lock);
-    if (m->playing && pause != m->paused) {
-        if (pause) m->pause_tick = now_ms();
-        else m->pause_total += now_ms() - m->pause_tick;
-        m->paused = pause;
-        if (m->stream >= 0) hle_audio_stream_gain(m->stream, pause ? 0.0f : 1.0f);
-    }
+    if (m->playing && film_clock_pause(&m->clk, pause, now_ms()) && m->stream >= 0)
+        hle_audio_stream_gain(m->stream, pause ? 0.0f : 1.0f);
     pthread_mutex_unlock(&m->lock);
 }
 
@@ -326,7 +288,7 @@ static void movie_play(movie_t* m) {
                      "-fps_mode", "cfr", "-f", "rawvideo", "-pix_fmt", "bgra", "-", NULL };
     m->stop = 0;
     m->done_video = m->done_audio = 0;
-    m->audio_ready = 0, m->audio_on = 0, m->pushed = 0, m->stream = -1;
+    m->audio_ready = 0, m->clk.audio_on = 0, m->pushed = 0, m->stream = -1;
     m->vfd = spawn(argv, &m->vpid);
     if (m->vfd < 0) {
         fprintf(stderr, "[movie] cannot start ffmpeg for %s\n", m->path);
@@ -341,67 +303,18 @@ static void movie_play(movie_t* m) {
             (double)m->ai.rate / m->ai.scale, m->ai.has_audio ? ", with sound" : "");
 }
 
-static const char* movie_mode(movie_t* m) {
-    if (m->playing && !(m->done_video && m->done_audio)) return m->paused ? "paused" : "playing";
-    return "stopped";
-}
-
 /* ---- the picture ----------------------------------------------------------------- */
-/* The film's palette: black, a 6x6x6 cube, greys, white (as on Windows). */
-static uint32_t g_film_pe[256];   /* PALETTEENTRY: r, g, b, flags */
 static uint32_t g_film_hpal;
 
-static void film_entries(void) {
-    static int done;
-    if (done++) return;
-    for (int i = 0; i < 216; i++) g_film_pe[1 + i] = (uint32_t)(i / 36 * 51) | (uint32_t)(i / 6 % 6 * 51) << 8 | (uint32_t)(i % 6 * 51) << 16;
-    for (int i = 217; i < 255; i++) { uint32_t g = (uint32_t)((i - 216) * 255 / 39); g_film_pe[i] = g | g << 8 | g << 16; }
-    g_film_pe[255] = 0xFFFFFFu;
-}
-
-/* CreatePalette, the game's GDI's: it installs the film's palette from it. */
+/* CreatePalette, the game's GDI's: it installs the film palette (movie_core.c) from it. */
 static uint32_t film_palette(void) {
     if (g_film_hpal) return g_film_hpal;
-    film_entries();
     uint8_t* lp = (uint8_t*)hle_alloc(4 + 256 * 4);
     lp[0] = 0x00, lp[1] = 0x03, lp[2] = 0x00, lp[3] = 0x01;   /* palVersion 0x300, palNumEntries 256 */
-    memcpy(lp + 4, g_film_pe, sizeof g_film_pe);
+    memcpy(lp + 4, film_palette_entries(), 256 * 4);
     uint32_t a = hle_va(lp);
     g_film_hpal = hle_call_guest(hle_resolve("CreatePalette"), 1, &a);
     return g_film_hpal;
-}
-
-static uint8_t g_lut[32768];
-static uint32_t g_lut_pal[256];
-static int g_lut_ok;
-static void lut_for(const uint32_t* pe) {
-    if (g_lut_ok && !memcmp(pe, g_lut_pal, sizeof g_lut_pal)) return;
-    memcpy(g_lut_pal, pe, sizeof g_lut_pal);
-    g_lut_ok = 1;
-    for (int c = 0; c < 32768; c++) {
-        int r = (c >> 10) * 255 / 31, g = (c >> 5 & 31) * 255 / 31, b = (c & 31) * 255 / 31;
-        int best = 0, bd = 1 << 30;
-        for (int i = 0; i < 256; i++) {
-            int dr = r - (int)(pe[i] & 255), dg = g - (int)(pe[i] >> 8 & 255), db = b - (int)(pe[i] >> 16 & 255);
-            int d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
-            if (d < bd) bd = d, best = i;
-        }
-        g_lut[c] = (uint8_t)best;
-    }
-}
-
-static const int8_t g_bayer[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
-static int dither(int v, int n, int t) {
-    int l = (v * n * 32 + (2 * t + 1) * 255) / (255 * 32);
-    return l > n ? n : l;
-}
-static uint8_t film_index(int r, int g, int b, int t) {
-    int hi = r > g ? (r > b ? r : b) : (g > b ? g : b), lo = r < g ? (r < b ? r : b) : (g < b ? g : b);
-    if (hi - lo <= 12) {
-        int l = dither((r + g + b) / 3, 39, t);
-        return (uint8_t)(l == 0 ? 0 : l == 39 ? 255 : 216 + l);
-    }
-    return (uint8_t)(1 + dither(r, 5, t) * 36 + dither(g, 5, t) * 6 + dither(b, 5, t));
 }
 
 /* fields.c's compose: the film window at l,t..r,b of the frame (8 bits through pal, or 16). */
@@ -410,22 +323,21 @@ int swgb_movie_draw(uint32_t hwnd, uint8_t* px, int pitch, int bpp, int l, int t
     if (!m) return 0;
     int cw = r - l, ch = b - t, vw = m->ai.w, vh = m->ai.h;
     if (cw <= 0 || ch <= 0) return 1;
-    film_entries();
-    int ours = bpp == 8 && pal && !memcmp(pal + 1, g_film_pe + 1, 254 * 4);   /* the game installed it */
-    if (bpp == 8 && !ours && pal) lut_for(pal);
+    /* the film palette, which the game installed: dithered; some other palette: the nearest entry */
+    const uint8_t* lut = bpp == 8 && pal && !film_palette_is(pal) ? film_lut(pal) : NULL;
     pthread_mutex_lock(&m->lock);
     for (int y = 0; y < ch; y++) {
         uint8_t* row = px + (size_t)(t + y) * pitch;
         const uint32_t* src = m->frame + (size_t)(y * vh / ch) * vw;
-        for (int x = 0; x < cw; x++) {
-            uint32_t p = m->have_frame ? src[x * vw / cw] : 0;
-            int R = p >> 16 & 255, G = p >> 8 & 255, B = p & 255;
-            if (bpp == 8)
-                row[l + x] = ours ? film_index(R, G, B, g_bayer[y & 3][x & 3])
-                           : pal ? g_lut[(R >> 3) << 10 | (G >> 3) << 5 | B >> 3] : 0;
-            else
+        if (bpp == 8 && !pal) memset(row + l, 0, (size_t)cw);
+        else if (bpp == 8 && !m->have_frame) memset(row + l, lut ? lut[0] : 0, (size_t)cw);
+        else if (bpp == 8) film_row8(row + l, cw, src, vw, y, lut);
+        else
+            for (int x = 0; x < cw; x++) {
+                uint32_t p = m->have_frame ? src[x * vw / cw] : 0;
+                int R = p >> 16 & 255, G = p >> 8 & 255, B = p & 255;
                 ((uint16_t*)row)[l + x] = (uint16_t)((R >> 3) << 11 | (G >> 2) << 5 | B >> 3);
-        }
+            }
     }
     pthread_mutex_unlock(&m->lock);
     return 1;
@@ -455,7 +367,7 @@ static void s_movie_proc(void) {                         /* (hwnd, msg, wParam, 
     case MCI_PAUSE: movie_pause(m, 1); RET(0, 4);
     case MCI_RESUME: movie_pause(m, 0); RET(0, 4);
     case MCIWNDM_GETMODEA: {
-        const char* s = movie_mode(m);
+        const char* s = film_mode(m->playing, m->clk.paused, m->done_video && m->done_audio);
         if (l && w) snprintf((char*)hle_ptr(l), w, "%s", s);
         RET(!strcmp(s, "playing") ? MCI_MODE_PLAY : !strcmp(s, "paused") ? MCI_MODE_PAUSE : MCI_MODE_STOP, 4);
     }
@@ -486,13 +398,11 @@ static void s_movie_proc(void) {                         /* (hwnd, msg, wParam, 
 
 /* The film's file: the guest's path, else NAME.avi or xNAME.avi in --films DIR. */
 int swgb_movie_find(const char* guest_name, char* host, size_t n) {
-    const char* base = guest_name;
-    for (const char* p = guest_name; *p; p++) if (*p == '\\' || *p == '/' || *p == ':') base = p + 1;
-    const char* dot = strrchr(base, '.');
-    if (!swgb_films_dir || !dot || strcasecmp(dot, ".avi")) return 0;
-    for (int x = 0; x < 2; x++) {
+    char base[256];
+    if (!swgb_films_dir) return 0;
+    for (int x = 0; x < 2 && film_name(guest_name, x, base, sizeof base); x++) {
         struct stat st;
-        snprintf(host, n, "%s/%s%s", swgb_films_dir, x ? "x" : "", base);
+        snprintf(host, n, "%s/%s", swgb_films_dir, base);
         if (!stat(host, &st)) return 1;
     }
     return 0;

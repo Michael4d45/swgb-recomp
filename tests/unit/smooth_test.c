@@ -134,7 +134,7 @@ int main(void) {
     t_world = (uint32_t)(uintptr_t)calloc(1, 0x100);
     t_map = (uint32_t)(uintptr_t)calloc(1, 0xC000);
     MEM32(G_GAME) = t_game;
-    MEM32(t_game + 0x420) = t_world;
+    MEM32(t_game + G_GAME_WORLD) = t_world;
     MEM32(t_world + 0x34) = t_map;
     MEM16(t_map + G_MAP_HALF_W) = HW;
     MEM16(t_map + G_MAP_HALF_H) = HH;
@@ -233,7 +233,7 @@ int main(void) {
         walk(o, 3, 0.1f, 0.0f, 5, 50, 1e9f);
         uint32_t w2 = (uint32_t)(uintptr_t)calloc(1, 0x100);
         MEM32(w2 + 0x34) = t_map;
-        MEM32(t_game + 0x420) = w2;
+        MEM32(t_game + G_GAME_WORLD) = w2;
         t_world = w2;
         g_now += 50;
         place(o, 70.6f, 70);

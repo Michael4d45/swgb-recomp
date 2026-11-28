@@ -77,7 +77,7 @@ static uint32_t g_world, g_step_t, g_step_n, g_interval = 50;
 
 static void track_step(void) {
     uint32_t g = MEM32(G_GAME);
-    uint32_t w = g ? MEM32(g + 0x420) : 0;
+    uint32_t w = g ? MEM32(g + G_GAME_WORLD) : 0;
     if (!w) return;
     uint32_t t = MEM32(w + G_WORLD_STEP_T);
     if (w != g_world) { g_world = w; g_step_t = t; g_step_n += 2; return; }   /* a new game: no history */

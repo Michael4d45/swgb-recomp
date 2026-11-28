@@ -54,7 +54,7 @@ static void reset(double fps, int mode) {
     g_pace = 1;
     g_due = 0;
     g_seen = 0;
-    MEM32(g_game + GAME_MODE) = mode;
+    MEM32(g_game + G_GAME_MODE) = mode;
     MEM32(g_screen + SCREEN_LAST) = fake_time();
     MEM32(g_screen + SCREEN_GATE) = 1;               /* the game's own: 1 ms */
 }
@@ -105,7 +105,7 @@ int main(void) {
     g_game = (uint32_t)(uintptr_t)game;
     g_screen = (uint32_t)(uintptr_t)screen;
     MEM32(GAME) = g_game;
-    MEM32(g_game + GAME_SCREEN) = g_screen;
+    MEM32(g_game + G_GAME_SCREEN) = g_screen;
     MEM32(g_screen) = SCREEN_VTABLE;
 
     /* --fps 60 and 30: that many passes a second; frames start every 16.67 ms (16 and 17) */

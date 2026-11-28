@@ -36,6 +36,7 @@
 #include "pe_loader.h"
 #include "host.h"
 #include "keyscript.h"
+#include "hostargs.h"
 #include "coverage.h"
 #include "widescreen.h"
 #include "smooth.h"
@@ -96,10 +97,6 @@ int  swgb_test_run;
 int swgb_log_files;
 static unsigned g_watchdog_s;
 
-/* Unset: Genie draws mcursor into the primary (screen.c hides the SDL
- * pointer). A hook that returns nonzero would force the Win32/SDL cursor
- * instead — useful only while that sprite is missing. */
-
 /* ---- what the lift calls into ---------------------------------------------- */
 void recomp_not_lifted(uint32_t va) {
     fprintf(stderr, "\n[not-lifted] sub_%08X  (called from 0x%08X)\n", va, g_cur_func);
@@ -107,21 +104,10 @@ void recomp_not_lifted(uint32_t va) {
     _exit(2);
 }
 
-/* ---- file opens: --files, and on:NAME in --keys ----------------------------- */
-static pthread_mutex_t g_seen_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  g_seen_cond = PTHREAD_COND_INITIALIZER;
-static char g_wait_file[64];
-static int  g_file_seen;
-
+/* ---- file opens: --files, and on:NAME in --keys (keyscript.c) --------------- */
 void swgb_file_seen(const char* name, int ok) {
     if (swgb_log_files) printf("[host] open %s -> %s\n", name, ok ? "ok" : "missing");
-    pthread_mutex_lock(&g_seen_lock);
-    if (g_wait_file[0] && strcasestr(name, g_wait_file)) {
-        g_wait_file[0] = 0;
-        g_file_seen = 1;
-        pthread_cond_signal(&g_seen_cond);
-    }
-    pthread_mutex_unlock(&g_seen_lock);
+    keys_file_opened(name);
 }
 
 /* ---- the frame: --shot and --record ------------------------------------------
@@ -272,7 +258,6 @@ static step_t g_steps[MAX_STEPS];
 static int g_nsteps;
 static int g_headless;
 static char g_live_file[PATH_MAX];
-static uint32_t g_keys_t0;
 
 static void mouse(uint32_t msg, int x, int y) { mach_enter(); hle_input_mouse(msg, x, y); mach_leave(); }
 /* The key's scan code, as a keyboard sends it (US set 1) and the Windows
@@ -292,14 +277,6 @@ static uint32_t scan_of_vk(int vk) {
 }
 static void key(int down, int vk) { mach_enter(); hle_input_key(down, (uint32_t)vk, scan_of_vk(vk)); mach_leave(); }
 
-static void wait_for_file(const char* name) {
-    pthread_mutex_lock(&g_seen_lock);
-    if (!g_wait_file[0] && !g_file_seen) snprintf(g_wait_file, sizeof g_wait_file, "%s", name);
-    while (!g_file_seen) pthread_cond_wait(&g_seen_cond, &g_seen_lock);
-    g_file_seen = 0;
-    pthread_mutex_unlock(&g_seen_lock);
-}
-
 /* The window's client size and the picture in it (game pixels when headless). */
 static void client_and_picture(int* cw, int* ch, int pic[4]) {
     int gw = 800, gh = 600, bpp;
@@ -315,36 +292,6 @@ static void client_and_picture(int* cw, int* ch, int pic[4]) {
         int ph = (int)((long long)*cw * gh / gw);
         pic[0] = 0, pic[1] = (*ch - ph) / 2, pic[2] = *cw, pic[3] = pic[1] + ph;
     }
-}
-
-/* "R-3", "C", "PL+10", "120": a place on one axis of the client area (keyscript.h). */
-static int place(const char* t, int axis, int cw, int ch, const int pic[4]) {
-    char name[8] = "";
-    int n = 0, base;
-    const char* q = t;
-    while (((*q | 0x20) >= 'a' && (*q | 0x20) <= 'z') && n < 7) name[n++] = *q++;
-    name[n] = 0;
-    if (!n) return atoi(t);
-    if (axis == 0) {
-        if (!strcasecmp(name, "L")) base = 0;
-        else if (!strcasecmp(name, "R")) base = cw - 1;
-        else if (!strcasecmp(name, "C")) base = cw / 2;
-        else if (!strcasecmp(name, "PL")) base = pic[0];
-        else if (!strcasecmp(name, "PR")) base = pic[2] - 1;
-        else if (!strcasecmp(name, "BL")) base = pic[0] / 2;
-        else if (!strcasecmp(name, "BR")) base = (pic[2] + cw) / 2;
-        else { fprintf(stderr, "--keys: no place %s on x\n", name); exit(1); }
-    } else {
-        if (!strcasecmp(name, "T")) base = 0;
-        else if (!strcasecmp(name, "B")) base = ch - 1;
-        else if (!strcasecmp(name, "C")) base = ch / 2;
-        else if (!strcasecmp(name, "PT")) base = pic[1];
-        else if (!strcasecmp(name, "PB")) base = pic[3] - 1;
-        else if (!strcasecmp(name, "BT")) base = pic[1] / 2;
-        else if (!strcasecmp(name, "BB")) base = (pic[3] + ch) / 2;
-        else { fprintf(stderr, "--keys: no place %s on y\n", name); exit(1); }
-    }
-    return base + (*q ? atoi(q) : 0);
 }
 
 /* One step, now: a shot, a size, the cursor, a click or a key. */
@@ -366,7 +313,7 @@ static void key_run(step_t* st) {
         if (st->win) {                                    /* a window place -> the game pixel under it */
             int cw, ch, pic[4];
             client_and_picture(&cw, &ch, pic);
-            int cx = place(st->xs, 0, cw, ch, pic), cy = place(st->ys, 1, cw, ch, pic);
+            int cx = keys_place(st->xs, 0, cw, ch, pic), cy = keys_place(st->ys, 1, cw, ch, pic);
             gx = pic[2] > pic[0] ? (int)((long long)(cx - pic[0]) * gw / (pic[2] - pic[0])) : cx;
             gy = pic[3] > pic[1] ? (int)((long long)(cy - pic[1]) * gh / (pic[3] - pic[1])) : cy;
             printf("[keys] window %d,%d -> game %d,%d\n", cx, cy, gx, gy);
@@ -404,63 +351,6 @@ static void key_run(step_t* st) {
     if (mod) { usleep(50000); key(0, mod); }
     printf("[keys] %.1fs %skey %02X\n", st->at / 1000.0,
            mod == 0x12 ? "alt+" : mod == 0x11 ? "ctrl+" : mod ? "shift+" : "", st->vk);
-}
-
-static void* keys_thread(void* unused) {
-    (void)unused;
-    uint32_t t0 = hle_ticks_ms();
-    for (int i = 0; i < g_nsteps; i++) {
-        step_t* st = &g_steps[i];
-        if (st->on[0]) {
-            wait_for_file(st->on);
-            t0 = hle_ticks_ms();
-            printf("[keys] %s opened: times count from here\n", st->on);
-            continue;
-        }
-        for (int j = i + 1; j < g_nsteps; j++)            /* the next wait listens from now */
-            if (g_steps[j].on[0]) {
-                pthread_mutex_lock(&g_seen_lock);
-                if (!g_wait_file[0] && !g_file_seen) snprintf(g_wait_file, sizeof g_wait_file, "%s", g_steps[j].on);
-                pthread_mutex_unlock(&g_seen_lock);
-                break;
-            }
-        int32_t wait = (int32_t)(t0 + (uint32_t)st->at - hle_ticks_ms());
-        if (wait > 0) usleep((useconds_t)wait * 1000u);
-        key_run(st);
-    }
-    return NULL;
-}
-
-/* --keys-live FILE: steps appended to FILE while the game runs ("0:what", a
- * line or a comma apart) run as they are read, so a controller can look at a
- * shot and answer it (tools/soak.py --mode fight). */
-static void* keys_live_thread(void* unused) {
-    (void)unused;
-    long pos = 0;
-    char line[512];
-    size_t n = 0;
-    for (;;) {
-        FILE* f = fopen(g_live_file, "rb");
-        if (f) {
-            int c;
-            fseek(f, pos, SEEK_SET);
-            while ((c = fgetc(f)) != EOF) {
-                pos++;
-                if (c == '\n' || c == '\r' || c == ',') {
-                    step_t st;
-                    line[n] = 0;
-                    if (n && key_parse(line, &st, 0) && !st.on[0]) {
-                        st.at = hle_ticks_ms() - g_keys_t0;
-                        key_run(&st);
-                    }
-                    n = 0;
-                } else if (n < sizeof line - 1) line[n++] = (char)c;
-            }
-            fclose(f);
-        }
-        usleep(200000);
-    }
-    return NULL;
 }
 
 /* ---- presents: the count the Windows host's softdd prints -------------------
@@ -546,16 +436,9 @@ static uint32_t exe_stamp(const char* path) {
     return nt && nt < sizeof head - 12 ? *(const uint32_t*)(head + nt + 8) : 0;
 }
 
-/* An absolute path for a file named on the command line: the run changes
- * into the game folder before it writes anything. */
-static void absolute(const char* p, char* out, size_t n) {
-    char cwd[PATH_MAX];
-    if (p[0] == '/') snprintf(out, n, "%s", p);
-    else snprintf(out, n, "%s/%s", getcwd(cwd, sizeof cwd) ? cwd : ".", p);
-}
-
 /* The play disc (disc 2), mounted or copied: a folder with Game/Avi in it,
- * from --cd DIR or $SWGB_CD. It becomes drive D:, which the game finds as a
+ * from --cd DIR or $SWGB_CD (or $CD_DRIVE, its older alias). It becomes
+ * drive D:, which the game finds as a
  * CD-ROM (shims.c) through CDPath, the letter it checks after its first run.
  * Without --cd, try the Steam Saga install (parent of Game/). Without a disc
  * the game's own “insert a game CD” panel blocks Single Player. */
@@ -601,6 +484,7 @@ static void cd_pick(const char* dir) {
     char full[PATH_MAX], home_buf[PATH_MAX], local_buf[PATH_MAX];
     const char* home = getenv("HOME");
     if (!dir || !*dir) dir = getenv("SWGB_CD");
+    if (!dir || !*dir) dir = getenv("CD_DRIVE");
     if (home && *home) {
         snprintf(home_buf, sizeof home_buf,
                  "%s/.steam/steam/steamapps/common/STAR WARS - Galactic Battlegrounds Saga", home);
@@ -643,31 +527,37 @@ int main(int argc, char** argv) {
     const char* exe = "work/" GUEST_EXE;
     const char* game = "game";
     const char* cd = NULL;
-    const char* scale = NULL;
     const char* res = NULL;
     char guest_args[512] = "";
     int run = 0, sound = 0, headless = 0, fullscreen = 0;
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
+        int n;
+        if ((n = framerate_arg(argc, argv, i))) { i += n - 1; continue; }
+        if ((n = dplay_arg(argc, argv, i))) { i += n - 1; continue; }
+        if ((n = cdaudio_arg(argc, argv, i))) { i += n - 1; continue; }
+        if ((n = profile_arg(argc, argv, i))) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--sound")) sound = 1;
         else if (!strcmp(argv[i], "--headless")) headless = 1;
         else if (!strcmp(argv[i], "--fullscreen")) fullscreen = 1;
-        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = argv[++i];
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) {   /* the screen's filter: set before it opens */
+            if (!hle_screen_scale(argv[++i])) { fprintf(stderr, "--scale: sharp, smooth, crt, nearest or integer\n"); return 1; }
+        }
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) {
             static char rec[PATH_MAX];
-            absolute(argv[++i], rec, sizeof rec);
+            host_full_path(argv[++i], rec, sizeof rec);
             g_record = rec;
         }
-        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) g_record_frames = strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) g_record_frames = host_int_arg("--frames", argv[++i], 1, INT_MAX);
         else if (!strcmp(argv[i], "--shot") && i + 2 < argc && g_shots < 16) {
             g_shot_s[g_shots] = (unsigned)strtoul(argv[++i], NULL, 0);
-            absolute(argv[++i], g_shot_file[g_shots++], PATH_MAX);
+            host_full_path(argv[++i], g_shot_file[g_shots++], PATH_MAX);
         }
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc)    /* shot= paths come back absolute */
             g_nsteps += keys_parse_all(argv[++i], g_steps + g_nsteps, MAX_STEPS - g_nsteps);
-        else if (!strcmp(argv[i], "--keys-live") && i + 1 < argc) absolute(argv[++i], g_live_file, sizeof g_live_file);
+        else if (!strcmp(argv[i], "--keys-live") && i + 1 < argc) host_full_path(argv[++i], g_live_file, sizeof g_live_file);
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--files")) swgb_log_files = 1;
         else if (!strcmp(argv[i], "--multi")) {}           /* named objects are this process's own here */
@@ -677,10 +567,6 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--args") && i + 1 < argc) snprintf(guest_args, sizeof guest_args, " %s", argv[++i]);
         else if (!strcmp(argv[i], "--trace")) win32hle_trace = 1;
         else if (!strcmp(argv[i], "--smooth")) smooth_on = 1;
-        else if (framerate_arg(argc, argv, i)) i += framerate_arg(argc, argv, i) - 1;
-        else if (dplay_arg(argc, argv, i)) i += dplay_arg(argc, argv, i) - 1;
-        else if (cdaudio_arg(argc, argv, i)) i += cdaudio_arg(argc, argv, i) - 1;
-        else if (profile_arg(argc, argv, i)) i += profile_arg(argc, argv, i) - 1;
         else if (!strcmp(argv[i], "--films") && i + 1 < argc) {
             static char films[PATH_MAX];
             if (!realpath(argv[++i], films)) { fprintf(stderr, "--films: no folder %s\n", argv[i]); return 1; }
@@ -691,9 +577,16 @@ int main(int argc, char** argv) {
             if (strcasecmp(res, "desktop") && !widescreen_parse(res)) return 1;
         }
         else if (!strcmp(argv[i], "--hud-sides") && i + 1 < argc) { if (!widescreen_sides_parse(argv[++i])) return 1; }
-        else { usage(); return !strcmp(argv[i], "--help") || !strcmp(argv[i], "-h") ? 0 : 1; }
+        else {
+            int help = !strcmp(argv[i], "--help") || !strcmp(argv[i], "-h");
+            if (!help) fprintf(stderr, "%s: not an option, or its value is missing\n", argv[i]);
+            usage();
+            return help ? 0 : 1;
+        }
     }
-    swgb_test_run = headless || g_nsteps || g_live_file[0] || g_watchdog_s;
+    /* A test run, by the same rule as host.c's: muted unless --sound, and
+     * its message boxes answer themselves (shims.c). */
+    swgb_test_run = host_is_test_run(headless, g_nsteps, g_live_file, g_watchdog_s);
     g_headless = headless;
 
     char game_full[PATH_MAX], exe_full[PATH_MAX];
@@ -766,7 +659,6 @@ int main(int argc, char** argv) {
         if (headless) setenv("SDL_AUDIODRIVER", "dummy", 0);
     }
     printf("  audio: %s\n", sound ? "on" : "muted (a test run; --sound to hear it)");
-    if (scale && !hle_screen_scale(scale)) fprintf(stderr, "[host] no scaling \"%s\": sharp, smooth, crt, nearest or integer\n", scale);
     swgb_fields_init();                                   /* EDIT fields into the primary (New Player, …) */
     if (hle_screen_open(GAME_TITLE, fullscreen, headless) != 0) return 1;
     if (res && !strcasecmp(res, "desktop") && !widescreen_parse(res)) return 1;
@@ -780,9 +672,7 @@ int main(int argc, char** argv) {
     hle_dd_primary_hook = on_primary;
     if (g_record) spawn(record_thread);
     if (g_shots) spawn(shot_thread);
-    g_keys_t0 = hle_ticks_ms();
-    if (g_nsteps) spawn(keys_thread);
-    if (g_live_file[0]) spawn(keys_live_thread);
+    keys_start(g_steps, g_nsteps, g_live_file, key_run);
     if (g_watchdog_s) spawn(watchdog);
     profile_start();                                      /* --profile: samples this thread */
     printf("  entering 0x%08X\n\n", swgb_entry_va);
