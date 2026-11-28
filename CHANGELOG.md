@@ -51,6 +51,18 @@ versions follow [SemVer](https://semver.org/).
   frame rates instead of moving once a step; drawing only, multiplayer sync
   unchanged. `--record-fps N`; `SWGB_SMOOTH_LOG` and `tools/smooth_check.py`.
 ### Changed
+- Shared platform-neutral host code across Windows (`src/runtime`) and native
+  Linux/macOS (`src/linux`): `keyscript.c` (window places, script runner and
+  `--keys-live`), `profile_core.c` (`--profile` scan, sample table, file
+  output and options), `movie_core.c` (AVI header probe, `--films` names,
+  palette/dither and A/V clock), `guest.h`'s `guest_read32()`, `guest_addrs.h`
+  offsets (`G_GAME_MODE`, `G_GAME_WORLD`, `G_GAME_SCREEN`) and `hostargs.h`
+  (`host_int_arg`, `host_is_test_run`). Both `films` and `profile` unit tests
+  now run on Linux (`tests/unit/profile_test.c`, `films_test.c`, `keys_test.c`).
+- Unified test-run detection (`--headless || --keys || --keys-live || --watchdog`)
+  across message boxes and audio muting on both hosts, and unified disc/stack
+  environment variables to `SWGB_CD` (keeping `CD_DRIVE` as an alias) and
+  `SWGB_FPS_STACK` (keeping `FPS_STACK` as an alias).
 - The README's status brought up to date (the lift, campaigns, Linux,
   multiplayer, tests) and its documentation list completed.
 - `tests/unit/recaudio_test.c` and `tests/unit/cdaudio_test.c` moved off
@@ -67,6 +79,14 @@ versions follow [SemVer](https://semver.org/).
   Windows, `hle_dsound_set_buffer_gain` in win32hle on Linux via pcrecomp pin
   `e70a0ab`), leaving CD music, films, and the Windows volume untouched;
   in-game CD music is also tapped into `--record`.
+- Strict host option parsing: `--record-fps` (1..1000), `--frames`
+  (1..`INT_MAX`, rejecting overflow) and `--scale` (1..16 on Windows; valid
+  filter name on Linux) exit 1 with an error message on invalid values, and
+  Windows missing-value or unknown options match `-h`/`--help` strictly instead
+  of exiting 0.
+- `softdd.c` checks `fwrite` / `fflush` to the `--record` ffmpeg pipe: if
+  ffmpeg exits early, recording closes cleanly with one message and the game
+  continues.
 - `test.py --retry`: a retry ran in the first try's folder and overwrote its
   `run.log` and shots (and could pass on a shot the first try left). Each
   retry now has a folder of its own, `<check>-retry1`, and the report lists

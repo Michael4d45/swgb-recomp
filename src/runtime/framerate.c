@@ -24,7 +24,7 @@
  * game's own Blts/Flips/Locks/DCs on the primary and other surfaces, frames
  * that differ from the last, the world clock and its steps, and timeGetTime
  * calls by the lifted function that made them (the engine imports no other
- * clock). FPS_STACK (below) prints who called. Neither changes anything the
+ * clock). SWGB_FPS_STACK (below) prints who called. Neither changes anything the
  * game sees.
  */
 #define WIN32_LEAN_AND_MEAN
@@ -38,6 +38,7 @@
 #include <string.h>
 
 #include "native32.h"
+#include "guest.h"
 #include "guest_addrs.h"
 #include "softdd.h"
 #include "softdd_int.h"
@@ -52,26 +53,20 @@ static int    g_pace = 1;        /* --fps off: 0, the game's own rate and its sp
 
 /* ---- the engine's state, read from guest memory ----------------------------- */
 #define GAME          G_GAME        /* the game object */
-#define GAME_MODE     0x1DC         /* 4: in game */
-#define GAME_SCREEN   0x17B4        /* the game screen, while one exists */
-#define GAME_WORLD    0x420
 #define SCREEN_VTABLE G_SCREEN_VTABLE   /* set by its constructor */
 #define SCREEN_GATE   G_SCREEN_GATE /* ms between passes; from [[game+0x24]+0x888] */
 #define SCREEN_LAST   G_SCREEN_LAST /* timeGetTime of the last pass */
 #define WORLD_TIME    0x10          /* game ms */
 #define WORLD_SPEED   0x24          /* float: 1.5 is Normal */
 
-static uint32_t peek(uint32_t a) {
-    __try { return a >= 0x10000 ? MEM32(a) : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
-}
-static uint32_t world_of(void) { uint32_t g = peek(GAME); return g ? peek(g + GAME_WORLD) : 0; }
-static uint32_t mode_of(void)  { uint32_t g = peek(GAME); return g ? peek(g + GAME_MODE) : 0; }
+static uint32_t world_of(void) { uint32_t g = guest_read32(GAME); return g ? guest_read32(g + G_GAME_WORLD) : 0; }
+static uint32_t mode_of(void)  { uint32_t g = guest_read32(GAME); return g ? guest_read32(g + G_GAME_MODE) : 0; }
 
 /* The game screen, only in game and only if it is one: the pointer outlives
  * a game. */
 static uint32_t game_screen(void) {
-    uint32_t g = peek(GAME), m = g ? peek(g + GAME_MODE) : 0, s = g ? peek(g + GAME_SCREEN) : 0;
-    return (m == 4 || m == 5) && s && peek(s) == SCREEN_VTABLE ? s : 0;
+    uint32_t g = guest_read32(GAME), m = g ? guest_read32(g + G_GAME_MODE) : 0, s = g ? guest_read32(g + G_GAME_SCREEN) : 0;
+    return (m == 4 || m == 5) && s && guest_read32(s) == SCREEN_VTABLE ? s : 0;
 }
 
 /* ---- counters ------------------------------------------------------------- */
@@ -89,7 +84,7 @@ static long   g_total[C_N];
 static CRITICAL_SECTION g_cs;
 
 static int g_stack_c = -1;
-static uint32_t g_stack_from;   /* FPS_STACK=c:VA: only calls from that function */
+static uint32_t g_stack_from;   /* SWGB_FPS_STACK=c:VA: only calls from that function */
 static void stack_dump(int c);
 
 static void count(int c) {
@@ -104,8 +99,9 @@ static void count(int c) {
 }
 
 /* ---- who called: the host stack, read back as lifted functions ------------- *
- * FPS_STACK=<counter number>[:VA] with --fps-log: every 3 seconds, the lifted
- * functions whose host return addresses are on the stack at that call
+ * SWGB_FPS_STACK=<counter number>[:VA] (or FPS_STACK, its older name) with
+ * --fps-log: every 3 seconds, the lifted functions whose host return
+ * addresses are on the stack at that call
  * (from that function), innermost first. The generated code omits frame
  * pointers, so the stack is scanned: a value is kept when it points into
  * lifted code just after a call instruction. Stale values make some noise;
@@ -153,7 +149,7 @@ static void stack_dump(int c) {
 
 static void stack_init(void) {
     char v[32];
-    if (!GetEnvironmentVariableA("FPS_STACK", v, sizeof v)) return;
+    if (!GetEnvironmentVariableA("SWGB_FPS_STACK", v, sizeof v) && !GetEnvironmentVariableA("FPS_STACK", v, sizeof v)) return;
     g_stack_c = atoi(v);
     if (strchr(v, ':')) g_stack_from = strtoul(strchr(v, ':') + 1, NULL, 16);
     g_fns = (fn_t*)malloc(recomp_dispatch_count * sizeof *g_fns);
@@ -247,7 +243,7 @@ void framerate_on_ddraw(void* dd) {
 static volatile LONG g_steps, g_step_ms, g_step_max;
 static void watch_world(void) {
     static uint32_t last;
-    uint32_t w = world_of(), wt = w ? peek(w + WORLD_TIME) : 0;
+    uint32_t w = world_of(), wt = w ? guest_read32(w + WORLD_TIME) : 0;
     if (wt == last) return;
     if (last && wt > last) {
         LONG d = (LONG)(wt - last);
@@ -358,9 +354,9 @@ static DWORD WINAPI log_thread(LPVOID unused) {
                           (fr - last_frames) / dt, InterlockedExchange(&g_changed, 0) / dt);
         last_cpu = cpu;
         last_frames = fr;
-        uint32_t w = world_of(), wt = w ? peek(w + WORLD_TIME) : 0, sc = game_screen();
+        uint32_t w = world_of(), wt = w ? guest_read32(w + WORLD_TIME) : 0, sc = game_screen();
         if (w) {
-            uint32_t sp = peek(w + WORLD_SPEED);
+            uint32_t sp = guest_read32(w + WORLD_SPEED);
             LONG st = InterlockedExchange(&g_steps, 0), ms = InterlockedExchange(&g_step_ms, 0);
             LONG mx = InterlockedExchange(&g_step_max, 0);
             n += _snprintf(line + n, sizeof line - n, " | world %u ms +%.0f/s speed %.2f",
@@ -368,7 +364,7 @@ static DWORD WINAPI log_thread(LPVOID unused) {
             if (st) n += _snprintf(line + n, sizeof line - n, " steps %.1f/s of %.1f ms (max %ld)",
                                    st / dt, (double)ms / st, mx);
         }
-        if (sc) n += _snprintf(line + n, sizeof line - n, " | gate %u ms", peek(sc + SCREEN_GATE));
+        if (sc) n += _snprintf(line + n, sizeof line - n, " | gate %u ms", guest_read32(sc + SCREEN_GATE));
         last_wt = wt;
         for (int c = 0; c < C_N; c++) {
             if (!total[c]) continue;

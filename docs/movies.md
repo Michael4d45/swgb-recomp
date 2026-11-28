@@ -22,7 +22,12 @@ films are `xlogo1.avi` and `xintro.avi`), and in the
 campaigns each scenario's pregame, victory and loss film from its header
 (`INTRO` and `celebration` in the base game's; `<None>` is none).
 
-## How the host plays them (`src/runtime/movie.c`)
+## How the host plays them (`src/runtime/movie.c`, `movie_core.c`)
+
+`movie_core.c` holds the platform-neutral pieces shared with the native
+Linux host (`src/linux/movie.c`): the AVI header probe, `--films` name
+lookup, the film palette and ordered dither, and the A/V clock
+(`tests/unit/films_test.c` checks them on both hosts).
 
 - **`ICInfo`** answers yes for Indeo 5 when ffmpeg is on `PATH` (FFmpeg's
   `indeo5` decoder), and asks Windows for anything else.
@@ -66,7 +71,7 @@ The log says what played and how the timing held:
 
 ## Where the films are
 
-- **Disc 2**, `Game\Avi`, found as for play (`--cd E`, `CD_DRIVE`, or the
+- **Disc 2**, `Game\Avi`, found as for play (`--cd E`, `SWGB_CD`, `CD_DRIVE` alias, or the
   first CD-ROM drive with `Game\Avi` on it; see [building.md](building.md)).
 - **`avi\` in the game folder:** copy disc 2's `Game\Avi` there to play
   without the disc in.

@@ -13,6 +13,7 @@
  *   py -3 tools\test.py --level unit        (builds and runs every unit)
  *   python3 tools/test.py --level unit      (Linux and macOS: the same parser)
  */
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,10 +50,22 @@
 #define SELF_CMD(args) "'%s' " args " 2>&1"
 #endif
 
+#include "hostargs.h"
 #include "keyscript.h"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
+
+#ifdef _WIN32
+#define SLEEP_MS(ms) Sleep(ms)
+#else
+#define SLEEP_MS(ms) usleep((ms) * 1000)
+#endif
+
+/* The host's half, for keys_live_poll and keys_start: what ran. */
+static volatile int g_ran;
+static step_t g_last;
+static void record_step(step_t* st) { g_last = *st; g_ran++; }
 
 static step_t one(const char* text, int* ok) {
     char buf[512];
@@ -68,7 +81,16 @@ static step_t one(const char* text, int* ok) {
 int main(int argc, char** argv) {
     step_t st;
     int ok;
-    if (argc > 1) {                     /* the child: a strict parse of argv[1] */
+    if (argc > 1) {                     /* the child: strict parse/validation checks */
+        if (argc >= 4 && !strcmp(argv[1], "--place")) {
+            const int pic[4] = { 100, 0, 900, 600 };
+            printf("place %d\n", keys_place(argv[2], atoi(argv[3]), 1000, 600, pic));
+            return 0;
+        }
+        if (argc >= 6 && !strcmp(argv[1], "--int")) {
+            printf("int %ld\n", host_int_arg(argv[2], argv[3], atol(argv[4]), atol(argv[5])));
+            return 0;
+        }
         step_t s;
         char buf[256];
         lstrcpynA(buf, argv[1], sizeof buf);
@@ -166,6 +188,114 @@ int main(int argc, char** argv) {
         CHECK(t && !strcmp(t, "1:a,2:b"), "inline text as it is");
         free(t);
         DeleteFileA(path);
+    }
+
+    /* ---- keys_place: window places ---- */
+    {
+        const int pic[4] = { 100, 0, 900, 600 };   /* a 1000x600 client, the picture with bars left and right */
+        const int vbar[4] = { 0, 60, 800, 540 };   /* top and bottom bars */
+        CHECK(keys_place("L", 0, 1000, 600, pic) == 0 && keys_place("R", 0, 1000, 600, pic) == 999 &&
+              keys_place("C", 0, 1000, 600, pic) == 500, "L R C");
+        CHECK(keys_place("PL", 0, 1000, 600, pic) == 100 && keys_place("PR", 0, 1000, 600, pic) == 899, "PL PR");
+        CHECK(keys_place("BL", 0, 1000, 600, pic) == 50 && keys_place("BR", 0, 1000, 600, pic) == 950, "the bars' middles");
+        CHECK(keys_place("T", 1, 1000, 600, pic) == 0 && keys_place("B", 1, 1000, 600, pic) == 599 &&
+              keys_place("pb", 1, 1000, 600, pic) == 599 && keys_place("C", 1, 1000, 600, pic) == 300, "T B pb C on y");
+        CHECK(keys_place("PT", 1, 800, 600, vbar) == 60 && keys_place("BT", 1, 800, 600, vbar) == 30 &&
+              keys_place("BB", 1, 800, 600, vbar) == 570, "PT BT BB on y");
+        CHECK(keys_place("PL+60", 0, 1000, 600, pic) == 160 && keys_place("R-3", 0, 1000, 600, pic) == 996, "+N, -N");
+        CHECK(keys_place("120", 0, 1000, 600, pic) == 120 && keys_place("-5", 1, 1000, 600, pic) == -5, "plain pixels");
+
+        char self[MAX_PATH], cmd[2 * MAX_PATH], out[256];
+        GetModuleFileNameA(NULL, self, MAX_PATH);
+        _snprintf(cmd, sizeof cmd, SELF_CMD("--place ZZ 0"), self);
+        FILE* p = _popen(cmd, "r");
+        size_t n = fread(out, 1, sizeof out - 1, p);
+        out[n] = 0;
+        CHECK(_pclose(p) == 1 && strstr(out, "--keys: no place"), "unknown place exits 1: %s", out);
+    }
+
+    /* ---- keys_live_poll: --keys-live as the file grows ---- */
+    {
+        char path[MAX_PATH];
+        GetTempPathA(MAX_PATH, path);
+        _snprintf(path + strlen(path), 64, "keys_live_%lu.txt", GetCurrentProcessId());
+        FILE* f = fopen(path, "wb");
+        keys_live lv;
+        memset(&lv, 0, sizeof lv);
+        lv.path = path;
+        g_ran = 0;
+        CHECK(keys_live_poll(&lv, record_step) == 0, "an empty file");
+        fputs("0:move:10:20\n5:click:1:2,0:on:map,0:nokey,0:ent", f);   /* the last step not ended yet */
+        fflush(f);
+        int n = keys_live_poll(&lv, record_step);
+        CHECK(n == 2 && g_ran == 2 && g_last.click == 1 && g_last.x == 1, "two steps: %d (a wait and a bad key skipped)", n);
+        fputs("er\r\n", f);
+        fflush(f);
+        n = keys_live_poll(&lv, record_step);
+        CHECK(n == 1 && g_last.vk == VK_RETURN, "the step finished later: %d", n);
+        CHECK(keys_live_poll(&lv, record_step) == 0, "nothing new");
+        fclose(f);
+        DeleteFileA(path);
+        lv.pos = 0;
+        CHECK(keys_live_poll(&lv, record_step) == 0, "no file: nothing");
+    }
+
+    /* ---- keys_start: on:NAME waits for that open; the next one listens early ---- */
+    {
+        static step_t steps[8];
+        int n = keys_parse_all("on:map,0:a,on:sound,0:b", steps, 8);
+        g_ran = 0;
+        keys_file_opened("data\\map.dat");          /* before the script starts: nobody waits */
+        keys_start(steps, n, NULL, record_step);
+        keys_file_opened("data\\other.dat");
+        SLEEP_MS(300);
+        CHECK(g_ran == 0, "ran before the file it waits for: %d", g_ran);
+        keys_file_opened("DATA\\MAP.DAT");           /* any case, part of the name */
+        for (int t = 0; t < 500 && g_ran < 1; t++) SLEEP_MS(10);
+        CHECK(g_ran == 1 && g_last.vk == 'A', "after map: %d", g_ran);
+        keys_file_opened("sound\\x.wav");           /* listened for since 0:a */
+        for (int t = 0; t < 500 && g_ran < 2; t++) SLEEP_MS(10);
+        CHECK(g_ran == 2 && g_last.vk == 'B', "after sound: %d", g_ran);
+    }
+
+    /* ---- hostargs: shared test-run rule and integer flag validation ---- */
+    {
+        CHECK(!host_is_test_run(0, 0, NULL, 0), "not a test run");
+        CHECK(!host_is_test_run(0, 0, "", 0), "empty live_file is not a test run");
+        CHECK(host_is_test_run(1, 0, NULL, 0), "headless is a test run");
+        CHECK(host_is_test_run(0, 1, NULL, 0), "--keys is a test run");
+        CHECK(host_is_test_run(0, 0, "live.txt", 0), "--keys-live is a test run");
+        CHECK(host_is_test_run(0, 0, NULL, 10), "--watchdog is a test run");
+
+        CHECK(host_int_arg("--record-fps", "1", 1, 1000) == 1 &&
+              host_int_arg("--record-fps", "30", 1, 1000) == 30 &&
+              host_int_arg("--record-fps", "1000", 1, 1000) == 1000, "host_int_arg --record-fps valid");
+        char max_buf[32];
+        _snprintf(max_buf, sizeof max_buf, "%d", INT_MAX);
+        CHECK(host_int_arg("--frames", "1", 1, INT_MAX) == 1 &&
+              host_int_arg("--frames", max_buf, 1, INT_MAX) == INT_MAX, "host_int_arg --frames valid");
+
+        static const struct { const char* flag; const char* val; long lo; long hi; } bad[] = {
+            { "--record-fps", "0", 1, 1000 },
+            { "--record-fps", "-1", 1, 1000 },
+            { "--record-fps", "1001", 1, 1000 },
+            { "--record-fps", "abc", 1, 1000 },
+            { "--record-fps", "10x", 1, 1000 },
+            { "--record-fps", "", 1, 1000 },
+            { "--frames", "99999999999999999999", 1, INT_MAX },
+        };
+        char self[MAX_PATH], cmd[2 * MAX_PATH], out[512];
+        GetModuleFileNameA(NULL, self, MAX_PATH);
+        for (int i = 0; i < (int)(sizeof bad / sizeof bad[0]); i++) {
+            _snprintf(cmd, sizeof cmd, SELF_CMD("--int %s \"%s\" %ld %ld"), self,
+                      bad[i].flag, bad[i].val, bad[i].lo, bad[i].hi);
+            FILE* p = _popen(cmd, "r");
+            size_t n = fread(out, 1, sizeof out - 1, p);
+            out[n] = 0;
+            int rc = _pclose(p);
+            CHECK(rc == 1 && strstr(out, bad[i].flag) && !strstr(out, "int "),
+                  "bad %s \"%s\": rc %d out %s", bad[i].flag, bad[i].val, rc, out);
+        }
     }
 
     printf(fails ? "%d FAILED\n" : "OK\n", fails);

@@ -34,6 +34,7 @@
 
 #include "win32hle.h"
 #include "ddraw_int.h"
+#include "guest.h"
 #include "guest_addrs.h"
 #include "swgb_linux.h"
 
@@ -42,20 +43,14 @@ static double g_fps;             /* --fps N; 0: the display's refresh */
 static int    g_pace = 1;        /* --fps off: 0 */
 
 /* ---- the engine's state, read from guest memory (framerate.c's offsets) ---- */
-#define GAME_MODE     0x1DC      /* 4: in game */
-#define GAME_SCREEN   0x17B4     /* the game screen, while one exists */
-#define GAME_WORLD    0x420
 #define WORLD_TIME    0x10       /* game ms */
 #define WORLD_SPEED   0x24       /* float: 1.5 is Normal */
 
-/* A guest dword, 0 for an address that cannot be one (the game object goes
- * away and comes back; the pointers it holds are checked before use). */
-static uint32_t peek(uint32_t a) { return a >= 0x10000 && a < 0xC0000000u ? MEM32(a) : 0; }
-static uint32_t world_of(void) { uint32_t g = peek(G_GAME); return g ? peek(g + GAME_WORLD) : 0; }
-static uint32_t mode_of(void)  { uint32_t g = peek(G_GAME); return g ? peek(g + GAME_MODE) : 0; }
+static uint32_t world_of(void) { uint32_t g = guest_read32(G_GAME); return g ? guest_read32(g + G_GAME_WORLD) : 0; }
+static uint32_t mode_of(void)  { uint32_t g = guest_read32(G_GAME); return g ? guest_read32(g + G_GAME_MODE) : 0; }
 static uint32_t game_screen(void) {
-    uint32_t g = peek(G_GAME), m = g ? peek(g + GAME_MODE) : 0, s = g ? peek(g + GAME_SCREEN) : 0;
-    return (m == 4 || m == 5) && s && peek(s) == G_SCREEN_VTABLE ? s : 0;
+    uint32_t g = guest_read32(G_GAME), m = g ? guest_read32(g + G_GAME_MODE) : 0, s = g ? guest_read32(g + G_GAME_SCREEN) : 0;
+    return (m == 4 || m == 5) && s && guest_read32(s) == G_SCREEN_VTABLE ? s : 0;
 }
 
 /* ---- counters ------------------------------------------------------------- */
@@ -102,7 +97,7 @@ void framerate_on_present(void) {
 static volatile long g_steps, g_step_ms, g_step_max;
 static void watch_world(void) {
     static uint32_t last;
-    uint32_t w = world_of(), wt = w ? peek(w + WORLD_TIME) : 0;
+    uint32_t w = world_of(), wt = w ? guest_read32(w + WORLD_TIME) : 0;
     if (wt == last) return;
     if (last && wt > last) {
         long d = (long)(wt - last);
@@ -202,9 +197,9 @@ static void* log_thread(void* unused) {
                          __sync_lock_test_and_set(&g_changed, 0) / dt);
         last_cpu = cpu;
         last_frames = fr;
-        uint32_t w = world_of(), wt = w ? peek(w + WORLD_TIME) : 0, sc = game_screen();
+        uint32_t w = world_of(), wt = w ? guest_read32(w + WORLD_TIME) : 0, sc = game_screen();
         if (w) {
-            uint32_t sp = peek(w + WORLD_SPEED);
+            uint32_t sp = guest_read32(w + WORLD_SPEED);
             float speed;
             memcpy(&speed, &sp, sizeof speed);
             long st = __sync_lock_test_and_set(&g_steps, 0), ms = __sync_lock_test_and_set(&g_step_ms, 0);
@@ -213,7 +208,7 @@ static void* log_thread(void* unused) {
                           wt, last_wt && wt >= last_wt ? (wt - last_wt) / dt : 0.0, speed);
             if (st) n += snprintf(line + n, sizeof line - n, " steps %.1f/s of %.1f ms (max %ld)", st / dt, (double)ms / st, mx);
         }
-        if (sc) n += snprintf(line + n, sizeof line - n, " | gate %u ms", peek(sc + G_SCREEN_GATE));
+        if (sc) n += snprintf(line + n, sizeof line - n, " | gate %u ms", guest_read32(sc + G_SCREEN_GATE));
         last_wt = wt;
         mach_leave();
         if (tgt) {

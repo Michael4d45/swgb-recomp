@@ -127,10 +127,10 @@ mkdir -p work/games/clone-campaigns && cp work/games/ccprof/player.nf1 work/game
 
 What runs there:
 
-- **L0:** `keys`, `inflate`, `coverage` and `cdaudio` build with clang (or `$CC`) `-m32`
-  against win32hle's headers (`-DSWGB_WIN32HLE`), and `tests/unit/test_tools.py`.
-  `scaler`, `present`, `resolve`, `pacing`, `films` test the Windows host's own
-  presenter, cache and players and SKIP: the native host's counterparts are
+- **L0:** `keys`, `films`, `profile`, `inflate`, `coverage` and `cdaudio` build with clang (or `$CC`) `-m32`
+  against win32hle's headers (`-DSWGB_WIN32HLE`, covering shared `keyscript.c`, `movie_core.c` and `profile_core.c`), and `tests/unit/test_tools.py`.
+  `scaler`, `present`, `resolve`, `pacing` and `recaudio` test the Windows host's own
+  presenter, cache, pacer and audio recorder and SKIP: the native host's counterparts are
   win32hle's (`screen.c`, its `RECOMP_RESOLVE_CACHE`) or `src/linux`'s
   `framerate.c` and `movie.c`.
 - **L1-L3:** every check, through `conformance.py`, `res_check.py`,
@@ -184,10 +184,11 @@ Earlier, on Omarchy/Arch (clang 21, `-m32`, 2026-11-23), both games:
 | `resolve` | `tests/unit/resolve_test.c` | the indirect-call cache: one lookup per address, "not lifted" kept, an answer that is not the dispatch table's never kept, `__local_unwind2` callers bypass it, `SWGB_NO_RESOLVE_CACHE` |
 | `inflate` | `tests/unit/inflate_test.c` | the deflate decoder called as the lifted code calls it: any input and output chunking, two streams in turn, a zeroed state block restarts, corrupt data is -2 |
 | `pacing`, `pacing_cc` | `tests/unit/pacing_test.c` | `framerate.c` itself with a fake clock: `--fps 60/30/144/1000` passes a second, the 16/17 ms gate, the refresh default held to 30-1000, no catch-up burst after a 250 ms hitch, the menus untouched, `--fps` arguments; at the base and Clone Campaigns addresses |
-| `films` | `tests/unit/films_test.c` | `movie.c` itself: AVI headers, `--films` names (`NAME.avi`, then `xNAME.avi`), the film palette, the ordered dither (flat colours stay flat, the level holds on average), drawing into an 8-bit DC (the film palette and a foreign one) |
+| `films` | `tests/unit/films_test.c` | `movie_core.c` (both hosts) and `movie.c` (Windows): AVI headers, `--films` names (`NAME.avi`, then `xNAME.avi`), the film palette, ordered dither (flat colours stay flat, the level holds on average), the A/V clock, drawing into an 8-bit DC (the film palette and a foreign one) |
 | `recaudio` | `tests/unit/recaudio_test.c` | `recaudio.c` over a fake DirectSound on a simulated clock (`recaudio_test_clock_ms`): one-shot, volume -10000 silent, pan, rewritten looping buffer, stream tap (time, resampling, pause), 3%-fast drift kept within 60 ms, sound-slider effects gain (with and without `--record`), WAV cut to the video's exact length |
 | `smooth`, `smooth_cc` | `tests/unit/smooth_test.c` | `smooth.c` (`--smooth`) itself with a fake clock and fake objects: a walk moves at most 2 px a frame and is never drawn ahead of the object, a stop ends where it stopped, teleports, new objects, a new game and a pause are drawn where they are, other callers are left alone, nothing is written; at the base and Clone Campaigns addresses |
-| `keys` | `tests/unit/keys_test.c` | `keyscript.c`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
+| `keys` | `tests/unit/keys_test.c` | `keyscript.c` and `hostargs.h`: every `--keys` step kind, fractions of a second, `@FILE` with CRLF, drags and modifiers, window places, `on:NAME` waits, `--keys-live`, `host_is_test_run`, `host_int_arg` validation, a bad step skipped (`--keys-live`) or the end of the run (`--keys`) |
+| `profile` | `tests/unit/profile_test.c` | `profile_core.c` (both hosts): return-address call detection, stack scanning, sample deduplication/counting, profile file output and `--profile*` arguments |
 | `cdaudio` | `tests/unit/cdaudio_test.c` | `cdaudio.c`'s core over an injected output sink (`cdaudio_test_sink`): `tests/data/tone.ogg` decoded (length, rate, tones, level) and seeked; MCI_STATUS counts, lengths and positions in ms, MSF and TMSF; track 2->3 samples and notify; CD & wave-out mixer lines, cubic taper (1/8 at 50%, silence at 1%), sound slider leaving music untouched; stop, pause and a second play abort/supersede notify; errors and `--music off` ([music.md](music.md)) |
 | `tools` | `tests/unit/test_tools.py` | the Python side, as above, and `perf_ab.py`'s figures, its round-by-round ratio and that every game sets its Screen Size, and `mp_pair.py`'s sync-record compare |
 

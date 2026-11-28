@@ -1,8 +1,12 @@
 /*
- * keyscript: the --keys script's steps, parsed. host.c runs them (keys_thread,
- * keys_live_thread, key_run); this half needs nothing of the game, so
- * tests/unit/keys_test.c checks it alone (tools/test.py --level unit). No Win32 is
- * needed: the Linux and macOS host (src/linux/main.c) runs the same grammar.
+ * keyscript: the --keys script, parsed and timed. Each host runs a step its
+ * own way (key_run in host.c and src/linux/main.c: messages to a window, or
+ * win32hle's input); everything else is here, the same on both: the grammar,
+ * window places, the script's clock and its on:NAME waits, and the
+ * --keys-live reader. This half needs nothing of the game, so
+ * tests/unit/keys_test.c checks it alone (tools/test.py --level unit). The
+ * threads and events are Win32's, through winport.h on the Linux and macOS
+ * host.
  */
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -10,7 +14,7 @@
 #else
 #include <strings.h>
 #include <unistd.h>
-#define _stricmp strcasecmp
+#include "winport.h"
 #define _strdup strdup
 #endif
 #include <ctype.h>
@@ -18,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hostargs.h"
 #include "keyscript.h"
 
 static const struct { const char* n; int vk; } g_keynames[] = {
@@ -27,18 +32,6 @@ static const struct { const char* n; int vk; } g_keynames[] = {
     { "f5", KS_VK_F1 + 4 }, { "f6", KS_VK_F1 + 5 }, { "f7", KS_VK_F1 + 6 }, { "f8", KS_VK_F1 + 7 }, { "f9", KS_VK_F1 + 8 },
     { "f10", KS_VK_F1 + 9 }, { "f11", KS_VK_F1 + 10 }, { "f12", KS_VK_F1 + 11 }, { "home", KS_VK_HOME }, { "end", KS_VK_END },
 };
-
-/* FILE as an absolute path (it need not exist yet): a shot lands where the command line meant
- * even if the game changes directory. */
-static void full_path(const char* in, char* out, size_t cap) {
-#ifdef _WIN32
-    GetFullPathNameA(in, (DWORD)cap, out, NULL);
-#else
-    char cwd[KEYSCRIPT_PATH];
-    if (in[0] == '/' || !getcwd(cwd, sizeof cwd)) snprintf(out, cap, "%s", in);
-    else snprintf(out, cap, "%s/%s", cwd, in);
-#endif
-}
 
 int key_by_name(const char* n) {
     for (int i = 0; i < (int)(sizeof g_keynames / sizeof g_keynames[0]); i++)
@@ -78,10 +71,10 @@ int key_parse(char* tok, step_t* out, int strict) {
     st.at = (unsigned long)(atof(tok) * 1000);
     char* what = c + 1;
     if (!strncmp(what, "wshot=", 6)) {   /* the window as drawn: letterbox bars and all */
-        full_path(what + 6, st.shot, sizeof st.shot);
+        host_full_path(what + 6, st.shot, sizeof st.shot);
         st.wshot = 1;
     } else if (!strncmp(what, "shot=", 5)) {
-        full_path(what + 5, st.shot, sizeof st.shot);
+        host_full_path(what + 5, st.shot, sizeof st.shot);
     } else if (!strncmp(what, "size:", 5)) {   /* the window's client area: W:H */
         st.size = 1;
         sscanf(what + 5, "%d:%d", &st.x, &st.y);
@@ -125,4 +118,155 @@ int keys_parse_all(const char* spec, step_t* steps, int max) {
     }
     free(buf);
     return n;
+}
+
+int keys_place(const char* t, int axis, int cw, int ch, const int pic[4]) {
+    char name[8] = "";
+    int n = 0, base;
+    const char* q = t;
+    while (isalpha((unsigned char)*q) && n < 7) name[n++] = *q++;
+    name[n] = 0;
+    if (!n) return atoi(t);
+    if (axis == 0) {
+        if (!_stricmp(name, "L")) base = 0;
+        else if (!_stricmp(name, "R")) base = cw - 1;
+        else if (!_stricmp(name, "C")) base = cw / 2;
+        else if (!_stricmp(name, "PL")) base = pic[0];
+        else if (!_stricmp(name, "PR")) base = pic[2] - 1;
+        else if (!_stricmp(name, "BL")) base = pic[0] / 2;
+        else if (!_stricmp(name, "BR")) base = (pic[2] + cw) / 2;
+        else { fprintf(stderr, "--keys: no place %s on x\n", name); exit(1); }
+    } else {
+        if (!_stricmp(name, "T")) base = 0;
+        else if (!_stricmp(name, "B")) base = ch - 1;
+        else if (!_stricmp(name, "C")) base = ch / 2;
+        else if (!_stricmp(name, "PT")) base = pic[1];
+        else if (!_stricmp(name, "PB")) base = pic[3] - 1;
+        else if (!_stricmp(name, "BT")) base = pic[1] / 2;
+        else if (!_stricmp(name, "BB")) base = (pic[3] + ch) / 2;
+        else { fprintf(stderr, "--keys: no place %s on y\n", name); exit(1); }
+    }
+    return base + (*q ? atoi(q) : 0);
+}
+
+/* ---- on:NAME ----------------------------------------------------------------
+ * One name is listened for at a time: the next on:NAME, from the step before
+ * it (an open during that step's wait is not missed). g_seen holds an open
+ * that came before its wait began; the event wakes the wait. Both under
+ * g_wait_cs: the game's thread matches while the script's thread arms. */
+static CRITICAL_SECTION g_wait_cs;
+static HANDLE g_seen_ev;            /* auto-reset */
+static char g_wait[64];
+static int g_seen;
+static volatile int g_waits;        /* keys_start made the above */
+
+static step_t* g_steps;
+static int g_nsteps;
+static keys_run_fn g_run;
+static char g_live_path[4096];
+static DWORD g_t0;
+
+static void arm(const char* name) {
+    EnterCriticalSection(&g_wait_cs);
+    if (!g_wait[0] && !g_seen) snprintf(g_wait, sizeof g_wait, "%s", name);
+    LeaveCriticalSection(&g_wait_cs);
+}
+
+static void wait_file(const char* name) {
+    arm(name);
+    WaitForSingleObject(g_seen_ev, INFINITE);
+    EnterCriticalSection(&g_wait_cs);
+    g_seen = 0;
+    LeaveCriticalSection(&g_wait_cs);
+}
+
+static int contains_ci(const char* s, const char* sub) {
+    size_t n = strlen(sub);
+    for (; *s; s++) {
+        size_t k = 0;
+        while (k < n && s[k] && tolower((unsigned char)s[k]) == tolower((unsigned char)sub[k])) k++;
+        if (k == n) return 1;
+    }
+    return 0;
+}
+
+void keys_file_opened(const char* name) {
+    if (!g_waits || !name) return;
+    EnterCriticalSection(&g_wait_cs);
+    if (g_wait[0] && contains_ci(name, g_wait)) {
+        g_wait[0] = 0;
+        g_seen = 1;
+        SetEvent(g_seen_ev);
+    }
+    LeaveCriticalSection(&g_wait_cs);
+}
+
+static DWORD WINAPI script_thread(LPVOID unused) {
+    (void)unused;
+    DWORD t0 = GetTickCount();
+    for (int i = 0; i < g_nsteps; i++) {
+        step_t* st = &g_steps[i];
+        if (st->on[0]) {
+            wait_file(st->on);
+            t0 = GetTickCount();
+            printf("[keys] %s opened: times count from here\n", st->on);
+            continue;
+        }
+        for (int j = i + 1; j < g_nsteps; j++)   /* the next wait listens from now */
+            if (g_steps[j].on[0]) { arm(g_steps[j].on); break; }
+        DWORD at = t0 + st->at, now = GetTickCount();
+        if ((int)(at - now) > 0) Sleep(at - now);
+        g_run(st);
+    }
+    return 0;
+}
+
+int keys_live_poll(keys_live* lv, keys_run_fn run) {
+    FILE* f = fopen(lv->path, "rb");
+    int c, k = 0;
+    if (!f) return 0;
+    fseek(f, lv->pos, SEEK_SET);
+    while ((c = fgetc(f)) != EOF) {
+        lv->pos++;
+        if (c == '\n' || c == '\r' || c == ',') {
+            step_t st;
+            lv->line[lv->n] = 0;
+            if (lv->n && key_parse(lv->line, &st, 0) && !st.on[0]) {
+                st.at = GetTickCount() - g_t0;
+                run(&st);
+                k++;
+            }
+            lv->n = 0;
+        } else if (lv->n < sizeof lv->line - 1) lv->line[lv->n++] = (char)c;
+    }
+    fclose(f);
+    return k;
+}
+
+static DWORD WINAPI live_thread(LPVOID unused) {
+    (void)unused;
+    keys_live lv;
+    memset(&lv, 0, sizeof lv);
+    lv.path = g_live_path;
+    for (;;) {
+        keys_live_poll(&lv, g_run);
+        Sleep(200);
+    }
+    return 0;
+}
+
+void keys_start(step_t* steps, int n, const char* live_file, keys_run_fn run) {
+    g_steps = steps, g_nsteps = n, g_run = run;
+    g_t0 = GetTickCount();
+    if (n) {
+        InitializeCriticalSection(&g_wait_cs);
+        g_seen_ev = CreateEventA(NULL, FALSE, FALSE, NULL);
+        g_waits = 1;
+        if (steps[0].on[0]) arm(steps[0].on);
+        CloseHandle(CreateThread(NULL, 0, script_thread, NULL, 0, NULL));
+    }
+    if (live_file && live_file[0]) {
+        snprintf(g_live_path, sizeof g_live_path, "%s", live_file);
+        CloseHandle(CreateThread(NULL, 0, live_thread, NULL, 0, NULL));
+    }
 }

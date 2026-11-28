@@ -224,7 +224,9 @@ void softdd_finish(void) {
 }
 
 /* The video runs at a fixed 30 fps (--record-fps) against the wall clock: a slow frame is
- * held, a fast one is dropped, so the mp4 plays at the game's real speed. */
+ * held, a fast one is dropped, so the mp4 plays at the game's real speed. A write
+ * that fails means ffmpeg is gone: the recording ends there, said once, and the
+ * game plays on. */
 static void record_frame(Surf* s) {
     LONG due = (LONG)((recaudio_clock_ms() - g_rec_t0) * REC_FPS / 1000) + 1;
     static uint16_t* row;
@@ -232,20 +234,29 @@ static void record_frame(Surf* s) {
     int rw = g_rec_w, rh = g_rec_h;
     if (row_w < rw) { free(row); row = (uint16_t*)malloc(2 * rw); row_w = rw; }
     PALETTEENTRY* e = screen_palette();
+    int ok = 1;
     /* Another mode (the films are 640x480) is scaled to the recording's size. */
-    for (; g_rec_written < due; g_rec_written++)
-        for (int y = 0; y < rh; y++) {
+    for (; ok && g_rec_written < due;) {
+        for (int y = 0; ok && y < rh; y++) {
             const uint8_t* src = s->bits + (y * s->h / rh) * s->pitch;
-            if (s->bpp == 16 && s->w == rw) { fwrite(src, 2, rw, g_rec); continue; }
+            if (s->bpp == 16 && s->w == rw) { ok = fwrite(src, 2, rw, g_rec) == (size_t)rw; continue; }
             for (int x = 0; x < rw; x++) {
                 int sx = x * s->w / rw;
                 if (s->bpp == 16) { row[x] = ((const uint16_t*)src)[sx]; continue; }
                 PALETTEENTRY c = e ? e[src[sx]] : (PALETTEENTRY){ src[sx], src[sx], src[sx], 0 };   /* through the palette */
                 row[x] = (uint16_t)(((c.peRed >> 3) << 11) | ((c.peGreen >> 2) << 5) | (c.peBlue >> 3));
             }
-            fwrite(row, 2, rw, g_rec);
+            ok = fwrite(row, 2, rw, g_rec) == (size_t)rw;
         }
-    fflush(g_rec);
+        if (ok) g_rec_written++;
+    }
+    if (ok && fflush(g_rec) == 0) return;
+    fprintf(stderr, "[softdd] ffmpeg stopped taking frames (it exited?): the recording of %s ends at frame %ld\n",
+            softdd_record, g_rec_written);
+    InterlockedExchange(&g_rec_done, 1);   /* the caller holds g_rec_lock */
+    _pclose(g_rec);
+    g_rec = NULL;
+    recaudio_finish(g_rec_written, REC_FPS);
 }
 
 /* --shot: the front buffer as it is presented, never the screen. */

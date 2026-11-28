@@ -484,10 +484,12 @@ UNITS = {
                '--smooth: drawn between steps, never ahead, stops, teleports, other callers, nothing written'),
     'smooth_cc': (['tests/unit/smooth_test.c'], FLAT + ['/DSWGB_CC'], ['user32.lib', 'winmm.lib'] + HIGH, [],
                   "--smooth at Clone Campaigns' addresses"),
-    'films': (['tests/unit/films_test.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib', 'gdi32.lib', 'winmm.lib', 'shlwapi.lib'], [],
-              'the films: AVI headers, --films names, the film palette, dithering, drawing into 8 bits'),
+    'films': (['tests/unit/films_test.c', RT + 'movie_core.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib', 'gdi32.lib', 'winmm.lib', 'shlwapi.lib'], [],
+              'the films: AVI headers, --films names, the film palette, dithering, the A/V clock, drawing into 8 bits'),
     'keys': (['tests/unit/keys_test.c', RT + 'keyscript.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib'], [],
-             'the --keys parser: every step kind, @FILE, drags, modifiers, live steps'),
+             'the --keys parser: every step kind, @FILE, drags, modifiers, live steps; window places, on:NAME waits'),
+    'profile': (['tests/unit/profile_test.c', RT + 'profile_core.c'], FLAT, [], [],
+                '--profile\'s shared core: return addresses, the stack scan, counting samples, the file, its options'),
     'cdaudio': (['tests/unit/cdaudio_test.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['winmm.lib'], [],
                 'the CD music: Ogg decode and seek, disc tracks/positions, play/notify/stop, CD & wave-out mixer lines, cubic taper, effects isolation'),
     'recaudio': (['tests/unit/recaudio_test.c', RT + 'recaudio.c'], ['/D_CRT_SECURE_NO_WARNINGS'], ['user32.lib', 'ole32.lib'], [],
@@ -501,7 +503,9 @@ UNITS = {
 # does not use: pcrecomp's runtime/win32hle has its own selftests for those parts.
 HLE = ['-DSWGB_WIN32HLE', '-DRECOMP_FLAT_MEMORY', '-DRECOMP_LOCAL_REGS']
 UNITS_POSIX = {
-    'keys': ([], []),
+    'keys': ([], ['-lpthread']),
+    'films': ([], ['-lm']),
+    'profile': (HLE, []),
     'inflate': (HLE + ['-w'], []),
     'coverage': (HLE, []),
     'cdaudio': (HLE, ['-lpthread', '-lm']),

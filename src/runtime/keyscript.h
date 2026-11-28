@@ -42,4 +42,30 @@ int key_parse(char* tok, step_t* out, int strict);
 /* A whole script (inline or @FILE), strict, into steps: how many, at most max. */
 int keys_parse_all(const char* spec, step_t* steps, int max);
 
+/* "R-3", "C", "PL+10", "120": a place on one axis (0 x, 1 y) of a client area
+ * cw x ch with the picture at pic {left, top, right, bottom}: L R C (its edges
+ * and centre), PL PR PT PB (the picture's edges), BL BR BT BB (the middle of a
+ * bar), then +N or -N. An unknown place ends the run (exit 1). */
+int keys_place(const char* t, int axis, int cw, int ch, const int pic[4]);
+
+/* ---- running a script: the host's half is one step, now (a shot, a key, the mouse) ---- */
+typedef void (*keys_run_fn)(step_t* st);
+
+/* --keys' n steps on a thread of their own, each at its time, an on:NAME
+ * waiting for that file; and --keys-live FILE's (live_file NULL or "": none)
+ * on another, run as they are appended. */
+void keys_start(step_t* steps, int n, const char* live_file, keys_run_fn run);
+
+/* The game opened a file (the hosts' CreateFileA and OpenFile): an on:NAME
+ * waiting for a name in it goes on. */
+void keys_file_opened(const char* name);
+
+/* --keys-live FILE, read as it grows ("0:what", a line or a comma apart; the
+ * seconds are ignored and on:NAME is not waited for). */
+typedef struct { const char* path; long pos; char line[512]; size_t n; } keys_live;
+/* The steps appended since the last call, each through run (at: ms since
+ * keys_start); how many. A step not ended yet by a comma or a line break
+ * waits for the next call. */
+int keys_live_poll(keys_live* lv, keys_run_fn run);
+
 #endif
