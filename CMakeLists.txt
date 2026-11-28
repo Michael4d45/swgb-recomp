@@ -92,20 +92,16 @@ target_link_options(swgb PRIVATE /BASE:0x60000000 /FIXED:NO /DYNAMICBASE:NO
 # and x87 helpers get inlined), and the build takes 34 min instead of 31 (one
 # file, recomp_0039.c, is most of either). -DGEN_OPT=/O1 for the old build.
 set(GEN_OPT "/O2" CACHE STRING "optimization for the generated C")
-# The few generated files the game spends its time in, at GEN_HOT_OPT instead
-# (docs/performance.md: tools/profile_report.py --hot picks them; a re-lift
-# moves functions between files, so pick them again after one). Only matters
-# when GEN_OPT is something else: they compile at /O2 as fast as at /O1.
-set(GEN_HOT_FILES "recomp_0022.c;recomp_0040.c;recomp_0050.c;recomp_0051.c" CACHE STRING
-    "generated files (names, ;-separated) compiled with GEN_HOT_OPT")
-set(GEN_HOT_OPT "/O2" CACHE STRING "optimization for GEN_HOT_FILES")
 if(GEN_SOURCES)
   set_source_files_properties(${GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "/w;${GEN_OPT}")
-  foreach(f IN LISTS GEN_HOT_FILES)
-    set_source_files_properties("${GEN_DIR}/${f}" PROPERTIES COMPILE_OPTIONS "/w;${GEN_HOT_OPT}")
-  endforeach()
 endif()
-set_source_files_properties(src/runtime/host.c src/runtime/softdd.c src/runtime/present.c src/runtime/scaler.c src/runtime/present_d3d.c src/runtime/framerate.c src/runtime/profile.c src/runtime/profile_core.c src/runtime/resolve.c src/runtime/inflate.c src/runtime/widescreen.c src/runtime/smooth.c src/runtime/movie.c src/runtime/movie_core.c src/runtime/recaudio.c src/runtime/keyscript.c src/runtime/dplay.c src/runtime/cdaudio.c PROPERTIES COMPILE_OPTIONS "/W3")
+# The host's own C (src/) at /W3, read from the target so a new file gets it;
+# pcrecomp's and miniz's keep their own level. On the files, not the target:
+# cl warns (D9025) on each file where a later /w overrides a target's /W3.
+# swgbrecomp_cc compiles the same files, so it gets this too.
+get_target_property(_host_sources swgb SOURCES)
+list(FILTER _host_sources INCLUDE REGEX "^src/")
+set_source_files_properties(${_host_sources} PROPERTIES COMPILE_OPTIONS "/W3")
 set_source_files_properties(third_party/miniz/miniz.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
 target_link_libraries(swgb PRIVATE user32 gdi32 kernel32 ole32 uuid dxguid winmm ws2_32 shlwapi advapi32 d3d11 dxgi)
 

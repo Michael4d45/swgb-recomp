@@ -14,15 +14,10 @@
 # options are read from `swgb`, so every runtime change reaches both. SWGB_CC
 # picks the exe's name, registry key and disc in host.c, and the engine's
 # addresses in guest_addrs.h. The generated C gets the base game's
-# optimization: GEN_OPT, and GEN_HOT_OPT for CC_GEN_HOT_FILES.
+# optimization, GEN_OPT.
 # =============================================================================
 set(CC_GEN_DIR "${CMAKE_SOURCE_DIR}/src/recomp/gen_cc" CACHE PATH "the lifted Clone Campaigns C (run_lift.py --build cc)")
 set(SWGB_CC_GEN_LIB "" CACHE FILEPATH "a prebuilt swgb_cc_gen.lib to link instead of compiling CC_GEN_DIR")
-# The base game's four hot files (GEN_HOT_FILES), each now split over two of
-# x1's: the expansion's code is up to 0x3D60 bytes further on, and the files
-# are cut every 400 functions (docs/lifting.md, "Clone Campaigns").
-set(CC_GEN_HOT_FILES "recomp_0022.c;recomp_0023.c;recomp_0040.c;recomp_0041.c;recomp_0050.c;recomp_0051.c;recomp_0052.c"
-    CACHE STRING "Clone Campaigns' generated files compiled with GEN_HOT_OPT")
 file(GLOB CC_GEN_SOURCES CONFIGURE_DEPENDS "${CC_GEN_DIR}/*.c")
 if(NOT SWGB_CC_GEN_LIB AND NOT CC_GEN_SOURCES)
   return()
@@ -40,9 +35,6 @@ else()
   target_include_directories(swgb_cc_gen PRIVATE ${SWGB_CC_INCS})
   target_compile_definitions(swgb_cc_gen PRIVATE ${SWGB_DEFS})
   set_source_files_properties(${CC_GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "/w;${GEN_OPT}")
-  foreach(f IN LISTS CC_GEN_HOT_FILES)
-    set_source_files_properties("${CC_GEN_DIR}/${f}" PROPERTIES COMPILE_OPTIONS "/w;${GEN_HOT_OPT}")
-  endforeach()
   if(SWGB_TRACE)
     target_compile_definitions(swgb_cc_gen PRIVATE RECOMP_TRACE=1)
   endif()

@@ -157,7 +157,9 @@ of them stalled a build farm (Shogo's lift); since 2026-11-26 they are `/O2`
   compile time (at `/O1` the four took 31, 29, 17 and 5 s; at `/O2` 27,
   20, 11 and 4 s) and buys a few percent at 2560x1440. A re-lift moves
   functions between files: pick them again with `--hot`
-  (`-DGEN_HOT_FILES=` to turn it off).
+  (`-DGEN_HOT_FILES=` to turn it off). The Windows build has dropped them
+  since the whole lift became `/O2` (next section). The Linux build keeps
+  them (`cmake/native.cmake`): its lift is `-O1`, its hot files `-O2`.
 - **`__forceinline` on the helpers is worse:** with it, `recomp_0040.c` at
   `/O1` took 237 s to compile instead of 31 (tried in a pcrecomp worktree,
   not kept). `/O1` inlining big functions is what is slow; `/O2` is not.

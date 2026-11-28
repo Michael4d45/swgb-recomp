@@ -50,6 +50,10 @@ versions follow [SemVer](https://semver.org/).
 - `--smooth`: units drawn between simulation steps, so they glide at high
   frame rates instead of moving once a step; drawing only, multiplayer sync
   unchanged. `--record-fps N`; `SWGB_SMOOTH_LOG` and `tools/smooth_check.py`.
+- CI compiles both hosts on every push and pull request (`windows-host`,
+  `linux-host` in `.github/workflows/unit.yml`, through
+  `tools/compile_hosts.sh`: every object of `swgbrecomp` and
+  `swgbrecomp_cc`, no lift), so a broken host source fails a check.
 ### Changed
 - Shared platform-neutral host code across Windows (`src/runtime`) and native
   Linux/macOS (`src/linux`): `keyscript.c` (window places, script runner and
@@ -63,6 +67,13 @@ versions follow [SemVer](https://semver.org/).
   across message boxes and audio muting on both hosts, and unified disc/stack
   environment variables to `SWGB_CD` (keeping `CD_DRIVE` as an alias) and
   `SWGB_FPS_STACK` (keeping `FPS_STACK` as an alias).
+- CI's pcrecomp is the commit `tools/pcrecomp_pin.sh` names, the Linux
+  build's, instead of a second hash in the workflow.
+- The hosts' warning levels (`/W3`, `-Wall`) come from each target's own
+  sources instead of a second list, which had missed `coverage.c` on
+  Windows and `eh.c`, `fields.c` on Linux. The Windows build's
+  `GEN_HOT_FILES` and `GEN_HOT_OPT` (and Clone Campaigns' `CC_GEN_HOT_FILES`)
+  are gone: the whole lift is `/O2` there. The Linux build keeps them.
 - The README's status brought up to date (the lift, campaigns, Linux,
   multiplayer, tests) and its documentation list completed.
 - `tests/unit/recaudio_test.c` and `tests/unit/cdaudio_test.c` moved off
