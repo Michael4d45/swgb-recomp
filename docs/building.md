@@ -30,8 +30,8 @@ and the films ([movies.md](movies.md)).
 2. Copy the installed `Game` folder to `game\` (it has `Battlegrounds.exe`
    and `Data\GENIE.DAT`). To play, put disc 2 in the drive or mount its image
    (double-click the `.iso`; a `.cue`/`.bin` becomes one with
-   `py -3 tools\cue2iso.py disc2.cue disc2.iso`). `CD_DRIVE=E` or `--cd E`
-   names the drive if there is more than one.
+   `py -3 tools\cue2iso.py disc2.cue disc2.iso`). `SWGB_CD=E` (`CD_DRIVE=E`
+   alias) or `--cd E` names the drive if there is more than one.
 3. If `game\Battlegrounds.exe` is v1.0, apply the update without running it:
    ```
    py -3 tools\bgupdate.py path\to\BGUpdate1_1.exe work\patch
@@ -72,7 +72,7 @@ build\swgbrecomp.exe --run --fps 60                           60 frames a second
 build\swgbrecomp.exe --run --fps off                          the game's own rate: ~900 a second, a whole core
 build\swgbrecomp.exe --run --headless --fps-log               frames, game clock, steps a second
 build\swgbrecomp.exe --run --smooth                           units drawn between steps (framerate.md)
-build\swgbrecomp.exe --run --headless --record out.mp4 --record-fps 120   record at 120 frames a second (default 30)
+build\swgbrecomp.exe --run --headless --record out.mp4 --record-fps 120   record at 120 frames a second (1..1000, default 30)
 build\swgbrecomp.exe --run --headless --profile p.txt         where the game thread's time goes (performance.md)
 build\swgbrecomp.exe --run --films "<Steam>\Game"            films the game cannot find, from there
 build\swgbrecomp.exe --run --fullscreen --filter integer      borderless fullscreen, whole-number scaling
@@ -91,7 +91,7 @@ rectangle (a click in a bar lands on the nearest edge of the picture).
 |---|---|---|
 | `--filter sharp\|smooth\|nearest\|integer` | `Alt+F12` cycles | `sharp` (default): nearest inside a texel, a one-pixel blend at its edges, so no shimmer and no blur at fractional scales. `smooth`: bilinear. `nearest`: nearest neighbour at any size (uneven pixels at odd scales). `integer`: nearest, whole multiples only (bars around, falls back to a fit when the window is smaller than the frame). The window title shows the filter. |
 | `--fullscreen` | `Alt+Enter` toggles | A borderless window the size of the monitor the window is on. The desktop's display mode is never changed, so Alt+Tab and other monitors behave as for any window. |
-| `--scale N` | | The window starts at N times the game's mode (default: 85% of the screen height). Resize it freely after that. |
+| `--scale N` | | The window starts at N times the game's mode (1..16; default: 85% of the screen height). Resize it freely after that. |
 | `--refresh HZ` | | Pace frames to HZ instead of the monitor's refresh rate. |
 | `--present gdi\|d3d11` | | How the picture reaches the window: GDI (default) or a Direct3D 11 flip-model swap chain that scales on the GPU (falls back to GDI if it cannot start); [performance.md](performance.md). |
 | `--present-log` | | Once a second on stderr: presents, frames shown, the refresh rate and filter, and how many frames the timer showed (held back, window damage, a text field up). |
@@ -102,8 +102,8 @@ second while loading, a handful in an idle menu). A frame is drawn when a
 refresh interval has passed since the last one; otherwise it is held, and a
 one-shot timer draws the latest after the interval, so the last frame before
 the game goes quiet is never lost. `--shot`, `--record` (30 fps by the wall
-clock, with the sound: [recording.md](recording.md)) and `--frames` still see every frame they need, and the game's text
-fields are composed into the frame that is drawn.
+clock, with the sound: [recording.md](recording.md)) and `--frames` (1..INT_MAX) still see every frame they need, and the game's text
+fields are composed into the frame that is drawn. (Invalid values for `--record-fps`, `--frames`, `--scale` or `--filter`, and options missing a value, exit 1.)
 
 The mouse and the map's edge scrolling follow the letterbox: the game scrolls
 when the cursor is within a few pixels of its window's edge, so the game

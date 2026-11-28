@@ -20,7 +20,7 @@ the checklist for continuing on a Linux machine. **State (2026-11-26): runs on L
 | Host | `src/runtime/host.c` | `src/linux/main.c`, `src/linux/shims.c` |
 | DirectDraw | `softdd.c` (Win32 GDI underneath) | win32hle's `ddraw.c`, shown by its `screen.c` |
 | Memory | 32-bit process, guest address = host address | Linux `-m32`: the same (flat). macOS and 64-bit Linux: the guest's 4 GB is one block of the host's (based) |
-| Shared, portable | `inflate.c` (through `guest.h`), `keyscript.c` | the same files |
+| Shared, portable | `inflate.c` (`guest.h`, `guest_addrs.h`), `keyscript.c`, `profile_core.c`, `movie_core.c`, `hostargs.h` | the same files |
 
 The Windows host stays as it is. The native host is a second, separate
 host, as in the sibling projects. The two hosts share every piece that has
@@ -121,21 +121,26 @@ Each one, and what it becomes on win32hle:
 | `native32_headless`'s private desktop | windows that are visible get `WM_PAINT`, but on no screen | win32hle generates `WM_PAINT` itself, and `hle_screen_open(headless)` opens no window |
 | The `--keys` thread (`PostMessageA`, `g_vk_until`) | scripted input | `keyscript.c` (the same grammar) and `hle_input_mouse`/`hle_input_key` (`main.c`) |
 | `CreateMutexA` with `--multi` | one copy per desktop | win32hle's named objects are per process: `--multi` is accepted and does nothing |
-| `cd_pick` (drive letters, `RegSetKeyValueA`) | the play disc | `--cd DIR` or `$SWGB_CD` (disc 2 mounted, or copied) becomes `D:`, and `CDPath` is seeded in win32hle's registry |
+| `cd_pick` (drive letters, `RegSetKeyValueA`) | the play disc | `--cd DIR` or `$SWGB_CD` (`$CD_DRIVE` alias; disc 2 mounted, or copied) becomes `D:`, and `CDPath` is seeded in win32hle's registry |
 | `mute_process` (WASAPI session) | test runs are silent | `hle_dsound_set_master(0)`, and SDL's dummy audio driver when headless |
 | Vectored exception handler, `TerminateProcess` | the fault report | `sigaction` on an alternate stack, `_exit` |
 | `SetDllDirectoryA` (`language.dll`) | the string DLL beside the game | win32hle's `LoadLibraryA` maps a resource DLL from the game folder |
 
-**What both hosts share.** `host.c` parses `--keys` with `keyscript.c`
-(main did that), and `keyscript.c` builds without Win32, so the Linux host
-runs the same grammar: modifiers, right clicks, drags, window places,
-`@FILE` scripts and `--keys-live`. The other runtime files the native host
-compiles from `src/runtime` are `coverage.c` (the unresolved-call stop, exit
-5), `widescreen.c` (`--res`), `dplay.c` (DirectPlay), `inflate.c` and
-`keyscript.c`; each picks its platform with `SWGB_WIN32HLE` (`guest.h`,
-`winport.h`). `src/linux` has its own `framerate.c` (`--fps`, `--fps-log`),
-`profile.c` (`--profile`) and `movie.c` (`--films`), with the Windows host's
-options, logic and log lines, over SDL and POSIX instead of softdd and Win32.
+**What both hosts share.** Both hosts share `keyscript.c` (the `--keys` parser,
+window places `keys_place`, the `on:NAME` script runner and `--keys-live`),
+`profile_core.c` (the sampler's stack scan, sample table, file writer and
+options), `movie_core.c` (AVI header probe, `--films` names, palette/dither
+and A/V clock), `guest.h`'s `guest_read32()` and `guest_addrs.h`'s
+`G_GAME_MODE`/`G_GAME_WORLD`/`G_GAME_SCREEN` offsets (used by both
+`framerate.c` files and `profile_core.c`), and `hostargs.h` (integer flag
+validation `host_int_arg` and the `host_is_test_run` rule). The other runtime
+files the native host compiles from `src/runtime` are `coverage.c` (the
+unresolved-call stop, exit 5), `widescreen.c` (`--res`), `dplay.c`
+(DirectPlay), `cdaudio.c` (`--music`), `smooth.c` (`--smooth`) and `inflate.c`;
+each picks its platform with `SWGB_WIN32HLE` (`guest.h`, `winport.h`).
+`src/linux` keeps only the platform sides of `framerate.c` (`--fps`,
+`--fps-log`), `profile.c` (signal-based thread sampling) and `movie.c`
+(win32hle child window, ffmpeg processes and mixer stream).
 
 ### 2. Text fields (EDIT controls) — done
 
@@ -325,12 +330,12 @@ build-macos/swgbrecomp --run --game game
 ```
 
 The command line is the Windows host's: `--headless`, `--record`,
-`--frames`, `--shot`, `--keys` (inline or `@FILE`), `--keys-live`,
+`--frames` (`1..INT_MAX`, exit 1 if invalid), `--shot`, `--keys` (inline or `@FILE`), `--keys-live`,
 `--watchdog`, `--files`, `--multi`, `--exe`, `--game`, `--args`, `--res`,
 `--hud-sides`, `--fps`, `--fps-log`, `--smooth` (built, not yet run here), `--films`, `--profile` (`--profile-window`,
 `--profile-hz`), `--mp-port`, `--mp-join`, `--mp-log`, `--music off|DIR`, plus `--cd DIR` (a
 folder, not a letter), `--fullscreen` and
-`--scale sharp|smooth|crt|nearest|integer` (F11 and F12 in the window). The
+`--scale sharp|smooth|crt|nearest|integer` (F11 and F12 in the window; exit 1 if unknown). The
 presenter's own switches (`--scale N`, `--filter`, `--refresh`,
 `--present`, `--present-log`) and native32's (`--callbacks`,
 `--native-trace`) are Windows ones. `tools/profile_report.py` reads a Linux

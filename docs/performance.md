@@ -288,7 +288,9 @@ build\swgbrecomp.exe --run --headless --multi --profile p.txt [--profile-window 
 py -3 tools\profile_report.py p.txt [--mode 4] [--top 25] [--callers NAME] [--hot OUT] [--folded OUT]
 ```
 
-`--profile FILE` (`src/runtime/profile.c`): a thread of the host's own
+`--profile FILE` (`src/runtime/profile.c`, `src/linux/profile.c`, sharing
+`profile_core.c` for stack scanning, sample table, file output and
+options): a thread of the host's own
 suspends the game thread at a random point of every millisecond, reads EIP,
 copies the top of its host stack and lets it go. The lifted code is C on the
 host stack, one C function per guest function, so the stack holds the chain

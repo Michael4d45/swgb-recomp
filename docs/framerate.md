@@ -312,7 +312,7 @@ Once a second, against the wall clock:
   the most. In game one `blt>primary` is one frame.
 - `timeGetTime`: calls a second, by calling function.
 
-`FPS_STACK=<n>[:VA]` with `--fps-log` prints, every 3 s, the lifted
+`SWGB_FPS_STACK=<n>[:VA]` (or `FPS_STACK`, its older alias) with `--fps-log` prints, every 3 s, the lifted
 functions on the host stack at call `n` (0 `blt>primary` ... 7
 `timeGetTime`, in `framerate.c`'s order), optionally only from function
 `VA`. The stack is scanned (the generated code has no frame pointers), so

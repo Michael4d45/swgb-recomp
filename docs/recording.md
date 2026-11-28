@@ -26,7 +26,8 @@ frame is held, a fast one dropped, so the mp4 plays at the game's real speed.
 A mode other than the first (the films' 640x480) is scaled to the first's
 size. When the recording is closed (the game's exit, `--watchdog`, a fault,
 `--frames`), it stays closed: a frame presented after that opens no new
-recording over the file.
+recording over the file. If `ffmpeg` exits early and stops reading the
+pipe, `softdd.c` logs once, stops recording, and lets the game continue.
 
 ## The sound (`recaudio.c`)
 
