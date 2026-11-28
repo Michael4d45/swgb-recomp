@@ -120,6 +120,17 @@ versions follow [SemVer](https://semver.org/).
   whatever a game screen leaves of a WxH frame. `res_check.py load` and the
   `res/load/*` checks save, load, switch Screen Size, load again and
   restart at 2560x1440, in both games.
+- `test.py`: a missing baseline (a shot, a `--res` layout, the `perf/*`
+  figures, the lift's hashes) recorded itself and passed, so a new machine's
+  first gate passed whatever it drew. It is now **NEW**: not compared, listed
+  first, and it fails `functional` and up unless `--update-baselines`; this
+  run's goes only into the check's folder. One helper, `baseline()`, for all
+  four.
+- `test.py --retry`: a failed check that passed on its retry was FLAKY, which
+  passes, whatever the failure was. Only a timing failure (killed past its
+  time limit, the watchdog, no crash) is retried into FLAKY now; a wrong
+  picture, a fault or an unresolved call stays FAIL. NEW and FLAKY checks
+  head the report ([docs/testing.md](docs/testing.md), "Flaky checks").
 - `test.py --retry`: a retry ran in the first try's folder and overwrote its
   `run.log` and shots (and could pass on a shot the first try left). Each
   retry now has a folder of its own, `<check>-retry1`, and the report lists

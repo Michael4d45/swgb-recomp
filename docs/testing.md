@@ -16,7 +16,7 @@ py -3 tools\test.py --level unit|smoke|functional|soak|real [--build DIR] [--cc|
 |---|---|---|---|---|
 | L0 | `unit` | 25 s | The host's C units, built with `cl` and run (below), and `tests/unit/test_tools.py` (`tools/swgb`'s screens, paths and game folders, soak.py's scripts and log reading, `lift_check.py`, `res_check.py`'s places and shot readers, this runner's image and `--fps-log` readers) | Visual Studio, a pcrecomp checkout (its headers only). No game, no lift. |
 | L1 | `smoke` | 2-2.5 min | L0, then for each game (base and Clone Campaigns): `conformance.py`; menu -> Standard Game -> a skirmish with four shots (menu, setup, map, command center selected), no unresolved call, fault or stub, 800x600 first; the lift check (below) | the game data, the host(s), the lift for the lift check |
-| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games) `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080) and `load` (both games at 2560x1440: below), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), `--record` with its sound (a film, a skirmish's clicks, the victory music; the sound stream as long as the video, loud where they play: [recording.md](recording.md)), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), the CD music (a skirmish on a disc of 2-second tracks: tracks 2-49 on time, the notification, the game's repeat; [music.md](music.md)), the frame-rate check (below), and two multiplayer games through `mp_pair.py`: three players with chat and one dropped (base game), a save restored (Clone Campaigns) | as L1, ffmpeg |
+| L2 | `functional` | 18-20 min at 5 games at once (12 for the base game alone) | L1, then `present_check.py` groups A-E (one game each, in parallel), `res_check.py` 800/1024/1280, its `ingame` switches (both games), `popups` (1024x768, 2560x1440; Clone Campaigns at 1920x1080) and `load` (both games at 2560x1440: below), `--res` from Options (1920x1080 for both games, with `--hud-sides black` too, 3440x1440, Clone Campaigns at 2560x1440: below), `--films` (logo and intro through FFmpeg, frames shown and dropped), `--record` with its sound (a film, a skirmish's clicks, the victory music; the sound stream as long as the video, loud where they play: [recording.md](recording.md)), a short skirmish per set of civilizations (all six, all eight of Clone Campaigns) with a save, then that save loaded from Single Player -> Saved Game, Enter in both text fields (`enter/*`: New Player accepted with Enter in a folder with no profile, then a skirmish won by the chat's Enter and `skywalker`), the CD music (a skirmish on a disc of 2-second tracks: tracks 2-49 on time, the notification, the game's repeat; [music.md](music.md)), the frame-rate check (below), and two multiplayer games through `mp_pair.py`: three players with chat and one dropped (base game), a save restored (Clone Campaigns) | as L1, ffmpeg |
 | L3 | `soak` | about 4 h at 5 games at once (20 game-hours) | L2, then `soak.py` for both games: base skirmish, monkey, campaign, defeat, allied, victory then load, chain (OOM-9 1-3), fight (a victory by combat), every campaign's missions past the first (`missions`: OOM-9 6-7, Boss Nass, Chewbacca, Darth Vader, Princess Leia, Basic Training), the in-game Load, the monkey at 1024x768 and 1280x1024; Clone Campaigns skirmish (two civilization sets), monkey, both Episode II campaigns from mission 1 and past it, the in-game Load. Multiplayer (`mp_pair.py`): four players for 20 minutes with chat, a quit, the host dropped (host migration), a save restored, in both games. `--soak-scale 0.2` for a shorter trial. | as L2 |
 | L4 | `real` | ~5 min | `present_check_real.ps1`: the real window, mouse and screen. **Only with `--real-screen`**, which means the user said so: it takes over the mouse and keyboard. | the user at the screen |
 
@@ -48,9 +48,9 @@ own, `GAMES/testing-<base|cc>-<k>` (hard links to the shared install, real
 copies of profiles and saves, as `worktree_env.ps1` makes them; made on first
 use and kept; a copy cut short is completed by the next run). `--jobs` games
 run at once: default 5, at most `max_jobs` whatever is asked
-(`SWGB_MAX_JOBS` or local.json's; else the machine's cores). The tool stops
-only the processes it started, by PID (`taskkill /T /PID`), when one runs past
-its time or on Ctrl-C.
+(`SWGB_MAX_JOBS` or local.json's; else the machine's cores), and as many of
+the units and lift checks before them. The tool stops only the processes it
+started, by PID (`taskkill /T /PID`), when one runs past its time or on Ctrl-C.
 
 Clone Campaigns' folders take their player profile (`player.nf*`) from
 `GAMES/clone-campaigns` when that folder exists (`--cc-profiles`; one with no
@@ -69,12 +69,40 @@ own `NAME-*` folders). Two games in one folder share its saves, profile and
 registry hive; two runs that did made every edge case of `present_check` fail.
 
 **Flaky checks.** A game check (not a soak) that fails is run once more
-(`--retry N`, default 1). If it passes then, it is **FLAKY**: the run still
-passes, and the report keeps both tries. Each retry runs in a folder of its
+(`--retry N`, default 1, until a try passes). If it passes then, it is
+**FLAKY** only when every failure before the pass was a *timing* one: a
+process this tool started ran past its time limit and was ended (exit -1:
+the host past its watchdog and a margin, or `conformance.py`, `res_check.py`,
+`present_check.py`, `mp_pair.py` past their budget), or the host ended at
+its watchdog (exit 4) where the check wanted it to exit by itself. Those are
+what a busy machine does (five to eight games on one CPU), so a FLAKY check
+does not fail the run; the report lists it first, with the first try's
+failure. Anything else fails the run however the retry went: a wrong picture
+(a shot over its share of differing pixels, a layout unlike its baseline), a
+crash (exit 3, a `=== fault`), a not-lifted stub (exit 2), an unresolved call
+(exit 5, `ICALL`), a missing shot, a film that did not play, a fault in the
+same try as a timeout. The report heads such a check `FAIL: try 2 passed, but
+try 1 failed for more than time`, and each try's line says `FAIL (timing)` or
+`FAIL`; `summary.json`'s `tries` has `hard` for each. The retry still runs
+there: it shows whether the failure happens every time. Why not `--retry 0`:
+a gate that fails on noise teaches people to rerun it until it is green, which
+is worse than a retry that excuses only time. Why not every retry: when this
+rule was written, the one FLAKY check in the record (films/base, 2026-11-23)
+was a real fault, `0xC0000005` opening `xlogo1.avi`, which a passing retry hid.
+The price: a failure that load may explain, but that is about what the game
+did, stays FAIL too. Two runs of other branches, still on the old rule, since
+had one pass on retry: `mp/cc-restore` (2026-11-27, neither game had started
+by the end of its script) and `smooth/base` (2026-11-28, no object moved);
+neither cause was established. `present/A`'s pacing case has twice shown fewer
+than its 510 frames a second (507 and 502, 2026-11-27), both with the game at
+1280x1024 by mistake; the 25 recorded runs at 800x600 showed 523-596. If such a
+check fails again, fix its wait or its threshold rather than widen "timing".
+
+Each retry runs in a folder of its
 own beside the first, `<check>-retry1` (then `-retry2`), so the first try's
 `run.log`, keys and shots are kept as they were, and a retry cannot pass on a
 shot the first try left. The check's report lines start each try with its
-result and folder (`try 1: FAIL, in skirmish_base/`), its shots are captioned
+result and folder (`try 1: FAIL (timing), in skirmish_base/`), its shots are captioned
 `try 1:`, `try 2:`, and `summary.json` lists the tries (`tries`: try, status,
 dir). On main of 2026-11-22, present group
 A failed once in three runs on the same build: after Alt+Enter, eight
@@ -89,9 +117,18 @@ and shots. Exit code 0 when nothing failed or errored; a SKIP (no Clone
 Campaigns host, no ffmpeg) is listed but passes.
 
 **Baselines** live outside the repository, in BASELINES (`--baselines`):
-they are made from the game's files. A missing one is
-recorded by the first run that needs it; `--update-baselines` records them all
-again after an intended change. Screenshots are compared as grey levels: a
+they are made from the game's files. A check whose baseline
+is missing is **NEW**, not a pass: nothing was compared. The report lists NEW
+checks first, and `functional` and up (so the merge gate) fail on them. This
+run's picture, layout, figures or hashes go only into the check's folder
+(`<check>/new-baselines/`), never into the baselines: a run never makes its
+own output the reference. Look at them, then record them with
+`--update-baselines` (with `--only CHECK` for one), which records every
+baseline its checks reach from that run; those checks are NEW too, and the run
+does not fail on them. Do that once on a new machine, or after an intended
+change. The screenshots, the layouts (`--res`), the frame-rate figures
+(`perf/*`) and the lift's hashes all go through one helper (`baseline()` in
+`test.py`). Screenshots are compared as grey levels: a
 pixel differs when it is more than 24 levels off, and a check allows a share
 of differing pixels: 2% for the main menu, 3% for the setup screen's buttons
 and the Options dialog, 35% for the HUD panel under a skirmish (its minimap
@@ -288,8 +325,9 @@ A fixed skirmish (one Easiest computer, a Tiny Savannah map) at `--fps 60
 --fps-log`, the view moved now and then, for 2.5 minutes of game: the median
 of `--fps-log`'s CPU (% of one core, the process's own time) and presents a
 second from 20 s after the game starts, against `tests/perf_thresholds.json`.
-The first run records its figures as the baseline; a later run 25% worse is
-noted in the report but does not fail (other games share the machine).
+With no figures in the baselines the check is NEW (`--update-baselines`
+records them); a later run 25% worse than them is noted in the report but
+does not fail (other games share the machine).
 
 ## The conformance harness
 

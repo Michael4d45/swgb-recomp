@@ -34,8 +34,14 @@ no game data) does not fail a run; the report lists it.
 
 Baselines (screenshots, the lift's hashes, the frame-rate figures) are kept
 outside the repository (--baselines; the defaults of every path come from
-tools/swgb/runner.py's paths()): they are made from the game's files. A missing baseline is recorded by the first run;
---update-baselines records them all again (after an intended change).
+tools/swgb/runner.py's paths()): they are made from the game's files. A check
+with no baseline is NEW, not a pass: it fails functional and up unless
+--update-baselines, which records them all from this run (after an intended
+change, or on a new machine).
+
+--retry: a failed game check runs again; it is FLAKY (the run passes) only
+when every failure before the pass was timing alone (a timeout, the
+watchdog). A wrong picture, a fault or an unresolved call stays FAIL.
 """
 import argparse
 import concurrent.futures
@@ -92,6 +98,8 @@ class Result:
         self.metrics = {}
         self.images = []                     # (path relative to the results folder, caption)
         self.own_lines, self.own_images = self.lines, self.images   # this try's alone (merge_tries)
+        self.own_status = None               # this try's status, once merge_tries has replaced status
+        self.hard = False                    # a failure that is not timing alone (fail)
         self.tries = []                      # the earlier tries of this check, first first
         self.seconds = 0
         self.game = None                     # the game folder, while it holds one
@@ -100,9 +108,19 @@ class Result:
     def log(self, msg):
         self.lines.append(msg)
 
-    def fail(self, msg):
+    def fail(self, msg, timing=False):
+        """timing: the check ran out of time and nothing crashed (a process killed past its time
+        limit, the watchdog). Only a try whose failures are all timing may be retried into FLAKY
+        (merge_tries): a busy machine is noise, a wrong picture or a fault is not."""
         self.status = 'FAIL' if self.status != 'ERROR' else self.status
+        self.hard = self.hard or not timing
         self.lines.append('FAIL: ' + msg)
+
+    def new(self, msg):
+        """No baseline to compare with (baseline()): not a pass. A gate level fails on it (report)."""
+        if self.status == 'PASS':
+            self.status = 'NEW'
+        self.lines.append('NEW: ' + msg)
 
     def skip(self, msg):
         self.status = 'SKIP'
@@ -116,32 +134,47 @@ class Result:
         return {'name': self.name, 'level': self.check.level, 'game': self.check.game, 'status': self.status,
                 'seconds': round(self.seconds, 1), 'lines': self.lines, 'metrics': self.metrics,
                 'images': [{'path': p, 'caption': c} for p, c in self.images], 'dir': os.path.relpath(self.dir, self.root),
-                'tries': [{'try': t.attempt + 1, 'status': t.status, 'dir': os.path.relpath(t.dir, self.root)}
-                          for t in self.tries + [self]]}
+                'tries': [{'try': t.attempt + 1, 'status': t.own_status or t.status, 'hard': t.hard,
+                           'dir': os.path.relpath(t.dir, self.root)} for t in self.tries + [self]]}
+
+
+def try_status(t):
+    s = t.own_status or t.status
+    return s + ' (timing)' if s == 'FAIL' and not t.hard else s
 
 
 def merge_tries(old, new):
     """new is a retry of old: its report lines and shots become every try's, each try headed
-    by its status and its folder (old's folder is untouched, so both sets of logs stay)."""
+    by its status and its folder (old's folder is untouched, so both sets of logs stay).
+    A retry that passes makes the check FLAKY only when every earlier try failed on time alone
+    (Result.fail's timing). After a wrong picture, a fault or an unresolved call the check
+    stays FAIL however the retry went: the retry only shows whether it happens every time."""
+    old.own_status = old.own_status or old.status
+    new.own_status = new.status
     new.tries = old.tries + [old]
     lines, images = [], []
     for t in new.tries + [new]:
-        lines.append('try %d: %s, in %s/' % (t.attempt + 1, t.status, os.path.basename(t.dir)))
+        lines.append('try %d: %s, in %s/' % (t.attempt + 1, try_status(t), os.path.basename(t.dir)))
         lines += ['  ' + l for l in t.own_lines]
         images += [(p, 'try %d: %s' % (t.attempt + 1, c)) for p, c in t.own_images]
-    new.lines, new.images = lines, images
-    if new.status == 'PASS':
+    hard = [str(t.attempt + 1) for t in new.tries if t.hard]
+    if new.status == 'PASS' and hard:
+        new.status = 'FAIL'
+        lines.insert(0, 'FAIL: try %d passed, but try %s failed for more than time (not FLAKY: docs/testing.md)'
+                     % (new.attempt + 1, ', '.join(hard)))
+    elif new.status == 'PASS':
         new.status = 'FLAKY'
+    new.lines, new.images = lines, images
     return new
 
 
 def retry_failed(ctx, results, times, run):
-    """--retry: a game check (not a soak) that failed is run again, up to `times` times, by
-    run(check, attempt) -> Result. Passing then, it is FLAKY, which does not fail the run but
-    is listed. Each retry replaces its check's result in `results`, keeping the earlier tries'
-    lines and shots (merge_tries)."""
+    """--retry: a game check (not a soak) that failed is run again, up to `times` times or until
+    a try passes, by run(check, attempt) -> Result. FLAKY or FAIL then as merge_tries says; FLAKY
+    does not fail the run, and the report lists it first. Each retry replaces its check's result
+    in `results`, keeping the earlier tries' lines and shots."""
     for k in range(1, times + 1):
-        again = [r for r in results if r.status == 'FAIL' and r.check.game and r.check.level != 'soak']
+        again = [r for r in results if (r.own_status or r.status) == 'FAIL' and r.check.game and r.check.level != 'soak']
         if not again or ctx.cancelled:
             break
         print('retry %d: %d failed check(s): %s' % (k, len(again), ', '.join(r.name for r in again)))
@@ -273,7 +306,10 @@ def events(r, text, tag='run'):
 
 def expect_exit(r, rc, want=(4,), tag='run'):
     if rc not in want:
-        r.fail('%s: exit %d (%s), wanted %s' % (tag, rc, EXIT.get(rc, '?'), ' or '.join('%d (%s)' % (w, EXIT[w]) for w in want)))
+        # killed past its time (-1) or ended by the watchdog: out of time, which a busy machine
+        # explains; a fault, a stub or an unresolved call does not (and events() fails it too)
+        r.fail('%s: exit %d (%s), wanted %s' % (tag, rc, EXIT.get(rc, '?'), ' or '.join('%d (%s)' % (w, EXIT[w]) for w in want)),
+               timing=rc in (-1, 4))
 
 
 # ---- screenshots -------------------------------------------------------------------------------
@@ -286,21 +322,34 @@ def blank(png, frac=0.9):
     return counts.max() / a.size >= frac
 
 
+def baseline(ctx, r, rel, record):
+    """BASELINES/<rel>, the reference this run's figures are compared with. None when there is
+    none, or under --update-baselines: then record(path) writes this run's, into the baselines
+    under --update-baselines, else only into the check's folder (new-baselines/<rel>), so that
+    a run never makes its own output the reference. Either way r is NEW: not compared."""
+    path = os.path.join(ctx.baselines, rel)
+    if os.path.exists(path) and not ctx.a.update_baselines:
+        return path
+    dst = path if ctx.a.update_baselines else os.path.join(r.dir, 'new-baselines', rel)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    record(dst)
+    r.new('%s: %s %s' % (rel.replace('\\', '/'), 'recorded as the baseline:' if ctx.a.update_baselines else
+                         'no baseline, not compared; this run\'s is', dst))
+    return None
+
+
 def compare(ctx, r, png, key, tol=0.02, region=None, thresh=24):
     """The picture against its baseline (BASELINES\\<key>.png): the share of pixels that differ
     by more than thresh grey levels must be at most tol. region: (x0, y0, x1, y1), only there.
-    A missing baseline is recorded (and passes); --update-baselines records it again."""
+    None when not compared (no shot, other size, no baseline: baseline())."""
     import numpy as np
     from PIL import Image
     if not png:
         r.fail('%s: no shot' % key)
         return None
-    base = os.path.join(ctx.baselines, key + '.png')
-    if ctx.a.update_baselines or not os.path.exists(base):
-        os.makedirs(os.path.dirname(base), exist_ok=True)
-        shutil.copyfile(png, base)
-        r.log('%s: baseline recorded (%s)' % (key, base))
-        return 0.0
+    base = baseline(ctx, r, key + '.png', lambda p: shutil.copyfile(png, p))
+    if not base:
+        return None
     a = Image.open(png).convert('L')
     b = Image.open(base).convert('L')
     if a.size != b.size:
@@ -524,12 +573,13 @@ def lift_check_fn(kind):
         import lift_check
         gen = os.path.join(ctx.a.main, 'src', 'recomp', GAMES[kind]['gen'])
         stats = os.path.join(ctx.a.main, 'work', GAMES[kind]['stats'])
-        base = os.path.join(ctx.baselines, 'lift', kind + '.json')
-        if ctx.a.update_baselines and os.path.exists(base):
-            os.remove(base)
-        rep = lift_check.check(gen, stats, base)
-        if rep.get('skipped'):
-            return r.skip(rep['skipped'])
+        if not os.path.isdir(gen):
+            return r.skip('no lift at %s' % gen)
+        rep = {}
+        base = baseline(ctx, r, os.path.join('lift', kind + '.json'),
+                        lambda p: rep.update(lift_check.check(gen, stats, p, save=True)))
+        if base:
+            rep = lift_check.check(gen, stats, base)
         for l in rep['lines']:
             r.log(l)
         for p in rep['problems']:
@@ -559,7 +609,7 @@ def conformance_fn(kind):
         if 'SKIP' in out:
             return r.skip('conformance.py found no game data')
         if rc:
-            r.fail('conformance: exit %d' % rc)
+            r.fail('conformance: exit %d' % rc, timing=rc == -1)
     fn.__doc__ = 'conformance.py: boot, genie, directdraw, menu, exit (%s)' % GAMES[kind]['title']
     return fn
 
@@ -603,8 +653,7 @@ def skirmish_fn(kind):
         # the setup screen keeps the folder's last settings: only its title and buttons
         compare(ctx, r, setup, '%s/setup' % kind, tol=0.03, region=(0, 480, 400, 600))
         # the map and the HUD's art (each civilization has its own) differ every game: not compared
-        if 'open data\\%s.dat -> ok' % GAMES[kind]['genie'] not in text.lower().replace('/', '\\') and \
-                not re.search(r'open data\\%s\.dat -> ok' % GAMES[kind]['genie'], text, re.I):
+        if not re.search(r'open data[\\/]%s\.dat -> ok' % GAMES[kind]['genie'], text, re.I):
             r.fail('data\\%s.dat was not read' % GAMES[kind]['genie'])
     fn.__doc__ = 'menu -> Standard Game -> a skirmish, its shots, no ICALL, no fault (%s)' % GAMES[kind]['title']
     return fn
@@ -631,7 +680,7 @@ def present_fn(group):
                 r.fail(c)
         r.log('%d/%d cases passed' % (r.metrics['passed'], len(cases)))
         if rc or not cases:
-            r.fail('present_check.py --only %s: exit %d' % (group, rc))
+            r.fail('present_check.py --only %s: exit %d' % (group, rc), timing=rc == -1)
         events(r, '\n'.join(open(os.path.join(dp, f), encoding='utf-8', errors='replace').read()
                             for dp, _, fs in os.walk(r.dir) for f in fs if f.endswith('.log') and f != 'present_check.log'))
     fn.__doc__ = 'present_check.py group %s (the presenter headless: letterbox, edge scrolling, fullscreen, pacing)' % group
@@ -651,7 +700,7 @@ def res_fn(size):
             if l.startswith(('SetDisplayMode', 'menus restored', 'PASS', 'FAIL')):
                 r.log(l)
         if rc:
-            r.fail('res_check.py %d: exit %d' % (size, rc))
+            r.fail('res_check.py %d: exit %d' % (size, rc), timing=rc == -1)
         if size != 800 and 'menus restored to 800x600 after Quit: yes' not in out:   # 800: no mode change at all
             r.fail('the menus did not come back at 800x600')
         log = os.path.join(r.dir, 'run.log')
@@ -688,7 +737,7 @@ def res_mode_fn(kind, what, args, shots, doc):
                 r.fail(l)
         r.metrics['passed'] = sum(1 for s, _ in lines if s == 'PASS')
         if rc or not lines:
-            r.fail('res_check.py %s: exit %d' % (what, rc))
+            r.fail('res_check.py %s: exit %d' % (what, rc), timing=rc == -1)
         log = os.path.join(r.dir, 'run.log')
         if os.path.exists(log):
             events(r, open(log, encoding='utf-8', errors='replace').read())
@@ -886,17 +935,17 @@ def widescreen_fn(kind, res='1920x1080', sides='fill'):
                 r.fail('no shots after the minimap clicks')
         # every panel's place (so every click): the same with --hud-sides fill and black
         lay = layout_text(dump)
-        key = os.path.join(ctx.baselines, kind, 'layout_%s.txt' % res)
         if lay is None:
             r.fail('no layout dump (SWGB_RES_DUMP)')
-        elif ctx.a.update_baselines or not os.path.exists(key):
-            os.makedirs(os.path.dirname(key), exist_ok=True)
-            with open(key, 'w') as fo:
+            return
+
+        def record(p):
+            with open(p, 'w') as fo:
                 fo.write(lay)
-            r.log('layout recorded as the baseline (%s)' % key)
-        elif read_text(key) != lay:
+        key = baseline(ctx, r, os.path.join(kind, 'layout_%s.txt' % res), record)
+        if key and read_text(key) != lay:
             r.fail('the panels are not where the baseline has them (%s against %s)' % (dump, key))
-        else:
+        elif key:
             r.log('layout: %d panels, as the baseline' % lay.count('\n'))
     fn.__doc__ = '--res %s --hud-sides %s: Options names it, the HUD centred, %s beside it, the minimap answers, the layout (%s)' % (
         res, sides, 'the art mirrored' if sides == 'fill' else 'black', GAMES[kind]['title'])
@@ -1453,12 +1502,11 @@ def perf_fn(kind):
         if not th['presents_min'] <= f['presents_median'] <= th['presents_max']:
             r.fail('%.1f presents a second, outside %g..%g' % (f['presents_median'], th['presents_min'], th['presents_max']))
         # against the last accepted figures: worse by more than a quarter is reported, not failed
-        base = os.path.join(ctx.baselines, 'perf', kind + '.json')
-        if ctx.a.update_baselines or not os.path.exists(base):
-            os.makedirs(os.path.dirname(base), exist_ok=True)
-            json.dump(f, open(base, 'w'), indent=1)
-            r.log('figures recorded as the baseline (%s)' % base)
-        else:
+        def record(p):
+            with open(p, 'w') as fo:
+                json.dump(f, fo, indent=1)
+        base = baseline(ctx, r, os.path.join('perf', kind + '.json'), record)
+        if base:
             b = json.load(open(base))
             r.metrics['cpu_baseline'] = b['cpu_median']
             if f['cpu_median'] > b['cpu_median'] * 1.25 + 1:
@@ -1555,7 +1603,7 @@ def mp_fn(name, kind, extra, minutes, port, budget):
         rc, out = run(ctx, r, cmd, budget * 60, 'mp_pair.log', cwd=ROOT)
         summ = os.path.join(r.dir, 'summary.json')
         if not os.path.exists(summ):
-            return r.fail('mp_pair.py wrote no summary (exit %d)' % rc)
+            return r.fail('mp_pair.py wrote no summary (exit %d)' % rc, timing=rc == -1)
         res = json.load(open(summ))
         for g in res if isinstance(res, list) else [res]:
             sr = g['sync_records']
@@ -1574,7 +1622,7 @@ def mp_fn(name, kind, extra, minutes, port, budget):
                 if os.path.exists(os.path.join(r.dir, d, f)) and d in ('a', 'b', 'r_a'):
                     r.image(os.path.join(r.dir, d, f), '%s: %s' % (d, f[:-4]))
         if rc and r.status == 'PASS':
-            r.fail('mp_pair.py: exit %d' % rc)
+            r.fail('mp_pair.py: exit %d' % rc, timing=rc == -1)
     fn.__doc__ = 'mp_pair.py %s, %g minutes (%s)' % (' '.join(extra), minutes, GAMES[kind]['title'])
     return fn
 
@@ -1794,7 +1842,7 @@ def take_lock(a):
                   % (pid, os.path.join(a.games, a.prefix + '-*')))
             return False
     except (OSError, ValueError, IndexError):
-        pass
+        pass        # no lock, or an empty or torn one (its run died writing it): no live run to wait for
     with open(lock, 'w') as f:
         f.write('%d %s\n' % (os.getpid(), datetime.datetime.now().isoformat(timespec='seconds')))
     import atexit
@@ -1819,20 +1867,40 @@ def sha256(path):
     return h.hexdigest()[:16]
 
 
+def attention(ctx, results, meta):
+    """What a reader must see before the table: NEW (not compared) and FLAKY (failed on time,
+    then passed). [(heading, [(check, why)])], the empty ones left out."""
+    new = [(r.name, [l[5:] for l in r.lines if l.startswith('NEW: ')]) for r in results if r.status == 'NEW']
+    flaky = [(r.name, [l[6:] for t in r.tries for l in t.own_lines if l.startswith('FAIL: ')]) for r in results
+             if r.status == 'FLAKY']
+    return [(h, rows) for h, rows in (
+        ('NEW: no baseline, so not compared%s' % (
+            ': this gate run fails on them. Look at their shots, then record them with --update-baselines --only CHECK'
+            if meta['new_fails'] else (' (recorded by --update-baselines)' if ctx.a.update_baselines else '')), new),
+        ('FLAKY: failed on time alone (a timeout, the watchdog), then passed: the run passes, but look', flaky)) if rows]
+
+
 def report(ctx, results, meta):
     out = ctx.results
-    counts = {s: sum(1 for r in results if r.status == s) for s in ('PASS', 'FLAKY', 'FAIL', 'ERROR', 'SKIP')}
+    counts = {s: sum(1 for r in results if r.status == s) for s in ('PASS', 'NEW', 'FLAKY', 'FAIL', 'ERROR', 'SKIP')}
     meta['counts'] = counts
-    meta['ok'] = not counts['FAIL'] and not counts['ERROR']
+    # functional and up (the merge gate): a missing baseline is not a pass
+    meta['new_fails'] = bool(counts['NEW']) and LEVELS.index(meta['level']) >= LEVELS.index('functional') \
+        and not ctx.a.update_baselines
+    meta['ok'] = not counts['FAIL'] and not counts['ERROR'] and not meta['new_fails']
     json.dump(dict(meta, checks=[r.as_dict() for r in results]), open(os.path.join(out, 'summary.json'), 'w'), indent=1)
+    top = attention(ctx, results, meta)
+    tally = '%d passed, %d new (no baseline), %d flaky (failed on time, then passed), %d failed, %d errors, %d skipped' % (
+        counts['PASS'], counts['NEW'], counts['FLAKY'], counts['FAIL'], counts['ERROR'], counts['SKIP'])
     # Markdown
     md = ['# Test run: %s (%s)' % (meta['level'], 'PASS' if meta['ok'] else 'FAIL'), '',
           '%s, %s, %.1f min, %d jobs. Build `%s`. Commit `%s`%s.' % (
               meta['started'], meta['host'], meta['seconds'] / 60, meta['jobs'], meta['build'], meta['commit'],
               ' (with local changes)' if meta['dirty'] else ''), '',
-          '**%d passed, %d flaky (failed, then passed), %d failed, %d errors, %d skipped.**' % (
-              counts['PASS'], counts['FLAKY'], counts['FAIL'], counts['ERROR'], counts['SKIP']), '',
-          '| Check | Level | Result | Time | What |', '|---|---|---|---|---|']
+          '**%s.**' % tally, '']
+    for head, rows in top:
+        md += ['## %s' % head, ''] + ['- **%s**: %s' % (n, '; '.join(why)) for n, why in rows] + ['']
+    md += ['| Check | Level | Result | Time | What |', '|---|---|---|---|---|']
     for r in results:
         md.append('| %s | %s | **%s** | %.0f s | %s |' % (r.name, r.check.level, r.status, r.seconds, r.check.doc.replace('|', '/')))
     for r in results:
@@ -1861,15 +1929,16 @@ def report(ctx, results, meta):
 body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;margin:0 auto;max-width:1200px;padding:16px}
 table{border-collapse:collapse;width:100%%}td,th{border-bottom:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
 tr.pass b,section.pass h2 span{color:var(--pass)}tr.fail b,tr.error b,section.fail h2 span,section.error h2 span{color:var(--fail)}
-tr.skip b,section.skip h2 span,tr.flaky b,section.flaky h2 span{color:var(--skip)}pre{white-space:pre-wrap;color:var(--mut);font-size:12px}
+tr.skip b,section.skip h2 span,tr.flaky b,section.flaky h2 span,tr.new b,section.new h2 span{color:var(--skip)}pre{white-space:pre-wrap;color:var(--mut);font-size:12px}
 .shots{display:flex;flex-wrap:wrap;gap:8px}figure{margin:0;width:280px}img{width:100%%;border:1px solid var(--line)}
 figcaption{font-size:12px;color:var(--mut)}.m{font-family:monospace;font-size:12px;color:var(--mut)}a{color:inherit}
-</style></head><body><h1>%(title)s</h1><p>%(sub)s</p><table><tr><th>Check</th><th>Level</th><th>Result</th><th>Time</th><th>What</th></tr>%(rows)s</table>%(secs)s</body></html>'''
+.top{border-left:4px solid var(--skip);padding:2px 12px;margin:12px 0}.top h2{font-size:16px;margin:8px 0}
+</style></head><body><h1>%(title)s</h1><p>%(sub)s</p>%(top)s<table><tr><th>Check</th><th>Level</th><th>Result</th><th>Time</th><th>What</th></tr>%(rows)s</table>%(secs)s</body></html>'''
     open(os.path.join(out, 'report.html'), 'w', encoding='utf-8').write(page % {
         'level': e(meta['level']), 'title': 'Test run: %s &mdash; %s' % (e(meta['level']), 'PASS' if meta['ok'] else 'FAIL'),
-        'sub': e('%s, %.1f min. %d passed, %d flaky, %d failed, %d errors, %d skipped. Build %s, commit %s.' % (
-            meta['started'], meta['seconds'] / 60, counts['PASS'], counts['FLAKY'], counts['FAIL'], counts['ERROR'], counts['SKIP'],
-            meta['build'], meta['commit'])),
+        'sub': e('%s, %.1f min. %s. Build %s, commit %s.' % (meta['started'], meta['seconds'] / 60, tally, meta['build'], meta['commit'])),
+        'top': ''.join('<div class="top"><h2>%s</h2><ul>%s</ul></div>' % (e(h), ''.join(
+            '<li><a href="#%s"><b>%s</b></a>: %s</li>' % (e(n), e(n), e('; '.join(why))) for n, why in rows)) for h, rows in top),
         'rows': rows, 'secs': secs})
     return meta['ok']
 
@@ -1886,12 +1955,12 @@ def main():
     cc.add_argument('--cc', dest='cc', action='store_true', default=None, help='Clone Campaigns too (a missing host fails)')
     cc.add_argument('--no-cc', dest='cc', action='store_false', help='the base game only')
     ap.add_argument('--jobs', type=int, default=0,
-                    help='games at once (default: 5, at most %d: SWGB_MAX_JOBS or local.json\'s max_jobs)' % PATHS.max_jobs)
+                    help='games at once, and the units\' builds (default: 5, at most %d: SWGB_MAX_JOBS or local.json\'s max_jobs)' % PATHS.max_jobs)
     ap.add_argument('--only', default='', help='checks by name or glob, comma-separated (e.g. "skirmish/*,unit/keys")')
     ap.add_argument('--list', action='store_true', help='list the checks and stop')
     ap.add_argument('--results', default=None, help='the results folder (default %s)' % os.path.join(PATHS.results, '<time>-<level>'))
     ap.add_argument('--baselines', default=PATHS.baselines)
-    ap.add_argument('--update-baselines', action='store_true', help='record every baseline again from this run')
+    ap.add_argument('--update-baselines', action='store_true', help='record every baseline from this run (NEW, not compared); without it a gate level fails on a missing one')
     ap.add_argument('--main', default=PATHS.main, help='the main checkout: the lift (src/recomp/gen*) and work/lift_stats*.json')
     ap.add_argument('--exe', default=PATHS.exe('base'))
     ap.add_argument('--exe-cc', default=PATHS.exe('cc'))
@@ -1905,7 +1974,8 @@ def main():
     ap.add_argument('--civ-minutes', type=float, default=2.5, help='functional: minutes of each civilization skirmish')
     ap.add_argument('--perf-minutes', type=float, default=2.5, help='functional: minutes of the frame-rate skirmish')
     ap.add_argument('--seed', type=int, default=20261122, help='soak.py --seed')
-    ap.add_argument('--retry', type=int, default=1, help='run a failed game check again this many times (FLAKY if it passes)')
+    ap.add_argument('--retry', type=int, default=1, help='run a failed game check again this many times: FLAKY if it then passes and every failure '
+                         'was timing alone, else it stays FAIL (docs/testing.md, "Flaky checks")')
     ap.add_argument('--real-screen', action='store_true',
                     help='L4: the user said the screen, mouse and keyboard may be taken over now')
     a = ap.parse_args()
@@ -1942,11 +2012,11 @@ def main():
             if not attempt:                  # a retry replaces its first try (retry_failed)
                 results.append(r)
             print('  %-5s %-28s %6.0f s  %s' % (r.status, r.name + ('  (retry %d)' % attempt if attempt else ''), r.seconds,
-                                               next((l for l in r.lines if l.startswith(('FAIL', 'SKIP'))), '')[:110]))
+                                               next((l for l in r.lines if l.startswith(('FAIL', 'NEW', 'SKIP'))), '')[:110]))
         return r
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
             list(ex.map(one, plain))
         # a thread per game slot: each kind has --jobs folders, and at most --jobs games run at once
         with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
@@ -1964,9 +2034,13 @@ def main():
             'dirty': bool(git('status', '--porcelain', '--untracked-files=no')),
             'hosts': {k: sha256(ctx.host(k)) for k in GAMES}, 'results': a.results}
     ok = report(ctx, results, meta)
+    for head, rows in attention(ctx, results, meta):
+        print(head)
+        for n, why in rows:
+            print('  %-28s %s' % (n, '; '.join(why)[:110]))
     c = meta['counts']
-    print('%s: %d passed, %d flaky, %d failed, %d errors, %d skipped in %.1f min; %s' % (
-        'PASS' if ok else 'FAIL', c['PASS'], c['FLAKY'], c['FAIL'], c['ERROR'], c['SKIP'], meta['seconds'] / 60,
+    print('%s: %d passed, %d new, %d flaky, %d failed, %d errors, %d skipped in %.1f min; %s' % (
+        'PASS' if ok else 'FAIL', c['PASS'], c['NEW'], c['FLAKY'], c['FAIL'], c['ERROR'], c['SKIP'], meta['seconds'] / 60,
         os.path.join(a.results, 'report.html')))
     return 0 if ok else 1
 
