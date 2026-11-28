@@ -184,6 +184,16 @@ the menu and its dialogs, switching between every size and WxH from the
 in-game Options, saving and loading, and quitting to the menus and playing
 again.
 
+A game loaded or restarted from the game menu at WxH is laid out like the
+first one. Until 2026-11-27 it was not: the game makes the new game's screen
+while the mode is already WxH, and its `set_screen_size` asks the screen to
+lay itself out only when the size changes, so the new screen kept the 800 x
+600 layout in the top-left corner, with whatever was in memory around it.
+The host now keeps such a screen at the base size until its interface
+exists, then lays it out itself. Whenever a game screen still leaves part of
+a WxH frame (one not laid out for WxH), the host clears the rest to black
+and logs `[res] game screen ... covers WxH of WxH: the rest cleared`.
+
 ![A skirmish at 1920 x 1080, command center selected](screenshots/widescreen-1920x1080.png)
 
 How it works is in `src/runtime/widescreen.c`. In short: the game's

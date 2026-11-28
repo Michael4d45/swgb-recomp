@@ -313,6 +313,21 @@ class ResCheck(unittest.TestCase):
         self.assertTrue(res_check.check_full_screen(rep, own, 'save at 1024x768'))
         self.assertEqual(rep.fails, 1)
 
+    def test_layout(self):
+        import numpy as np
+        rep = res_check.Report(quiet=True)
+        first = np.zeros((1440, 2560), dtype=np.int16)
+        first[1190:, 640:1920] = np.arange(1280) % 200 + 20  # the interface at the bottom, centred
+        loaded = first.copy()
+        loaded[1300:1400, 1400:1700] = 0                    # another minimap, other counters
+        self.assertTrue(res_check.check_layout(rep, first, loaded, 'loaded'))
+        corner = np.full((1440, 2560), 210, dtype=np.int16)  # uncleared memory
+        corner[:600, :800] = 0
+        corner[430:600, :800] = 90                          # the 800 layout in the corner
+        self.assertFalse(res_check.check_layout(rep, first, corner, 'the 800 layout'))
+        self.assertFalse(res_check.check_layout(rep, first, None, 'no shot'))
+        self.assertEqual(rep.fails, 2)
+
 
 class Runner(unittest.TestCase):
     def test_fps_figures(self):

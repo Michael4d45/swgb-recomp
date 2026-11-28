@@ -795,6 +795,14 @@ for _k, _args, _tag in (('base', ['--size', '1024'], '1024'), ('base', ['--res',
         _k, 'popups', _args, ['b_menu', 'b_objectives', 'b_chat', 'b_diplomacy', 'b_techtree', 'c_save_typed', 'd_load', 'e_about'],
         'res_check.py popups at %s: menu, Objectives, Chat, Diplomacy, About centred; the tech tree; Save and '
         'Load screens at the size that fits, centred (%s)' % (_tag, GAMES[_k]['title'])), _k, 3.5))
+# Games made while the mode is already WxH: the in-game Load (before and after a Screen Size
+# round trip) and Restart, laid out as the first game (widescreen.c, lay_out_skipped).
+for _k in GAMES:
+    CHECKS.append(Check('res/load/' + _k, 'functional', res_mode_fn(
+        _k, 'load', ['--res', '2560x1440'],
+        ['a_map', 'b_loaded', 'd_loaded', 'e_restarted', 'e_restarted_menu'],
+        'res_check.py load at 2560x1440: save, Load, Screen Size 1024x768 and back, Load, Restart; each '
+        'new game laid out as the first, its menu centred (%s)' % GAMES[_k]['title']), _k, 7.5))
 
 # The interface's layout at each base size (widescreen.c): its width, and the rows under the map.
 HUD_BASE = {1280: 250, 1024: 200, 800: 170}

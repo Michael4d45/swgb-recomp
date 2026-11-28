@@ -96,9 +96,13 @@ int widescreen_sides_parse(const char* s) {
     return 1;
 }
 
+static void lay_out_skipped(uint32_t game);
+
 /* vtable 0x00665A20 + 0x68: set_screen_size(w, h), thiscall. */
 static void hook_set_screen_size(void) {
-    if (ARG(0) == 1280 && ARG(1) == 1024) {
+    uint32_t game = g_ecx;
+    int wide = ARG(0) == 1280 && ARG(1) == 1024;
+    if (wide) {
         printf("[res] screen size 1280x1024 -> %dx%d\n", widescreen_w, widescreen_h);
         ARG(0) = (uint32_t)widescreen_w;
         ARG(1) = (uint32_t)widescreen_h;
@@ -106,6 +110,7 @@ static void hook_set_screen_size(void) {
     if (!g_trace && getenv("SWGB_RES_TRACE")) g_trace = fopen(getenv("SWGB_RES_TRACE"), "w");
     if (g_trace) { fprintf(g_trace, "---- set_screen_size %d %d\n", (int)ARG(0), (int)ARG(1)); fflush(g_trace); g_trace_on = 1; }
     G_SET_SCREEN_SIZE();
+    if (wide) lay_out_skipped(game);
 }
 
 /* SWGB_RES_TRACE=FILE: every new (target, caller) pair of indirect calls
@@ -218,14 +223,19 @@ static void hook_game_screen_size(void) {
     g_esp = esp;   /* below the caller's arguments: room for our own calls */
     g_esp -= 64;
 
-    int dx = (W - g_base_w) / 2, dy = H - g_base_h;
-    uint32_t a[4] = { 0, 0, (uint32_t)W, (uint32_t)H };
-    guest_thiscall(G_PANEL_SET_RECT, screen, 4, a);   /* TPanel::set_rect, not the screen's own */
-    if (!MEM32(screen + G_SCREEN_IFACE)) {   /* its own early way out: no interface yet */
+    /* Its own early way out, no interface yet: TPanel::setup sizing a screen
+     * made while the mode is already WxH (a game loaded or restarted in a
+     * game). It stays at the base size, so the interface its constructor
+     * makes next picks the base size's column and art; hook_set_screen_size
+     * widens it. */
+    if (!MEM32(screen + G_SCREEN_IFACE)) {
         g_esp = esp_after;
         g_eax = ret;
         return;
     }
+    int dx = (W - g_base_w) / 2, dy = H - g_base_h;
+    uint32_t a[4] = { 0, 0, (uint32_t)W, (uint32_t)H };
+    guest_thiscall(G_PANEL_SET_RECT, screen, 4, a);   /* TPanel::set_rect, not the screen's own */
     g_screen = screen;
     uint32_t map = 0;
     for (uint32_t n = P_KIDS(screen); n; n = MEM32(n + 8)) {
@@ -333,6 +343,20 @@ static int laid_out(uint32_t screen) {
     return screen && screen == g_screen && (int)MEM32(screen + 0x2C) == widescreen_w - 1;
 }
 
+/* set_screen_size (sub_005ED2D0) calls the game screen's handle_size only
+ * when the draw area changes size. A game loaded or restarted in a game makes
+ * its screen while the mode is already WxH, so the call that lays it out never
+ * comes: it is made here, as the game would have made it. */
+static void lay_out_skipped(uint32_t game) {
+    uint32_t screen = MEM32(game + 0x17B4);
+    if (!screen || MEM32(screen) != G_SCREEN_VTABLE || !MEM32(screen + G_SCREEN_IFACE) || laid_out(screen))
+        return;
+    printf("[res] game screen %08X made at %dx%d: laid out for it\n", screen, widescreen_w, widescreen_h);
+    uint32_t eax = g_eax, a[2] = { (uint32_t)widescreen_w, (uint32_t)widescreen_h };
+    guest_thiscall(G_SCREEN_SIZE_VA, screen, 2, a);
+    g_eax = eax;
+}
+
 /* The screen reports WxH: dialogs centre on it (TDialogPanel::setup,
  * sub_004C6380, uses its parent's width and height). The game's own checks
  * of it for exactly 1280 want the base size: while they run, it has it. */
@@ -434,14 +458,63 @@ static void hook_game_screen_paint(void) {
     art_restore();
 }
 
+/* Locks the draw area for the host's own drawing, with room on the guest
+ * stack below esp (the stack as it was when the hooked call came in). */
+static const char g_lock_name[] = "widescreen";
+static int area_lock(uint32_t area, uint32_t esp) {
+    uint32_t lk[2] = { (uint32_t)(uintptr_t)g_lock_name, 1 };
+    g_esp = esp - 64;
+    guest_thiscall(G_AREA_LOCK, area, 2, lk);
+    return g_eax && AREA_BITS(area);
+}
+static void area_unlock(uint32_t area) {
+    uint32_t lk[1] = { (uint32_t)(uintptr_t)g_lock_name };
+    guest_thiscall(G_AREA_UNLOCK, area, 1, lk);
+}
+
+/* A screen not laid out for WxH on a WxH draw area has the game's own layout,
+ * for one of its sizes: its panels and art leave the rest of the area as it
+ * was, so it is cleared. The covered part is the game's size for the width
+ * its panels reach (the art covers all of it, below the last panel too). */
+static void clear_uncovered(uint32_t screen, uint32_t esp) {
+    static const int ws[3] = { 800, 1024, 1280 }, hs[3] = { 600, 768, 1024 };
+    static uint32_t told;
+    uint32_t area = MEM32(screen + 0x20);
+    int W = widescreen_w, H = widescreen_h, cw = 0, ch = 0, i = 0;
+    if (!area || (int)AREA_W(area) != W || (int)AREA_H(area) != H) return;
+    for (uint32_t n = P_KIDS(screen); n; n = MEM32(n + 8)) {
+        uint32_t c = MEM32(n);
+        if ((int)(P_X(c) + P_W(c)) > cw) cw = (int)(P_X(c) + P_W(c));
+        if ((int)(P_Y(c) + P_H(c)) > ch) ch = (int)(P_Y(c) + P_H(c));
+    }
+    while (i < 3 && cw > ws[i]) i++;
+    if (i < 3) { cw = ws[i]; ch = hs[i]; }   /* else wider than any of its layouts: the panels' extent */
+    if (cw >= W && ch >= H) return;
+    if (told != screen) {
+        told = screen;
+        printf("[res] game screen %08X covers %dx%d of %dx%d: the rest cleared\n", screen, cw, ch, W, H);
+    }
+    uint32_t esp_after = g_esp;
+    if (area_lock(area, esp)) {
+        fill(area, cw, 0, W - 1, H - 1, 0);
+        fill(area, 0, ch, cw - 1, H - 1, 0);
+        area_unlock(area);
+    }
+    g_esp = esp_after;
+}
+
 static void hook_game_screen_draw(void) {
     uint32_t screen = g_ecx;
     int W = widescreen_w, H = widescreen_h;
-    if (!laid_out(screen)) { G_SCREEN_DRAW(); return; }
+    uint32_t esp = g_esp;
+    if (!laid_out(screen)) {
+        G_SCREEN_DRAW();
+        clear_uncovered(screen, esp);
+        return;
+    }
     int dx = (W - g_base_w) / 2;
     art_shift(screen);
     base_size_on();   /* the overlays' 1280 places */
-    uint32_t esp = g_esp;
     G_SCREEN_DRAW();
     uint32_t esp_after = g_esp;
     base_size_off();
@@ -451,16 +524,12 @@ static void hook_game_screen_draw(void) {
     uint32_t area = MEM32(screen + 0x20);
     int top = H - (g_base_h - g_map_h);
     if (area && dx > 0 && top < H) {
-        static const char name[] = "widescreen";
-        uint32_t lk[2] = { (uint32_t)(uintptr_t)name, 1 };
-        g_esp = esp - 64;
-        guest_thiscall(G_AREA_LOCK, area, 2, lk);
-        if (g_eax && AREA_BITS(area)) {
+        if (area_lock(area, esp)) {
             fill(area, 0, top, dx - 1, H - 1, 0);
             fill(area, dx + g_base_w, top, W - 1, H - 1, 0);
             if (widescreen_sides == WIDESCREEN_SIDES_FILL)
                 sides_fill(area, MEM32(screen + G_SCREEN_ART0), top);
-            guest_thiscall(G_AREA_UNLOCK, area, 1, lk);
+            area_unlock(area);
         }
         g_esp = esp_after;
     }
