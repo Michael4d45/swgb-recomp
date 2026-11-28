@@ -182,7 +182,7 @@ chain without the game.
 From the log to the lift:
 
 ```
-py -3 tools\seeds_from_logs.py            # launcher logs (A:\Games\star\logs\play-*.log), work\*.log, work\soak\**
+py -3 tools\seeds_from_logs.py            # launcher logs (STAR\logs\play-*.log), work\*.log, work\soak\**
 py -3 tools\seeds_from_logs.py --merge    # adds the new ones to work\run_seeds.json
 
 py -3 run_lift.py --all                   # then rebuild

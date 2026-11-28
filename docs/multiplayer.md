@@ -236,7 +236,7 @@ Both instances run the same machine code, so nothing should differ. Specifically
   source count as different builds: copy one build to both machines.
   For a test only, `SWGB_MP_ANY_BUILD=1` on the hosting side lets another
   build in ("... let in (SWGB_MP_ANY_BUILD)" in its log); `mp_pair.py
-  --run-b EXE` sets it and gives B that host, to see whether two builds of
+  --run b=EXE` sets it and gives B that host, to see whether two builds of
   one source (say the lifted C at `/O1` and `/O2`) simulate alike.
 
 Measured: no differences in any run (Tests below).
@@ -277,7 +277,7 @@ none differ). So far, no difference has reached the simulation.
 
 ```
 set WSL_CHECKOUT=/home/me/swgb-recomp      the WSL checkout, with build-linux/, game/ and work/
-py -3 tools\mp_pair.py --players 3 --wsl b --extra=--mp-cross --minutes 15 --activity busy --chat ...
+py -3 tools\mp_pair.py --players 3 --wsl b --host-arg all=--mp-cross --minutes 15 --activity busy --chat ...
 ```
 
 `--wsl b` runs player b's Linux host through `wsl.exe`, in a game folder of
@@ -407,7 +407,7 @@ which is any free one; with a host on Windows that is not an issue.)
 ```
 py -3 tools\mp_pair.py [--players 2-4] [--minutes 20] [--activity idle|habits|busy] [--seed S] [--cc]
                        [--chat] [--drop WHO@MIN] [--quit WHO@MIN] [--resign WHO@MIN]
-                       [--save MIN [--restore]] [--wsl WHO] [--run EXE] [--run-b EXE] [--game DIR] [--out DIR] [--port N]
+                       [--save MIN [--restore]] [--wsl WHO] [--run [WHO=]EXE ...] [--host-arg WHO=SWITCHES ...] [--game DIR] [--out DIR] [--port N]
 ```
 
 Headless `--multi` runs over loopback, players a, b, c, d. A creates; the
@@ -463,7 +463,7 @@ at the soak level.
 | `--cc --minutes 5 --activity busy --seed 3` | 5 min, Clone Campaigns | PASS: 36 checkpoints, none differ |
 | `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (37.9 min of game time) | PASS: 125 checkpoints (250 records), none differ; 10,800 messages each way; no fault, drop or out-of-sync message |
 | A this build, B the same source linked a minute earlier | the join | refused as another build; B shows "Unable to join game." |
-| `--run-b`: A the lifted C at `/O1`, B at `/O2` (2026-11-26), `--minutes 25 --activity busy --seed 5` | 25 min (46.9 min of game time, turn 6,210) | PASS: let in with `SWGB_MP_ANY_BUILD`; 156 checkpoints (312 records), none differ; no fault, drop or out-of-sync message ([performance.md](performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default)) |
+| `--run b=EXE`: A the lifted C at `/O1`, B at `/O2` (2026-11-26), `--minutes 25 --activity busy --seed 5` | 25 min (46.9 min of game time, turn 6,210) | PASS: let in with `SWGB_MP_ANY_BUILD`; 156 checkpoints (312 records), none differ; no fault, drop or out-of-sync message ([performance.md](performance.md#the-whole-lift-at-o2-2026-11-26-now-the-default)) |
 | the same, `--cc --minutes 20 --activity busy --seed 11` | 20 min, Clone Campaigns (38.2 min of game time, turn 5,050) | PASS: 127 checkpoints (254 records), none differ |
 
 2026-11-26, this machine shared with nine other agents' builds and games:
@@ -479,8 +479,8 @@ at the soak level.
 | `--players 2 --minutes 1.5 --activity busy --save 0.75 --restore` | base | PASS: the save in both `SaveGame\Multi`; the restored game starts at world time 93.2 s; 50 records after, none differ |
 | the same, `--cc` | Clone Campaigns | PASS: restored at 93.6 s; 50 records, none differ |
 | before the host migration: `--drop a@1` | base | the clients got `DPSYS_SESSIONLOST` and sat in Multiplayer Status, "Waiting For Vote", to the end |
-| `--players 3 --minutes 15 --activity busy --chat --wsl b --extra=--mp-cross --seed 5` | base, b on Linux (WSL) | sync PASS: 285 records in each log, 95 turns, none differ; 12 of 12 chat lines received; the 4 to b not drawn (Linux, above) |
-| `--players 2 --minutes 5 --activity busy --chat --wsl a --extra=--mp-cross --seed 6` | base, the host on Linux | sync PASS: 80 records, none differ; 4 of 4 chat lines received; the 2 to a not drawn |
+| `--players 3 --minutes 15 --activity busy --chat --wsl b --host-arg all=--mp-cross --seed 5` | base, b on Linux (WSL) | sync PASS: 285 records in each log, 95 turns, none differ; 12 of 12 chat lines received; the 4 to b not drawn (Linux, above) |
+| `--players 2 --minutes 5 --activity busy --chat --wsl a --host-arg all=--mp-cross --seed 6` | base, the host on Linux | sync PASS: 80 records, none differ; 4 of 4 chat lines received; the 2 to a not drawn |
 | `--players 2 --minutes 2 --chat --wsl ab` | base, both on Linux | the game does not start (no play disc, above) |
 | `tools/test.py --level functional --cc --prefix mp-coverage` | both | PASS: 37 of 37, `mp/base-3p` and `mp/cc-restore` among them |
 

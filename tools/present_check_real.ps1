@@ -20,13 +20,21 @@
 param(
     [switch] $Yes,                 # skip the countdown
     [switch] $Quick,               # one window shape instead of three, fewer probes
-    [string] $Exe  = 'A:\Games\star\builds\presentation\swgbrecomp.exe',
-    [string] $Game = 'A:\Games\star\games\presentation',
-    [string] $Lift = 'A:\Games\star\swgb-recomp\work\Battlegrounds.exe',
+    [string] $Exe  = '',           # default: the host in the build of tools\swgb\runner.py's paths()
+    [string] $Game = '',           # default: GAMES\present-check-base (made on first use)
+    [string] $Lift = '',           # default: work\Battlegrounds.exe of the main checkout
     [string] $Out  = (Join-Path $env:TEMP 'present_check_real')
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not ($Exe -and $Game -and $Lift)) {
+    $tools = $PSScriptRoot
+    $paths = & py -3 -c "import json, sys; sys.path.insert(0, sys.argv[1]); from swgb import runner; p = runner.paths(); print(json.dumps([p.host('base'), p.game('present-check', 'base'), p.exe('base')]))" $tools | ConvertFrom-Json
+    if ($LASTEXITCODE) { throw "tools\swgb\runner.py's paths() failed ($LASTEXITCODE)" }
+    if (-not $Exe) { $Exe = $paths[0] }
+    if (-not $Game) { $Game = $paths[1] }
+    if (-not $Lift) { $Lift = $paths[2] }
+}
 New-Item -ItemType Directory -Force $Out | Out-Null
 $log = Join-Path $Out 'game.log'
 

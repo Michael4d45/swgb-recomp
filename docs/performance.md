@@ -241,7 +241,7 @@ fell from 13,070 samples to 8,694 (-33%): at `/O2` they are inlined into the
 lifted functions. The lifted code itself fell 5% (19,582 to 18,651); the
 host's share is the same work.
 
-**Correctness.** `/O2` changes no result: `mp_pair.py --run-b` played a
+**Correctness.** `/O2` changes no result: `mp_pair.py --run b=EXE` played a
 25-minute busy LAN game with A on the `/O1` host and B on the `/O2` one
 (`SWGB_MP_ANY_BUILD=1` lets the join accept another build): 156 checkpoints
 (312 sync records, 46.9 minutes of game, turn 6,210), none different; no

@@ -23,7 +23,7 @@
                             the mouse and keyboard; it runs only with --real-screen.
 
 A level runs the levels below it too; --just runs only its own checks. Every
-game is --headless --multi, in a game folder of its own under GAMES\\testing-*
+game is --headless --multi, in a game folder of its own under GAMES/testing-*
 (hard links to the shared install, as worktree_env.ps1 makes them), at most
 --jobs at once. Only the processes this tool starts are ever stopped, by PID.
 
@@ -33,12 +33,11 @@ when nothing failed, 1 otherwise. A SKIP (no Clone Campaigns host, no lift,
 no game data) does not fail a run; the report lists it.
 
 Baselines (screenshots, the lift's hashes, the frame-rate figures) are kept
-outside the repository (--baselines, default STAR\\test-baselines): they are
-made from the game's files. A missing baseline is recorded by the first run;
+outside the repository (--baselines; the defaults of every path come from
+tools/swgb/runner.py's paths()): they are made from the game's files. A missing baseline is recorded by the first run;
 --update-baselines records them all again (after an intended change).
 """
 import argparse
-import signal
 import concurrent.futures
 import datetime
 import fnmatch
@@ -59,43 +58,24 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+from swgb import runner, screens  # noqa: E402
+from swgb.runner import EVENTS, EXIT, WIN, Script, ensure_game, kill_tree, png_of  # noqa: E402
+from swgb.screens import MAIN_SINGLE, SETUP_START  # noqa: E402
 
-# Windows: the shared folders of the integration farm (A:\Games\star). Linux and macOS
-# (the win32hle host, src/linux): this checkout is the main one, its build-linux/ (or
-# build-macos/) the build, and the game folders, baselines and results go under work/.
-WIN = os.name == 'nt'
-EXE = '.exe' if WIN else ''
-STAR = os.environ.get('SWGB_STAR', r'A:\Games\star' if WIN else os.path.join(ROOT, 'work'))
-MAIN = os.path.join(STAR, 'swgb-recomp') if WIN else ROOT
-BUILD = os.path.join(STAR, 'builds', 'integration') if WIN else \
-    os.path.join(ROOT, 'build-macos' if sys.platform == 'darwin' else 'build-linux')
+PATHS = runner.paths()          # every default path (SWGB_STAR, tools/local.json, else this checkout)
 LEVELS = ['unit', 'smoke', 'functional', 'soak', 'real']
 ALIASES = {'l0': 'unit', 'l1': 'smoke', 'l2': 'functional', 'l3': 'soak', 'l4': 'real',
            'nightly': 'soak', 'merge': 'functional', 'gate': 'functional'}
-MAX_JOBS = 8                       # games at once, whatever --jobs says: the user plays on this machine
-
-# What the host prints when the game reaches code it cannot run (as tools/soak.py).
-EVENTS = re.compile(r'ICALL: unresolved|ITAIL: unresolved|=== fault|\[not-lifted\]|=== unresolved|'
-                    r'\[coverage\]|\[eh32\] funclet .* not lifted|STUB:')
-EXIT = {0: 'exited', 2: 'not-lifted stub', 3: 'fault', 4: 'survived (watchdog)', 5: 'unresolved icall', -1: 'timed out'}
 
 # ---- the two games ---------------------------------------------------------------------------
-# Screens in 800x600 game pixels (tools/soak.py has the base game's; clone_campaigns() there
-# the expansion's).
-MAIN_SINGLE, MAIN_EXIT, MAIN_OPTIONS = (345, 250), (40, 565), (40, 490)
-SETUP_START = (118, 568)
-OPTIONS_RADIO = {800: (453, 383), 1024: (453, 413), 1280: (453, 443)}
+# Their screens are tools/swgb/screens.py's (LAYOUT: at 800x600).
 GAMES = {
-    'base': {'title': 'Galactic Battlegrounds', 'host': 'swgbrecomp' + EXE, 'exe': 'Battlegrounds.exe',
-             'entry': 0x00632881, 'genie': 'genie', 'sp_standard': (600, 168), 'sp_saved': (603, 286),
-             'civs': ['Galactic Empire', 'Gungans', 'Rebel Alliance', 'Royal Naboo', 'Trade Federation', 'Wookiees'],
-             'gen': 'gen', 'stats': 'lift_stats.json'},
-    'cc': {'title': 'Clone Campaigns', 'host': 'swgbrecomp_cc' + EXE, 'exe': 'battlegrounds_x1.exe',
-           'entry': 0x00636601, 'genie': 'genie_x1', 'sp_standard': (603, 228), 'sp_saved': (603, 344),
-           'civs': ['Confederacy', 'Galactic Empire', 'Gungans', 'Rebel Alliance', 'Republic', 'Royal Naboo',
-                    'Trade Federation', 'Wookiees'],
-           'gen': 'gen_cc', 'stats': 'lift_stats_cc.json'},
+    'base': {'title': 'Galactic Battlegrounds', 'host': runner.host_name('base'), 'exe': runner.GUEST_EXES['base'],
+             'entry': 0x00632881, 'genie': 'genie', 'gen': 'gen', 'stats': 'lift_stats.json'},
+    'cc': {'title': 'Clone Campaigns', 'host': runner.host_name('cc'), 'exe': runner.GUEST_EXES['cc'],
+           'entry': 0x00636601, 'genie': 'genie_x1', 'gen': 'gen_cc', 'stats': 'lift_stats_cc.json'},
 }
+LAYOUT = {k: screens.layout(k) for k in GAMES}
 
 
 # ---- results ---------------------------------------------------------------------------------
@@ -221,16 +201,14 @@ class Ctx:
 
     def acquire(self, kind):
         folder = self.pool(kind).get()
-        ensure_game(self.a.game_template, folder, kind, self.a.cc_profiles if kind == 'cc' else None)
+        ensure_game(self.a.game_template, folder, self.a.cc_profiles if kind == 'cc' else None)
         return folder
 
     def release(self, kind, folder):
         self.pool(kind).put(folder)
 
     def popen(self, cmd, **kw):
-        if not WIN:
-            kw['start_new_session'] = True       # its own process group: kill_tree ends it and its children
-        p = subprocess.Popen(cmd, **kw)
+        p = runner.popen(cmd, **kw)
         with self.lock:
             self.procs.add(p)
         return p
@@ -246,54 +224,6 @@ class Ctx:
             procs = list(self.procs)
         for p in procs:
             kill_tree(p)
-
-
-def kill_tree(p):
-    if p.poll() is None:
-        if WIN:
-            subprocess.run(['taskkill', '/T', '/F', '/PID', str(p.pid)], capture_output=True)
-        else:
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except OSError:
-                pass
-
-
-def ensure_game(template, dst, kind, profiles=None):
-    """A game folder of its own: hard links to the shared install (never written: the game
-    only reads them), real copies of what the game writes (SaveGame, Scenario, player.nf*).
-    profiles: a folder whose player.nf* to use instead of the template's (Clone Campaigns:
-    the shared install's profile was saved by Steam's widescreen-mod exe at 2560x1440, and
-    the game's Options dialog switches to it, without --res)."""
-    marker = os.path.join(dst, 'swgb-testing.txt')
-    if os.path.exists(marker):
-        return
-    seed_profiles(dst, profiles)
-    if os.path.isdir(os.path.join(dst, 'Data')):
-        open(marker, 'w').write('profiles: %s\n' % (profiles or template))
-        return
-    for dirpath, _, files in os.walk(template):
-        rel = os.path.relpath(dirpath, template)
-        top = rel.split(os.sep)[0]
-        os.makedirs(os.path.join(dst, rel), exist_ok=True)
-        for f in files:
-            src, d = os.path.join(dirpath, f), os.path.join(dst, rel, f)
-            if os.path.exists(d):
-                continue
-            if top in ('SaveGame', 'Scenario') or (rel == '.' and f.lower().startswith('player.nf')):
-                shutil.copy2(src, d)
-            else:
-                os.link(src, d)
-    seed_profiles(dst, profiles)
-    open(marker, 'w').write('profiles: %s\n' % (profiles or template))
-
-
-def seed_profiles(dst, profiles):
-    if not profiles or not os.path.isdir(profiles) or not os.path.isdir(dst):
-        return
-    for f in os.listdir(profiles):
-        if f.lower().startswith('player.nf'):
-            shutil.copy2(os.path.join(profiles, f), os.path.join(dst, f))
 
 
 def run(ctx, r, cmd, timeout, log_name, cwd=None, env=None):
@@ -326,8 +256,7 @@ def run_host(ctx, r, kind, steps, watchdog, tag='run', extra=(), env=None):
     keys = os.path.join(r.dir, tag + '_keys.txt')
     with open(keys, 'w', newline='\n') as f:
         f.write('\n'.join('%g:%s' % s for s in sorted(steps, key=lambda s: s[0])) + '\n')
-    cmd = [ctx.host(kind), '--run', '--multi', '--headless', '--files', '--exe', ctx.exe(kind),
-           '--game', r.game, '--watchdog', str(int(watchdog)), '--keys', '@' + keys] + list(extra)
+    cmd = runner.host_cmd(ctx.host(kind), ctx.exe(kind), r.game, watchdog, keys, '--files', *extra)
     rc, text = run(ctx, r, cmd, watchdog + 90, tag + '.log', env=env)
     r.log('%s: exit %d (%s), %s' % (tag, rc, EXIT.get(rc, '?'), os.path.join(os.path.basename(r.dir), tag + '.log')))
     return rc, text
@@ -348,17 +277,6 @@ def expect_exit(r, rc, want=(4,), tag='run'):
 
 
 # ---- screenshots -------------------------------------------------------------------------------
-def png_of(bmp):
-    """The host's BMP as a PNG beside it (the BMP removed). None when there is none."""
-    if not os.path.exists(bmp):
-        return None
-    from PIL import Image
-    png = bmp[:-4] + '.png'
-    Image.open(bmp).save(png)
-    os.remove(bmp)
-    return png
-
-
 def blank(png, frac=0.9):
     """True when nearly the whole picture is one colour (a black screen)."""
     import numpy as np
@@ -436,8 +354,7 @@ def msvc_env(ctx):
             return ctx._msvc
         env = dict(os.environ)
         if os.environ.get('VSCMD_ARG_TGT_ARCH') != 'x86' or not shutil.which('cl'):
-            vswhere = os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
-                                   'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+            vswhere = os.path.join(os.environ['ProgramFiles(x86)'], 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
             vs = subprocess.run([vswhere, '-latest', '-products', '*', '-property', 'installationPath'],
                                 capture_output=True, text=True).stdout.strip()
             if not vs:
@@ -452,7 +369,7 @@ def msvc_env(ctx):
 def find_pcrecomp(a):
     rt = os.path.join('runtime', 'native32', 'native32.h') if WIN else os.path.join('runtime', 'win32hle', 'win32hle.h')
     for p in [a.pcrecomp, os.environ.get('PCRECOMP'), os.path.join(os.path.dirname(ROOT), 'pcrecomp'),
-              os.path.join(STAR, 'pcrecomp')]:
+              PATHS.star and os.path.join(PATHS.star, 'pcrecomp')]:
         if p and os.path.exists(os.path.join(p, rt)):
             return os.path.abspath(p)
     return None
@@ -654,15 +571,15 @@ for _k in GAMES:
 def skirmish_steps(kind, out, t_menu=18):
     """The main menu's shot, Single Player, Standard Game, Start Game, the map's shot, the
     command center clicked and shot (docs/testing.md, "Into a skirmish")."""
-    g = GAMES[kind]
-    s = [(t_menu, 'shot=%s' % os.path.join(out, 'menu.bmp')),
-         (20, 'move:%d:%d' % MAIN_SINGLE), (21, 'click:%d:%d' % MAIN_SINGLE),
-         (35, 'move:%d:%d' % g['sp_standard']), (36, 'click:%d:%d' % g['sp_standard']),
-         (46, 'shot=%s' % os.path.join(out, 'setup.bmp')),
-         (55, 'move:%d:%d' % SETUP_START), (56, 'click:%d:%d' % SETUP_START),
-         (100, 'shot=%s' % os.path.join(out, 'map.bmp')),
-         (102, 'move:400:170'), (103, 'click:400:170'), (106, 'shot=%s' % os.path.join(out, 'selected.bmp'))]
-    return s, 110
+    lay = LAYOUT[kind]
+    s = Script()
+    s.shot(t_menu, os.path.join(out, 'menu.bmp'))
+    start = screens.to_skirmish(s, lay, 21, 800)
+    s.shot(start - 8, os.path.join(out, 'setup.bmp'))       # 10 s after Standard Game
+    s.shot(start + 44, os.path.join(out, 'map.bmp'))
+    s.click(start + 47, lay.command_center)
+    s.shot(start + 50, os.path.join(out, 'selected.bmp'))
+    return s.steps, start + 54
 
 
 def skirmish_fn(kind):
@@ -799,14 +716,10 @@ for _k, _args, _tag in (('base', ['--size', '1024'], '1024'), ('base', ['--res',
         'res_check.py popups at %s: menu, Objectives, Chat, Diplomacy, About centred; the tech tree; Save and '
         'Load screens at the size that fits, centred (%s)' % (_tag, GAMES[_k]['title'])), _k, 3.5))
 
-# The interface's layout at each base size (widescreen.c): its width, and the rows under the map.
-HUD_BASE = {1280: 250, 1024: 200, 800: 170}
-
-
-def hud_base(w, h):
-    """widescreen.c's choice of the base layout for --res WxH: (base width, interface rows)."""
-    bw = 1280 if w >= 1280 and h >= 720 else 1024 if w >= 1024 and h >= 700 else 800
-    return bw, HUD_BASE[bw]
+def hud_band(w, h):
+    """The interface at --res WxH: (its base width, its rows under the map)."""
+    bw = screens.hud_base(w, h)
+    return bw, screens.HUD[bw]['rows']
 
 
 def side_column(d, band):
@@ -823,7 +736,7 @@ def hud_sides(png):
     from PIL import Image
     a = np.asarray(Image.open(png).convert('RGB'), dtype=np.int16)
     h, w, _ = a.shape
-    bw, bh = hud_base(w, h)
+    bw, bh = hud_band(w, h)
     dx, band = (w - bw) // 2, bw // 100
     rows = a[h - bh:]
     hud, left, right = rows[:, dx + 10:dx + bw - 10], rows[:, :dx], rows[:, dx + bw:]
@@ -842,7 +755,7 @@ def sides_crop(png, out):
     from PIL import Image
     im = Image.open(png).convert('RGB')
     w, h = im.size
-    bw, bh = hud_base(w, h)
+    bw, bh = hud_band(w, h)
     dx = (w - bw) // 2
     c = Image.new('RGB', (w - bw, bh))
     c.paste(im.crop((0, h - bh, dx, h)), (0, 0))
@@ -878,35 +791,29 @@ def read_text(path):
         return f.read()
 
 
-# The minimap at the 1280 base layout: its box, and two points to click (left and right of it).
-MINIMAP_1280 = (775, 822, 1170, 1020)
-MINIMAP_CLICKS = ((850, 921), (1090, 921))
-
-
 def widescreen_fn(kind, res='1920x1080', sides='fill'):
     def fn(ctx, r):
-        g = GAMES[kind]
         W, H = map(int, res.split('x'))
-        rx, ry = OPTIONS_RADIO[1280]
+        lay = screens.layout(kind, (W, H))
         out = r.dir
         os.makedirs(out, exist_ok=True)
-        bw, bh = hud_base(W, H)
-        dx, dy = (W - bw) // 2, H - {1280: 1024, 1024: 768, 800: 600}[bw]
-        ma, mb = [(x + dx, y + dy) for x, y in MINIMAP_CLICKS]
-        s = [(12, 'move:%d:%d' % MAIN_OPTIONS), (13, 'click:%d:%d' % MAIN_OPTIONS),
-             (18, 'shot=%s' % os.path.join(out, 'options.bmp')),
-             (19, 'move:%d:%d' % (rx, ry)), (20, 'click:%d:%d' % (rx, ry)),
-             (24, 'move:%d:%d' % MAIN_SINGLE), (25, 'click:%d:%d' % MAIN_SINGLE),
-             (38, 'move:%d:%d' % g['sp_standard']), (39, 'click:%d:%d' % g['sp_standard']),
-             (52, 'move:%d:%d' % SETUP_START), (53, 'click:%d:%d' % SETUP_START),
-             (110, 'shot=%s' % os.path.join(out, 'map.bmp')),
-             (112, 'shot=%s' % os.path.join(out, 'map2.bmp')),
-             (113, 'move:%d:%d' % ma), (114, 'click:%d:%d' % ma), (116, 'shot=%s' % os.path.join(out, 'mini_a.bmp')),
-             (117, 'move:%d:%d' % mb), (118, 'click:%d:%d' % mb), (120, 'shot=%s' % os.path.join(out, 'mini_b.bmp'))]
+        bw = lay.base
+        # two points on the minimap, left and right of its centre: its view frame follows them
+        mx, my, reach = lay.minimap
+        ma, mb = (mx - 120, my), (mx + 120, my)
+        s = Script()
+        start = screens.to_skirmish(s, lay, 13, 1280)
+        s.shot(18, os.path.join(out, 'options.bmp'))     # Options, the Screen Size buttons
+        s.shot(start + 57, os.path.join(out, 'map.bmp'))
+        s.shot(start + 59, os.path.join(out, 'map2.bmp'))
+        s.click(start + 61, ma)
+        s.shot(start + 63, os.path.join(out, 'mini_a.bmp'))
+        s.click(start + 65, mb)
+        s.shot(start + 67, os.path.join(out, 'mini_b.bmp'))
         dump = os.path.join(out, 'layout_dump.txt')
         env = dict(os.environ, SWGB_RES_DUMP=dump)
         extra = ['--res', res] + (['--hud-sides', sides] if sides != 'fill' else [])
-        rc, text = run_host(ctx, r, kind, s, 124, extra=extra, env=env)
+        rc, text = run_host(ctx, r, kind, s.steps, start + 71, extra=extra, env=env)
         expect_exit(r, rc)
         events(r, text)
         modes = ['%sx%s' % m for m in re.findall(r'SetDisplayMode\((\d+)(?:, |x)(\d+)', text)]
@@ -960,9 +867,8 @@ def widescreen_fn(kind, res='1920x1080', sides='fill'):
         # the minimap answers where it is drawn: its view frame follows a click left, then right
         if bw == 1280:
             if shots[2] and shots[3]:
-                x0, y0, x1, y1 = MINIMAP_1280
-                box = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
-                xa, xb = view_marker_moved(shots[2], shots[3], *box)
+                px, py, pw, ph = lay.minimap_panel
+                xa, xb = view_marker_moved(shots[2], shots[3], px, py, px + pw, py + ph)
                 r.image(shots[3], 'the minimap clicked right of its centre')
                 r.log('minimap view frame: x %s after the click at x %d, %s after the click at x %d'
                       % (xa and round(xa), ma[0], xb and round(xb), mb[0]))
@@ -1042,7 +948,7 @@ for _k in GAMES:
 
 
 NEWPLAYER_NAME = 'enter'
-WIN_CHEAT = 'skywalker'                    # tools/soak.py's: typed in the chat, an instant victory
+WIN_CHEAT = screens.WIN_CHEAT
 SKIRMISH_AI = re.compile(r'open data\\load\\[^ ]+\.per -> ok', re.I)   # the computer players' scripts
 GAME_WON = re.compile(r'open sound\\stream\\won\d\.mp3 -> ok', re.I)  # the victory's music
 
@@ -1052,7 +958,7 @@ def enter_fn(kind):
     # accepts the dialog, like OK) and the chat line (Enter sends it: the victory cheat).
     # The folder's profile is moved aside, so Single Player opens New Player.
     def fn(ctx, r):
-        g = GAMES[kind]
+        lay = LAYOUT[kind]
         out = r.dir
         os.makedirs(out, exist_ok=True)
         aside = os.path.join(out, 'profiles')
@@ -1066,7 +972,7 @@ def enter_fn(kind):
             s += [(26 + 0.5 * k, ch) for k, ch in enumerate(NEWPLAYER_NAME)]
             t = 26 + 0.5 * len(NEWPLAYER_NAME) + 1
             s += [(t, 'enter'), (t + 4, 'shot=%s' % os.path.join(out, 'single_player.bmp')),
-                  (t + 6, 'move:%d:%d' % g['sp_standard']), (t + 7, 'click:%d:%d' % g['sp_standard']),
+                  (t + 6, 'move:%d:%d' % lay.sp_standard), (t + 7, 'click:%d:%d' % lay.sp_standard),
                   (t + 17, 'move:%d:%d' % SETUP_START), (t + 18, 'click:%d:%d' % SETUP_START)]
             t += 65                                      # the map is up (skirmish_steps: 44 s after Start)
             s += [(t, 'shot=%s' % os.path.join(out, 'map.bmp')), (t + 1, 'enter')]
@@ -1204,7 +1110,7 @@ def record_fn(kind):
             return r.skip('--record has no sound on the win32hle host yet (docs/recording.md, "Not done")')
         if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
             return r.skip('no ffmpeg or ffprobe on PATH: --record needs them')
-        g = GAMES[kind]
+        lay = LAYOUT[kind]
         out = r.dir
         os.makedirs(out, exist_ok=True)
         x = '' if kind == 'base' else 'x'
@@ -1216,12 +1122,12 @@ def record_fn(kind):
         t = 12 if films else 18
         s += ['%g:shot=%s' % (t, os.path.join(out, 'menu.bmp')),
               '%g:move:%d:%d' % ((t + 2,) + MAIN_SINGLE), '%g:click:%d:%d' % ((t + 3,) + MAIN_SINGLE),
-              '%g:move:%d:%d' % ((t + 17,) + g['sp_standard']), '%g:click:%d:%d' % ((t + 18,) + g['sp_standard']),
+              '%g:move:%d:%d' % ((t + 17,) + lay.sp_standard), '%g:click:%d:%d' % ((t + 18,) + lay.sp_standard),
               '%g:move:%d:%d' % ((t + 37,) + SETUP_START), '%g:click:%d:%d' % ((t + 38,) + SETUP_START),
               '%g:shot=%s' % (t + 82, os.path.join(out, 'map.bmp')),
               '%g:move:400:170' % (t + 84), '%g:click:400:170' % (t + 85), '%g:h' % (t + 88),
               '%g:click:400:170' % (t + 90), '%g:h' % (t + 92), '%g:enter' % (t + 94)]
-        for k, ch in enumerate('skywalker'):
+        for k, ch in enumerate(WIN_CHEAT):
             s.append('%g:%s' % (t + 95 + 0.3 * k, ch))
         s += ['%g:enter' % (t + 98.7), '%g:shot=%s' % (t + 110, os.path.join(out, 'score.bmp'))]
         keys = os.path.join(out, 'run_keys.txt')
@@ -1310,7 +1216,7 @@ def sliders_fn(kind):
             return r.skip('--record has no sound on the win32hle host yet (docs/recording.md, "Not done")')
         if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
             return r.skip('no ffmpeg or ffprobe on PATH: --record needs them')
-        g = GAMES[kind]
+        lay = LAYOUT[kind]
         disc = os.path.join(r.dir, 'disc')
         os.makedirs(disc, exist_ok=True)
         tone = os.path.join(ROOT, 'tests', 'data', 'tone.ogg')    # 441 Hz left, 882 right, at 1/16 of full scale
@@ -1319,13 +1225,14 @@ def sliders_fn(kind):
         # Options: the sound slider to the top (17-22 s: the menu's MP3 at full), to the
         # bottom (26.5-33 s: silence), the music slider to the bottom then the top; then a
         # skirmish, its music the fixture's tone while the sound slider stays at the bottom
-        s = [(12, 'move:%d:%d' % MAIN_OPTIONS), (12.5, 'click:%d:%d' % MAIN_OPTIONS)]
+        s = [(12, 'move:%d:%d' % screens.MAIN_OPTIONS), (12.5, 'click:%d:%d' % screens.MAIN_OPTIONS)]
         s += [(13 + 0.3 * k, 'click:%d:%d' % OPTIONS_SOUND_UP) for k in range(12)]
         s += [(22 + 0.3 * k, 'click:%d:%d' % OPTIONS_SOUND_DOWN) for k in range(12)]
         s += [(26 + 0.3 * k, 'click:%d:%d' % OPTIONS_MUSIC_DOWN) for k in range(12)]
         s += [(30 + 0.3 * k, 'click:%d:%d' % OPTIONS_MUSIC_UP) for k in range(12)]
+        s += [(34.5, 'click:%d:%d' % screens.SCREEN_RADIO[800])]
         s += [(36, 'move:%d:%d' % MAIN_SINGLE), (37, 'click:%d:%d' % MAIN_SINGLE),
-              (51, 'move:%d:%d' % g['sp_standard']), (52, 'click:%d:%d' % g['sp_standard']),
+              (51, 'move:%d:%d' % lay.sp_standard), (52, 'click:%d:%d' % lay.sp_standard),
               (71, 'move:%d:%d' % SETUP_START), (72, 'click:%d:%d' % SETUP_START),
               (140, 'shot=%s' % os.path.join(r.dir, 'map.bmp'))]
         mp4 = os.path.join(r.dir, 'record.mp4')
@@ -1398,55 +1305,40 @@ CHECKS.append(Check('audio/base', 'functional', sliders_fn('base'), 'base', 3.0)
 def civ_skirmish(kind, my_civ, civs, out, minutes, save_name):
     """Standard Game: me as my_civ, one computer per civ in civs, a Small map, Easiest; Start,
     Fast speed, then the idle player and a save 40% of the way in. Returns (steps, end)."""
-    import soak
-    g = GAMES[kind]
-    allc = g['civs'] + ['Random']
-    s = soak.Script()
-    t = 20
-    s.click(t, MAIN_SINGLE)
-    s.click(t + 15, g['sp_standard'])
-    t += 33
-    t = soak.pick(soak.DD_OTHERS, len(civs) - 1, s, t)
-    t = soak.pick(soak.DD_SIZE, 1, s, t)
-    t = soak.pick(soak.DD_DIFFICULTY, 0, s, t)
-    s.click(t, (249, 94))                            # my row
-    s.click(t + 1.2, (290, 94 + 25 + 21 * allc.index(my_civ)))
-    t += 2.5
+    lay = LAYOUT[kind]
+    s = Script()
+    t = screens.to_setup(s, lay, 13, 800)
+    t = screens.pick(s, t, screens.DD_OTHERS, len(civs) - 1)
+    t = screens.pick(s, t, screens.DD_SIZE, 1)
+    t = screens.pick(s, t, screens.DD_DIFFICULTY, 0)
+    t = screens.set_civ(s, lay, t, screens.MY_CIV_ROW, my_civ)
     for p, c in enumerate(civs):
-        y = soak.CIV_ROW0 + soak.CIV_ROW_STEP * p
-        s.click(t, (249, y))
-        s.click(t + 1.2, (290, y + 25 + 21 * allc.index(c)))
-        t += 2.5
+        t = screens.set_civ(s, lay, t, screens.computer_row(p), c)
     t += 2
     s.at(t, 'shot=%s' % os.path.join(out, 'setup.bmp'))
     s.click(t + 1, SETUP_START)
     start = t + 70
     end = start + minutes * 60
     s.at(start, 'shot=%s' % os.path.join(out, 'start.bmp'))
-    t = soak.fast_speed(s, start + 2)
+    t = screens.fast_speed(s, lay, start + 2)
     save_at = start + (end - start) * 0.4
     for k, ts in enumerate(range(int(t) + 3, int(save_at) - 3, 30)):
         s.at(ts, 'h')
-        s.click(ts + 1, soak.COMMAND_GRID[0])
-    soak.save_game(s, save_at, save_name)
+        s.click(ts + 1, lay.command_grid[0])
+    screens.save_game(s, lay, save_at, save_name)
     s.at(save_at + 21, 'shot=%s' % os.path.join(out, 'saved.bmp'))
     for ts in range(int(save_at) + 25, int(end) - 5, 30):
         s.at(ts, 'h')
-        s.click(ts + 1, soak.COMMAND_GRID[0])
+        s.click(ts + 1, lay.command_grid[0])
     s.at(end - 2, 'shot=%s' % os.path.join(out, 'end.bmp'))
     return s.steps, end
 
 
 def load_steps(kind, row, out, minutes):
-    import soak
-    g = GAMES[kind]
-    s = soak.Script()
-    s.click(20, MAIN_SINGLE)
-    s.click(35, g['sp_saved'])
-    s.click(45, (300, soak.SAVED_ROW0 + soak.SAVED_STEP * row))
-    s.at(47, 'shot=%s' % os.path.join(out, 'load_list.bmp'))
-    s.click(48, soak.SAVED_OK)
-    start = 110
+    s = Script()
+    t0 = screens.set_screen(s, 12, 800)
+    s.at(t0 + 27, 'shot=%s' % os.path.join(out, 'load_list.bmp'))
+    start = screens.saved_game(s, LAYOUT[kind], t0, row) + 62
     s.at(start, 'shot=%s' % os.path.join(out, 'loaded.bmp'))
     end = start + minutes * 60
     for ts in range(start + 5, int(end) - 5, 20):
@@ -1513,22 +1405,23 @@ for _k, _sets in CIV_SETS.items():
         CHECKS.append(Check('civs/%s-%d' % (_k, _i + 1), 'functional', civs_fn(_k, _me, _them, _load), _k, 8.4 if _load else 5.0))
 
 
+def fixed_setup(s, lay):
+    """The frame-rate check's setup (perf_ab.py's too): one Easiest computer, a Tiny Savannah
+    map. Returns when it is set."""
+    t = screens.to_setup(s, lay, 13, 800)
+    t = screens.pick(s, t, screens.DD_OTHERS, 0)          # one computer
+    t = screens.pick(s, t, screens.DD_LOCATION, 13)       # Savannah
+    t = screens.pick(s, t, screens.DD_SIZE, 0)            # Tiny
+    return screens.pick(s, t, screens.DD_DIFFICULTY, 0)   # Easiest
+
+
 def perf_fn(kind):
     def fn(ctx, r):
         """a fixed skirmish at --fps 60: CPU and presents a second against tests/perf_thresholds.json"""
-        import soak
         out = r.dir
         os.makedirs(out, exist_ok=True)
-        g = GAMES[kind]
-        s = soak.Script()
-        t = 20
-        s.click(t, MAIN_SINGLE)
-        s.click(t + 15, g['sp_standard'])
-        t += 33
-        t = soak.pick(soak.DD_OTHERS, 0, s, t)          # one computer
-        t = soak.pick(soak.DD_LOCATION, 13, s, t)       # Savannah
-        t = soak.pick(soak.DD_SIZE, 0, s, t)            # Tiny
-        t = soak.pick(soak.DD_DIFFICULTY, 0, s, t)      # Easiest
+        s = Script()
+        t = fixed_setup(s, LAYOUT[kind])
         s.click(t + 2, SETUP_START)
         start = t + 72
         end = start + ctx.a.perf_minutes * 60
@@ -1573,25 +1466,17 @@ for _k in GAMES:
 def smooth_fn(kind):
     def fn(ctx, r):
         """--smooth: a worker walks to a rally point at --fps 120; drawn between steps"""
-        import soak
         import smooth_check
         out = r.dir
         os.makedirs(out, exist_ok=True)
-        g = GAMES[kind]
-        s = soak.Script()
-        t = 20
-        s.click(t, MAIN_SINGLE)
-        s.click(t + 15, g['sp_standard'])
-        t += 33
-        t = soak.pick(soak.DD_OTHERS, 0, s, t)          # one computer
-        t = soak.pick(soak.DD_LOCATION, 13, s, t)       # Savannah
-        t = soak.pick(soak.DD_SIZE, 0, s, t)            # Tiny
-        t = soak.pick(soak.DD_DIFFICULTY, 0, s, t)      # Easiest
+        lay = LAYOUT[kind]
+        s = Script()
+        t = fixed_setup(s, lay)
         s.click(t + 2, SETUP_START)
         start = t + 72
         s.at(start, 'h')                                 # the command center, the view on it
         for k in range(3):
-            s.click(start + 1 + k, soak.COMMAND_GRID[0])   # a worker, three times
+            s.click(start + 1 + k, lay.command_grid[0])  # a worker, three times
         s.at(start + 4, 'move:660:110')
         s.at(start + 4.5, 'rclick:660:110')             # its rally point
         s.at(start + 5, 'move:400:300')                 # off the screen's edges: the view stays
@@ -1726,19 +1611,17 @@ SOAKS = [
 
 
 def soak_missions(extra):
-    """missions, chain: (played, passed through), from the campaign's table in soak.py."""
-    import soak
+    """missions, chain: (played, passed through), from the campaign's table in screens.py."""
     if '--mode' not in extra or extra[extra.index('--mode') + 1] not in ('missions', 'chain'):
         return None
     camp = extra[extra.index('--campaign') + 1] if '--campaign' in extra else 'OOM-9'
-    boxes = soak.MISSION_BOXES.get(camp) or {'Confederacy': soak.CONFEDERACY_BOXES,
-                                             'Galactic Republic': soak.REPUBLIC_BOXES}[camp]
+    boxes = {**screens.BASE_MISSIONS, **screens.CC_MISSIONS}[camp]
     first = int(extra[extra.index('--first') + 1]) if '--first' in extra else 1
     last = int(extra[extra.index('--last') + 1]) if '--last' in extra else len(boxes)
     if '--unlocked' in extra:
         return last - first + 1, 0
     # Galactic Republic opens once Confederacy is won: soak.py passes through all of it first.
-    before = len(soak.CONFEDERACY_BOXES) if camp == 'Galactic Republic' else 0
+    before = len(screens.CC_MISSIONS['Confederacy']) if camp == 'Galactic Republic' else 0
     return last - first + 1, first - 1 + before
 
 
@@ -1988,25 +1871,26 @@ def main():
     ap.add_argument('--level', default='smoke', help='unit, smoke, functional, soak or real (L0-L4)')
     ap.add_argument('--just', action='store_true', help='only this level\'s checks, not the ones below it')
     ap.add_argument('--with-lower', action='store_true', help='--level real: the lower levels too')
-    ap.add_argument('--build', default=BUILD,
+    ap.add_argument('--build', default=PATHS.build,
                     help='the folder with swgbrecomp.exe (and swgbrecomp_cc.exe); Linux: build-linux/')
     ap.add_argument('--build-cc', default=None, help='the folder with swgbrecomp_cc.exe, when not --build')
     cc = ap.add_mutually_exclusive_group()
     cc.add_argument('--cc', dest='cc', action='store_true', default=None, help='Clone Campaigns too (a missing host fails)')
     cc.add_argument('--no-cc', dest='cc', action='store_false', help='the base game only')
-    ap.add_argument('--jobs', type=int, default=0, help='games at once (default: 5, at most %d)' % MAX_JOBS)
+    ap.add_argument('--jobs', type=int, default=0,
+                    help='games at once (default: 5, at most %d: SWGB_MAX_JOBS or local.json\'s max_jobs)' % PATHS.max_jobs)
     ap.add_argument('--only', default='', help='checks by name or glob, comma-separated (e.g. "skirmish/*,unit/keys")')
     ap.add_argument('--list', action='store_true', help='list the checks and stop')
-    ap.add_argument('--results', default=None, help=r'the results folder (default STAR\test-results\<time>-<level>)')
-    ap.add_argument('--baselines', default=os.path.join(STAR, 'test-baselines'))
+    ap.add_argument('--results', default=None, help='the results folder (default %s)' % os.path.join(PATHS.results, '<time>-<level>'))
+    ap.add_argument('--baselines', default=PATHS.baselines)
     ap.add_argument('--update-baselines', action='store_true', help='record every baseline again from this run')
-    ap.add_argument('--main', default=MAIN, help='the main checkout: the lift (src\\recomp\\gen*) and work\\lift_stats*.json')
-    ap.add_argument('--exe', default=os.path.join(MAIN, 'work', 'Battlegrounds.exe'))
-    ap.add_argument('--exe-cc', default=os.path.join(MAIN, 'work', 'battlegrounds_x1.exe'))
-    ap.add_argument('--game-template', default=os.path.join(MAIN, 'game'), help='the shared install the game folders link to')
-    ap.add_argument('--games', default=os.path.join(STAR, 'games'), help='where the testing-* game folders go')
-    ap.add_argument('--prefix', default='testing', help=r'the game folders are GAMES\PREFIX-<base|cc>-<k>: a second run at once needs another')
-    ap.add_argument('--cc-profiles', default=os.path.join(STAR, 'games', 'clone-campaigns'),
+    ap.add_argument('--main', default=PATHS.main, help='the main checkout: the lift (src/recomp/gen*) and work/lift_stats*.json')
+    ap.add_argument('--exe', default=PATHS.exe('base'))
+    ap.add_argument('--exe-cc', default=PATHS.exe('cc'))
+    ap.add_argument('--game-template', default=PATHS.template, help='the shared install the game folders link to')
+    ap.add_argument('--games', default=PATHS.games, help='where the testing-* game folders go')
+    ap.add_argument('--prefix', default='testing', help='the game folders are GAMES/PREFIX-<base|cc>-<k>: a second run at once needs another')
+    ap.add_argument('--cc-profiles', default=PATHS.cc_profiles,
                     help='Clone Campaigns: the player.nf* (an 800x600 profile) its game folders start with')
     ap.add_argument('--pcrecomp', default=None)
     ap.add_argument('--soak-scale', type=float, default=1.0, help='soak: each run\'s minutes times this')
@@ -2021,11 +1905,10 @@ def main():
     if a.level not in LEVELS:
         ap.error('--level: one of %s' % ', '.join(LEVELS))
     a.only = [p for p in a.only.split(',') if p]
-    a.jobs = min(MAX_JOBS, a.jobs or 5)
+    a.jobs = min(PATHS.max_jobs, a.jobs or 5)
     a.build = os.path.abspath(a.build)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-    a.results = os.path.abspath(a.results or os.path.join(STAR if os.path.isdir(STAR) else os.path.join(ROOT, 'work'),
-                                                          'test-results', '%s-%s' % (stamp, a.level)))
+    a.results = os.path.abspath(a.results or os.path.join(PATHS.results, '%s-%s' % (stamp, a.level)))
     checks = select(a)
     if a.list:
         for c in checks:

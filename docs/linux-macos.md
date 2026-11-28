@@ -62,7 +62,7 @@ rejects it in any function that contains `setjmp` (`RECOMP_EH_FRAME`), so
 it cannot host those ITAILs. Use `CC=gcc` only for bring-up that stays on
 the main menu.
 
-Checked 2026-11-21 against the shared lift (`A:\Games\star\swgb-recomp\src\recomp\gen`,
+Checked 2026-11-21 against the shared lift (the main checkout's `src\recomp\gen`,
 54 files, 238 MB of C), with Ubuntu 24.04's gcc 13 in WSL:
 
 - `-fsyntax-only`, 64-bit based (`RECOMP_MEM_BASE`, the macOS model): **all

@@ -246,7 +246,7 @@ frames a second) the selection ellipse and hit-point bar move with the
 sprite.
 
 **The simulation is untouched.** `tools/mp_pair.py --activity busy
---minutes 6 --extra-a=--smooth` (the host with `--smooth`, the joiner
+--minutes 6 --host-arg a=--smooth` (the host with `--smooth`, the joiner
 without), 2026-11-26: both ran to their watchdog, no out-of-sync message,
 86 sync records in each log over 43 turns, **all 86 the same**. The sync
 records are the game's own checksums of the world, compared turn by turn.

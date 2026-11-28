@@ -5,7 +5,7 @@
  * be counted on: it is an optional feature, it is not on Linux, and it needs
  * dplaysvr.exe to own UDP and TCP port 47624. On a machine with WSL's mirrored
  * networking that port is inside the block Windows hands to Linux for its
- * ephemeral ports (44620-48715 here), so dplaysvr cannot bind it and every
+ * ephemeral ports, so dplaysvr cannot bind it and every
  * Open(DPOPEN_CREATE) fails with DPERR_GENERIC, for the original game too
  * (docs/multiplayer.md). --dplay native keeps the real one.
  *
@@ -675,7 +675,7 @@ static void host_frame(int c, int type, rbuf* r) {
         rb_get(r, &inst, sizeof inst);
         DWORD theirs = rb_u32(r), mine = build_stamp();
         if (r->n >= 4) g_conn[c].lport = (u_short)rb_u32(r);   /* where it listens (host migration) */
-        /* SWGB_MP_ANY_BUILD=1: let it in anyway (mp_pair.py --run-b: two builds of one source at
+        /* SWGB_MP_ANY_BUILD=1: let it in anyway (mp_pair.py --run b=EXE: two builds of one source at
          * other flags, whose sync records then show whether they simulate alike) */
         int any = getenv("SWGB_MP_ANY_BUILD") && *getenv("SWGB_MP_ANY_BUILD") == '1';
         if (theirs != mine)

@@ -81,6 +81,21 @@ versions follow [SemVer](https://semver.org/).
   output sink (`cdaudio_test_sink`), split one function per case; `cdaudio.c`'s
   bare `g_out_kind` test mode and unused `cdaudio_shutdown` removed; added
   the `audio/base` functional check (`tools/test.py`).
+- The tools share one home, `tools/swgb/`: `screens.py` (each game's and
+  screen size's places as a frozen `Layout`, the routes through the menus)
+  and `runner.py` (what fails a run, exit codes, game folders, `--keys`
+  scripts, shots, and every default path from one `paths()`: `SWGB_STAR` or
+  a git-ignored `tools/local.json`, else the checkout). `test.py`, `soak.py`,
+  `res_check.py`, `present_check.py`, `perf_ab.py` and `mp_pair.py` use it;
+  no tool has a machine path in it any more (`tools/machine_paths.py`, a CI
+  step, fails on one), and `soak.py` no longer rewrites its globals for
+  `--cc` or `--screen`. The HUD places the copies disagreed on are the
+  panels' centres from `SWGB_RES_DUMP` (the 800x600 minimap is at 586,528).
+- `mp_pair.py`: `--host-arg WHO=SWITCHES` and `--run [WHO=]EXE` (WHO a-d or
+  all) replace `--extra`, `--extra-a`, `--extra-b`, `--wsl-extra` and
+  `--run-b`.
+- `test.py`: `--jobs` is capped by `max_jobs` (`SWGB_MAX_JOBS`, local.json,
+  else the cores), not a fixed 8.
 
 ### Fixed
 - Music and sound volume sliders ([docs/music.md](docs/music.md)): `cdaudio.c`

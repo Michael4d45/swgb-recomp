@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: no machine paths (X:\...) in the code
+        run: python tools/machine_paths.py
       - run: python -m pip install --quiet numpy pillow
       - name: tools/test.py --level unit
         run: python tools/test.py --level unit --pcrecomp pcrecomp --results test-results
